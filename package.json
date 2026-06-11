@@ -1,0 +1,21 @@
+{
+  "name": "mama-babi-pos",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mama Babi offline-first Point of Sale system",
+  "scripts": {
+    "dev": "pnpm --filter @mama-babi/desktop dev",
+    "build": "pnpm -r build",
+    "build:desktop": "pnpm --filter @mama-babi/desktop build",
+    "db:generate": "pnpm --filter @mama-babi/db-schema generate",
+    "db:migrate": "pnpm --filter @mama-babi/db-schema migrate",
+    "db:seed": "pnpm --filter @mama-babi/db-schema seed",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "postinstall": "pnpm --filter @mama-babi/desktop exec electron-builder install-app-deps",
+    "rebuild:native": "pnpm --filter @mama-babi/desktop exec electron-rebuild -f -w better-sqlite3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

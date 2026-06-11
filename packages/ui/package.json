@@ -1,0 +1,23 @@
+{
+  "name": "@mama-babi/ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.12",
+    "typescript": "^5.8.2"
+  }
+}
