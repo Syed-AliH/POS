@@ -62,6 +62,7 @@ export function incrementSaleCounter(): string {
 export function ensureDefaultSettings(): void {
   const defaults: Record<string, string> = {
     po_counter: '0',
+    supplier_payment_counter: '0',
     secondary_currency: 'USD',
     exchange_rate: '0.0036',
   };

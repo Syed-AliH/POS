@@ -77,7 +77,11 @@ export function VendorsPage() {
                 className="w-full text-left p-3 border rounded-lg hover:bg-pink-50"
               >
                 <div className="font-medium">{v.name}</div>
-                <div className="text-sm text-slate-500">{v.contact ?? '—'} · {v.paymentTerms ?? '—'}</div>
+                <div className="text-sm text-slate-500">
+                  {v.contact ?? '—'} · {v.paymentTerms ?? '—'}
+                  {v.outstandingBalance > 0 && <span className="text-pink-700"> · PKR {v.outstandingBalance.toFixed(0)} due</span>}
+                  {v.preferredPaymentType && <span> · Prefers {v.preferredPaymentType}</span>}
+                </div>
               </button>
             ))}
           </div>

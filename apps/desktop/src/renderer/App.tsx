@@ -23,6 +23,8 @@ const MorePage = lazy(() => import('./pages/MorePage').then((m) => ({ default: m
 const GiftCardsPage = lazy(() => import('./pages/GiftCardsPage').then((m) => ({ default: m.GiftCardsPage })));
 const ExpensesPage = lazy(() => import('./pages/ExpensesPage').then((m) => ({ default: m.ExpensesPage })));
 const StocktakePage = lazy(() => import('./pages/StocktakePage').then((m) => ({ default: m.StocktakePage })));
+const InventoryReportPage = lazy(() => import('./pages/InventoryReportPage').then((m) => ({ default: m.InventoryReportPage })));
+const SupplierPaymentsPage = lazy(() => import('./pages/SupplierPaymentsPage').then((m) => ({ default: m.SupplierPaymentsPage })));
 
 function PageLoader() {
   return (
@@ -90,6 +92,8 @@ export function App() {
             <Route path="promotions" element={<ProtectedRoute roles={['manager', 'super_admin']}><PromotionsPage /></ProtectedRoute>} />
             <Route path="labels" element={<ProtectedRoute roles={['manager', 'super_admin']}><LabelsPage /></ProtectedRoute>} />
             <Route path="reports" element={<ProtectedRoute roles={['manager', 'super_admin']}><ReportsPage /></ProtectedRoute>} />
+            <Route path="inventory-report" element={<ProtectedRoute roles={['manager', 'super_admin']}><InventoryReportPage /></ProtectedRoute>} />
+            <Route path="supplier-payments" element={<ProtectedRoute roles={['manager', 'super_admin']}><SupplierPaymentsPage /></ProtectedRoute>} />
             <Route path="more" element={<ProtectedRoute roles={['manager', 'super_admin']}><MorePage /></ProtectedRoute>} />
             <Route path="gift-cards" element={<ProtectedRoute roles={['manager', 'super_admin']}><GiftCardsPage /></ProtectedRoute>} />
             <Route path="expenses" element={<ProtectedRoute roles={['manager', 'super_admin']}><ExpensesPage /></ProtectedRoute>} />

@@ -1,6 +1,8 @@
 import { Link } from 'react-router-dom';
 
 const links = [
+  { to: '/inventory-report', label: 'Inventory Report', desc: 'Stock levels, value & GRN history' },
+  { to: '/supplier-payments', label: 'Supplier Payments', desc: 'Credit balances & payment ledger' },
   { to: '/vendors', label: 'Vendors', desc: 'Supplier management' },
   { to: '/customers', label: 'Customers', desc: 'CRM & loyalty points' },
   { to: '/promotions', label: 'Promotions', desc: 'Discount rules' },

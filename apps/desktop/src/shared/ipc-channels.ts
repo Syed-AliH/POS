@@ -48,6 +48,7 @@ export const IPC_CHANNELS = {
   REPORT_TOP_PRODUCTS: 'report:top-products',
   REPORT_PAYMENT_BREAKDOWN: 'report:payment-breakdown',
   REPORT_INVENTORY_VALUATION: 'report:inventory-valuation',
+  REPORT_INVENTORY: 'report:inventory',
   REPORT_PROFIT: 'report:profit',
 
   RETURN_CREATE: 'return:create',
@@ -88,6 +89,14 @@ export const IPC_CHANNELS = {
   GRN_FINALIZE: 'grn:finalize',
   GRN_UPDATE: 'grn:update',
   GRN_CANCEL: 'grn:cancel',
+  GRN_VOID: 'grn:void',
+
+  SUPPLIER_PAYMENT_LIST: 'supplier-payment:list',
+  SUPPLIER_PAYMENT_CREATE: 'supplier-payment:create',
+  SUPPLIER_PAYMENT_UPDATE: 'supplier-payment:update',
+  SUPPLIER_PAYMENT_DELETE: 'supplier-payment:delete',
+  SUPPLIER_BALANCE: 'supplier-payment:balance',
+  SUPPLIER_LEDGER: 'supplier-payment:ledger',
 
   CUSTOMER_SEARCH: 'customer:search',
   CUSTOMER_LIST: 'customer:list',

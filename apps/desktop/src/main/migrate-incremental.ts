@@ -77,6 +77,24 @@ CREATE TABLE IF NOT EXISTS eod_closings (
 CREATE INDEX IF NOT EXISTS idx_grn_lines_grn ON grn_lines(grn_id);
 CREATE INDEX IF NOT EXISTS idx_product_cost_history_product ON product_cost_history(product_id);
 CREATE INDEX IF NOT EXISTS idx_eod_closings_date ON eod_closings(closing_date);
+
+CREATE TABLE IF NOT EXISTS supplier_payments (
+  id TEXT PRIMARY KEY,
+  payment_number TEXT NOT NULL UNIQUE,
+  vendor_id TEXT NOT NULL,
+  amount REAL NOT NULL,
+  payment_date TEXT NOT NULL,
+  notes TEXT,
+  balance_after REAL NOT NULL DEFAULT 0,
+  processed_by TEXT NOT NULL,
+  device_id TEXT NOT NULL DEFAULT 'local',
+  branch_id TEXT NOT NULL DEFAULT 'main',
+  is_deleted INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_supplier_payments_vendor ON supplier_payments(vendor_id);
 `;
 
 const ALTER_STATEMENTS = [
@@ -84,6 +102,9 @@ const ALTER_STATEMENTS = [
   'ALTER TABLE users ADD COLUMN username TEXT',
   'ALTER TABLE users ADD COLUMN password_hash TEXT',
   'ALTER TABLE grn_lines ADD COLUMN unit_retail REAL',
+  'ALTER TABLE grn_headers ADD COLUMN payment_type TEXT NOT NULL DEFAULT \'cash\'',
+  'ALTER TABLE vendors ADD COLUMN preferred_payment_type TEXT DEFAULT \'cash\'',
+  'ALTER TABLE vendors ADD COLUMN outstanding_balance REAL NOT NULL DEFAULT 0',
 ];
 
 export function runIncrementalMigrations(sqlite: Database.Database): void {

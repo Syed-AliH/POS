@@ -7,7 +7,7 @@ import { parseMarkupInput, resolveMarkupToPrice } from '@renderer/lib/markup';
 import { getActiveRoute, registerPageShortcuts } from '@renderer/lib/shortcuts';
 import { toast } from '@renderer/stores/toastStore';
 import { formatDateOnly, formatDateTime } from '@shared/datetime';
-import type { GrnSummary, Product, Vendor } from '@shared/types';
+import type { GrnPaymentType, GrnSummary, Product, Vendor } from '@shared/types';
 
 type GrnDraftLine = {
   productId: string;
@@ -77,6 +77,7 @@ export function GrnPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [records, setRecords] = useState<GrnSummary[]>([]);
   const [vendorId, setVendorId] = useState('');
+  const [paymentType, setPaymentType] = useState<GrnPaymentType>('cash');
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<GrnDraftLine[]>([]);
@@ -88,6 +89,7 @@ export function GrnPage() {
   const [selectedGrn, setSelectedGrn] = useState<GrnSummary | null>(null);
   const [editingRecord, setEditingRecord] = useState<GrnSummary | null>(null);
   const [editVendorId, setEditVendorId] = useState('');
+  const [editPaymentType, setEditPaymentType] = useState<GrnPaymentType>('cash');
   const [editInvoiceNumber, setEditInvoiceNumber] = useState('');
   const [editNotes, setEditNotes] = useState('');
   const [editLines, setEditLines] = useState<GrnDraftLine[]>([]);
@@ -155,6 +157,11 @@ export function GrnPage() {
   const lineSortIcon = (key: LineSortKey) =>
     lineSortKey === key ? (lineSortDir === 'asc' ? ' ↑' : ' ↓') : '';
 
+  const applyVendorPaymentPreference = (id: string, setter: (value: GrnPaymentType) => void) => {
+    const vendor = vendors.find((v) => v.id === id);
+    setter(vendor?.preferredPaymentType ?? 'cash');
+  };
+
   const loadBase = async () => {
     const [v, p, t] = await Promise.all([
       api.vendors.list(),
@@ -181,6 +188,10 @@ export function GrnPage() {
   };
 
   useEffect(() => { loadBase(); }, []);
+
+  useEffect(() => {
+    if (vendorId) applyVendorPaymentPreference(vendorId, setPaymentType);
+  }, [vendorId, vendors]);
   useEffect(() => { if (tab === 'records') loadRecords(); }, [tab, filterVendor, filterStart, filterEnd, filterGrn]);
 
   const canEditRecord = editingRecord?.status === 'draft' || editingRecord?.status === 'finalized';
@@ -281,6 +292,7 @@ export function GrnPage() {
     setLines([]);
     setInvoiceNumber('');
     setNotes('');
+    if (vendorId) applyVendorPaymentPreference(vendorId, setPaymentType);
   };
 
   const refreshProducts = () => {
@@ -301,6 +313,7 @@ export function GrnPage() {
     }
     const result = await api.grn.update(id, {
       vendorId: editVendorId,
+      paymentType: editPaymentType,
       invoiceNumber: editInvoiceNumber || undefined,
       notes: editNotes || undefined,
       items: mapLinesToItems(editLines),
@@ -319,6 +332,7 @@ export function GrnPage() {
     setSavingDraft(true);
     const result = await api.grn.create({
       vendorId,
+      paymentType,
       invoiceNumber: invoiceNumber || undefined,
       notes: notes || undefined,
       items: mapLinesToItems(lines),
@@ -338,6 +352,7 @@ export function GrnPage() {
     setFinalizing(true);
     const createResult = await api.grn.create({
       vendorId,
+      paymentType,
       invoiceNumber: invoiceNumber || undefined,
       notes: notes || undefined,
       items: mapLinesToItems(lines),
@@ -368,6 +383,7 @@ export function GrnPage() {
   const loadRecordIntoEditor = (grn: GrnSummary) => {
     setEditingRecord(grn);
     setEditVendorId(grn.vendorId);
+    setEditPaymentType(grn.paymentType ?? 'cash');
     setEditInvoiceNumber(grn.invoiceNumber ?? '');
     setEditNotes(grn.notes ?? '');
     setEditLines(grnItemsToDraftLines(grn.items));
@@ -452,6 +468,7 @@ export function GrnPage() {
     setUpdatingRecord(true);
     const result = await api.grn.update(editingRecord.id, {
       vendorId: editVendorId,
+      paymentType: editPaymentType,
       invoiceNumber: editInvoiceNumber || undefined,
       notes: editNotes || undefined,
       items: mapLinesToItems(editLines),
@@ -486,6 +503,18 @@ export function GrnPage() {
     } else toast.error(result.error ?? 'Finalize failed');
   };
 
+  const handleVoidRecord = async (id: string) => {
+    if (!confirm('Void this finalized GRN? Stock will be reversed and credit balance adjusted.')) return;
+    const result = await api.grn.void(id);
+    if (result.success) {
+      toast.success('GRN voided');
+      setEditingRecord(null);
+      loadRecords();
+      refreshProducts();
+      loadBase();
+    } else toast.error(result.error ?? 'Void failed');
+  };
+
   const handlePrintLabels = async () => {
     if (!selectedGrn || !labelTemplateId) return;
     const result = await api.labels.printBatch({
@@ -518,6 +547,14 @@ export function GrnPage() {
             <select value={vendorId} onChange={(e) => setVendorId(e.target.value)} className="w-full px-3 py-2 border rounded-lg">
               {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
             </select>
+            <div>
+              <label className="text-xs font-medium text-slate-500 uppercase">Payment Type</label>
+              <select value={paymentType} onChange={(e) => setPaymentType(e.target.value as GrnPaymentType)} className="w-full px-3 py-2 border rounded-lg mt-1">
+                <option value="cash">Cash</option>
+                <option value="credit">Credit</option>
+              </select>
+              <p className="text-xs text-slate-400 mt-1">Defaults from supplier&apos;s last preference — change if needed</p>
+            </div>
             <input placeholder="Supplier invoice #" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
             <textarea placeholder="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full px-3 py-2 border rounded-lg h-16" />
 
@@ -682,7 +719,7 @@ export function GrnPage() {
           <table className="w-full bg-white rounded-xl border text-sm">
             <thead className="bg-slate-50">
               <tr className="text-left text-slate-500">
-                <th className="p-3">GRN #</th><th className="p-3">Vendor</th><th className="p-3">Created</th><th className="p-3">Received</th><th className="p-3 text-right">Total</th><th className="p-3">Status</th><th className="p-3"></th>
+                <th className="p-3">GRN #</th><th className="p-3">Vendor</th><th className="p-3">Payment</th><th className="p-3">Created</th><th className="p-3">Received</th><th className="p-3 text-right">Total</th><th className="p-3">Status</th><th className="p-3"></th>
               </tr>
             </thead>
             <tbody>
@@ -694,6 +731,7 @@ export function GrnPage() {
                 >
                   <td className="p-3 font-mono text-pink-700">{g.grnNumber}</td>
                   <td className="p-3">{g.vendorName}</td>
+                  <td className="p-3 capitalize text-xs">{g.paymentType ?? 'cash'}</td>
                   <td className="p-3 text-xs text-slate-600 whitespace-nowrap">{formatDateTime(g.createdAt)}</td>
                   <td className="p-3 text-xs">{formatDateOnly(g.receivedDate)}</td>
                   <td className="p-3 text-right">PKR {g.linesTotal.toFixed(2)}</td>
@@ -728,7 +766,7 @@ export function GrnPage() {
                 <div>
                   <h3 className="font-semibold text-lg">{editingRecord.grnNumber}</h3>
                   <p className="text-sm text-slate-500">
-                    {editingRecord.vendorName} · Received {formatDateOnly(editingRecord.receivedDate)} · {editingRecord.status}
+                    {editingRecord.vendorName} · {editingRecord.paymentType ?? 'cash'} · Received {formatDateOnly(editingRecord.receivedDate)} · {editingRecord.status}
                     {canEditRecord && <span className="text-pink-600"> · editable</span>}
                     {editingRecord.invoiceNumber ? ` · Invoice ${editingRecord.invoiceNumber}` : ''}
                   </p>
@@ -747,8 +785,19 @@ export function GrnPage() {
               {canEditRecord ? (
                 <>
                   <div className="grid grid-cols-2 gap-4">
-                    <select value={editVendorId} onChange={(e) => setEditVendorId(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm">
+                    <select
+                      value={editVendorId}
+                      onChange={(e) => {
+                        setEditVendorId(e.target.value);
+                        applyVendorPaymentPreference(e.target.value, setEditPaymentType);
+                      }}
+                      className="w-full px-3 py-2 border rounded-lg text-sm"
+                    >
                       {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                    </select>
+                    <select value={editPaymentType} onChange={(e) => setEditPaymentType(e.target.value as GrnPaymentType)} className="w-full px-3 py-2 border rounded-lg text-sm">
+                      <option value="cash">Cash</option>
+                      <option value="credit">Credit</option>
                     </select>
                     <input placeholder="Supplier invoice #" value={editInvoiceNumber} onChange={(e) => setEditInvoiceNumber(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" />
                     <input placeholder="Notes" value={editNotes} onChange={(e) => setEditNotes(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" />
@@ -873,6 +922,11 @@ export function GrnPage() {
                       disabled={!editLines.length || finalizing || updatingRecord}
                     >
                       {finalizing ? 'Finalizing…' : 'Finalize GRN'}
+                    </Button>
+                  )}
+                  {editingRecord.status === 'finalized' && (
+                    <Button variant="danger" onClick={() => void handleVoidRecord(editingRecord.id)}>
+                      Void GRN
                     </Button>
                   )}
                 </div>

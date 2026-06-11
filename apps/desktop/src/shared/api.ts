@@ -56,8 +56,15 @@ import type {
   SalesByCategoryRow,
   TopProductRow,
   PaymentBreakdownRow,
+  InventoryReportParams,
+  InventoryReportSummary,
   InventoryValuation,
   ProfitReport,
+  SupplierLedgerEntry,
+  SupplierPaymentInput,
+  SupplierPaymentListParams,
+  SupplierPaymentSummary,
+  SupplierPaymentUpdateInput,
   SyncQueueItem,
 } from './types';
 
@@ -142,7 +149,16 @@ export interface MamaBabiAPI {
     topProducts: (params?: ReportDateRange & { limit?: number }) => Promise<ApiResult<TopProductRow[]>>;
     paymentBreakdown: (params?: ReportDateRange) => Promise<ApiResult<PaymentBreakdownRow[]>>;
     inventoryValuation: () => Promise<ApiResult<InventoryValuation>>;
+    inventory: (params?: InventoryReportParams) => Promise<ApiResult<InventoryReportSummary>>;
     profit: (params?: ReportDateRange) => Promise<ApiResult<ProfitReport>>;
+  };
+  supplierPayments: {
+    list: (params?: SupplierPaymentListParams) => Promise<ApiResult<SupplierPaymentSummary[]>>;
+    create: (input: SupplierPaymentInput) => Promise<ApiResult<SupplierPaymentSummary>>;
+    update: (id: string, input: SupplierPaymentUpdateInput) => Promise<ApiResult<SupplierPaymentSummary>>;
+    delete: (id: string) => Promise<ApiResult<void>>;
+    balance: (vendorId: string) => Promise<ApiResult<{ outstandingBalance: number }>>;
+    ledger: (vendorId: string) => Promise<ApiResult<SupplierLedgerEntry[]>>;
   };
   backup: {
     create: () => Promise<ApiResult<BackupInfo>>;
@@ -161,6 +177,7 @@ export interface MamaBabiAPI {
     finalize: (id: string) => Promise<ApiResult<GrnSummary>>;
     update: (id: string, input: UpdateGrnInput) => Promise<ApiResult<GrnSummary>>;
     cancel: (id: string) => Promise<ApiResult<void>>;
+    void: (id: string) => Promise<ApiResult<void>>;
   };
   customers: {
     search: (query: string) => Promise<ApiResult<Customer[]>>;
@@ -304,7 +321,16 @@ export function createApi(): MamaBabiAPI {
       topProducts: (params) => invoke(IPC_CHANNELS.REPORT_TOP_PRODUCTS, params),
       paymentBreakdown: (params) => invoke(IPC_CHANNELS.REPORT_PAYMENT_BREAKDOWN, params),
       inventoryValuation: () => invoke(IPC_CHANNELS.REPORT_INVENTORY_VALUATION),
+      inventory: (params) => invoke(IPC_CHANNELS.REPORT_INVENTORY, params),
       profit: (params) => invoke(IPC_CHANNELS.REPORT_PROFIT, params),
+    },
+    supplierPayments: {
+      list: (params) => invoke(IPC_CHANNELS.SUPPLIER_PAYMENT_LIST, params),
+      create: (input) => invoke(IPC_CHANNELS.SUPPLIER_PAYMENT_CREATE, input),
+      update: (id, input) => invoke(IPC_CHANNELS.SUPPLIER_PAYMENT_UPDATE, id, input),
+      delete: (id) => invoke(IPC_CHANNELS.SUPPLIER_PAYMENT_DELETE, id),
+      balance: (vendorId) => invoke(IPC_CHANNELS.SUPPLIER_BALANCE, vendorId),
+      ledger: (vendorId) => invoke(IPC_CHANNELS.SUPPLIER_LEDGER, vendorId),
     },
     backup: {
       create: () => invoke(IPC_CHANNELS.BACKUP_CREATE),
@@ -323,6 +349,7 @@ export function createApi(): MamaBabiAPI {
       finalize: (id) => invoke(IPC_CHANNELS.GRN_FINALIZE, id),
       update: (id, input) => invoke(IPC_CHANNELS.GRN_UPDATE, id, input),
       cancel: (id) => invoke(IPC_CHANNELS.GRN_CANCEL, id),
+      void: (id) => invoke(IPC_CHANNELS.GRN_VOID, id),
     },
     customers: {
       search: (query) => invoke(IPC_CHANNELS.CUSTOMER_SEARCH, query),

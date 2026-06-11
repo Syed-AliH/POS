@@ -39,18 +39,28 @@ import {
   handleGrnGet,
   handleGrnList,
   handleGrnUpdate,
+  handleGrnVoid,
 } from './grn';
 import { handleListPrinters, handleSettingsGet, handleSettingsGetAll, handleSettingsSet } from './settings';
 import { handleLabelPrintBatch, handleLabelTemplates } from './labels';
 import { handlePrintReceipt, handlePrintZReport } from './print';
 import {
   handleDailySales,
+  handleInventoryReport,
   handleInventoryValuation,
   handlePaymentBreakdown,
   handleProfitReport,
   handleSalesByCategory,
   handleTopProducts,
 } from './reports';
+import {
+  handleSupplierBalance,
+  handleSupplierLedger,
+  handleSupplierPaymentCreate,
+  handleSupplierPaymentDelete,
+  handleSupplierPaymentList,
+  handleSupplierPaymentUpdate,
+} from './supplierPayments';
 import { handleSyncQueueList, handleSyncStatus } from './sync';
 import {
   handleGiftCardIssue,
@@ -161,6 +171,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.REPORT_TOP_PRODUCTS, (_e, params) => handleTopProducts(params));
   ipcMain.handle(IPC_CHANNELS.REPORT_PAYMENT_BREAKDOWN, (_e, params) => handlePaymentBreakdown(params));
   ipcMain.handle(IPC_CHANNELS.REPORT_INVENTORY_VALUATION, () => handleInventoryValuation());
+  ipcMain.handle(IPC_CHANNELS.REPORT_INVENTORY, (_e, params) => handleInventoryReport(params));
   ipcMain.handle(IPC_CHANNELS.REPORT_PROFIT, (_e, params) => handleProfitReport(params));
 
   ipcMain.handle(IPC_CHANNELS.RETURN_CREATE, (_e, input) => handleReturnCreate(input));
@@ -199,6 +210,14 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.GRN_FINALIZE, (_e, id: string) => handleGrnFinalize(id));
   ipcMain.handle(IPC_CHANNELS.GRN_UPDATE, (_e, id: string, input) => handleGrnUpdate(id, input));
   ipcMain.handle(IPC_CHANNELS.GRN_CANCEL, (_e, id: string) => handleGrnCancel(id));
+  ipcMain.handle(IPC_CHANNELS.GRN_VOID, (_e, id: string) => handleGrnVoid(id));
+
+  ipcMain.handle(IPC_CHANNELS.SUPPLIER_PAYMENT_LIST, (_e, params) => handleSupplierPaymentList(params));
+  ipcMain.handle(IPC_CHANNELS.SUPPLIER_PAYMENT_CREATE, (_e, input) => handleSupplierPaymentCreate(input));
+  ipcMain.handle(IPC_CHANNELS.SUPPLIER_PAYMENT_UPDATE, (_e, id: string, input) => handleSupplierPaymentUpdate(id, input));
+  ipcMain.handle(IPC_CHANNELS.SUPPLIER_PAYMENT_DELETE, (_e, id: string) => handleSupplierPaymentDelete(id));
+  ipcMain.handle(IPC_CHANNELS.SUPPLIER_BALANCE, (_e, vendorId: string) => handleSupplierBalance(vendorId));
+  ipcMain.handle(IPC_CHANNELS.SUPPLIER_LEDGER, (_e, vendorId: string) => handleSupplierLedger(vendorId));
 
   ipcMain.handle(IPC_CHANNELS.CUSTOMER_SEARCH, (_e, query: string) => handleCustomerSearch(query));
   ipcMain.handle(IPC_CHANNELS.CUSTOMER_LIST, (_e, limit?: number) => handleCustomerList(limit));

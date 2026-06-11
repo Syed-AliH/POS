@@ -14,6 +14,11 @@ import { getDb } from '../db';
 import { requireRole, requireSession } from '../session';
 import { logAudit } from '../services/audit';
 import { getSetting, incrementGrnCounter } from '../services/settings';
+import {
+  recalculateVendorBalance,
+  saveVendorPaymentPreference,
+  type GrnPaymentType,
+} from '../services/supplierCredit';
 
 function mapGrn(grnId: string): GrnSummary | null {
   const db = getDb();
@@ -48,6 +53,7 @@ function mapGrn(grnId: string): GrnSummary | null {
     linesTotal: items.reduce((sum, i) => sum + i.lineTotal, 0),
     receivedDate: header.receivedDate,
     status: header.status,
+    paymentType: (header.paymentType ?? 'cash') as GrnPaymentType,
     notes: header.notes,
     createdByName: creator?.name ?? 'Unknown',
     createdAt: header.createdAt,
@@ -72,6 +78,7 @@ export function handleGrnCreate(input: CreateGrnInput): ApiResult<GrnSummary> {
     const grnId = uuid();
     const grnNumber = incrementGrnCounter();
     const receivedDate = input.receivedDate ?? now.slice(0, 10);
+    const paymentType: GrnPaymentType = input.paymentType ?? (vendor.preferredPaymentType as GrnPaymentType) ?? 'cash';
 
     const lineRows = input.items.map((item) => {
       const product = db.select().from(products).where(eq(products.id, item.productId)).get();
@@ -104,6 +111,7 @@ export function handleGrnCreate(input: CreateGrnInput): ApiResult<GrnSummary> {
         invoiceTotal: linesTotal,
         receivedDate,
         status: 'draft',
+        paymentType,
         notes: input.notes ?? null,
         createdBy: session.id,
         deviceId,
@@ -117,7 +125,8 @@ export function handleGrnCreate(input: CreateGrnInput): ApiResult<GrnSummary> {
       }
     });
 
-    logAudit('grn', 'create', grnId, undefined, { grnNumber, linesTotal });
+    saveVendorPaymentPreference(input.vendorId, paymentType);
+    logAudit('grn', 'create', grnId, undefined, { grnNumber, linesTotal, paymentType });
     const summary = mapGrn(grnId);
     if (!summary) return { success: false, error: 'Failed to load GRN' };
     return { success: true, data: summary };
@@ -230,7 +239,11 @@ export function handleGrnFinalize(id: string): ApiResult<GrnSummary> {
       syncProductsFromLatestGrn(tx, affectedProductIds, now);
     });
 
-    logAudit('grn', 'finalize', id, undefined, { grnNumber: header.grnNumber, linesTotal });
+    const paymentType = (header.paymentType ?? 'cash') as GrnPaymentType;
+    saveVendorPaymentPreference(header.vendorId, paymentType);
+    recalculateVendorBalance(header.vendorId, now);
+
+    logAudit('grn', 'finalize', id, undefined, { grnNumber: header.grnNumber, linesTotal, paymentType });
     const summary = mapGrn(id);
     return { success: true, data: summary! };
   } catch (e) {
@@ -374,6 +387,7 @@ export function handleGrnUpdate(id: string, input: UpdateGrnInput): ApiResult<Gr
     const deviceId = getSetting('device_id') ?? 'local-device';
     const branchId = getSetting('branch_id') ?? 'main';
     const vendorId = input.vendorId ?? header.vendorId;
+    const oldVendorId = header.vendorId;
 
     const affectedProductIds = new Set<string>();
 
@@ -388,6 +402,7 @@ export function handleGrnUpdate(id: string, input: UpdateGrnInput): ApiResult<Gr
       const headerPatch: Record<string, unknown> = { updatedAt: now };
       if (input.vendorId) headerPatch.vendorId = input.vendorId;
       if (input.invoiceNumber !== undefined) headerPatch.invoiceNumber = input.invoiceNumber || null;
+      if (input.paymentType !== undefined) headerPatch.paymentType = input.paymentType;
       if (input.notes !== undefined) headerPatch.notes = input.notes || null;
 
       if (input.items) {
@@ -430,6 +445,13 @@ export function handleGrnUpdate(id: string, input: UpdateGrnInput): ApiResult<Gr
       }
     });
 
+    const updatedPaymentType = (input.paymentType ?? header.paymentType ?? 'cash') as GrnPaymentType;
+    saveVendorPaymentPreference(vendorId, updatedPaymentType);
+    if (header.status === 'finalized') {
+      recalculateVendorBalance(vendorId, now);
+      if (oldVendorId !== vendorId) recalculateVendorBalance(oldVendorId, now);
+    }
+
     logAudit('grn', 'update', id, undefined, { status: header.status });
     const summary = mapGrn(id);
     if (!summary) return { success: false, error: 'Failed to load GRN' };
@@ -453,5 +475,36 @@ export function handleGrnCancel(id: string): ApiResult<void> {
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Cancel failed' };
+  }
+}
+
+export function handleGrnVoid(id: string): ApiResult<void> {
+  try {
+    requireRole('super_admin', 'manager');
+    const db = getDb();
+    const header = db.select().from(grnHeaders).where(eq(grnHeaders.id, id)).get();
+    if (!header) return { success: false, error: 'GRN not found' };
+    if (header.status !== 'finalized') return { success: false, error: 'Only finalized GRNs can be voided' };
+
+    const now = new Date().toISOString();
+    const oldLines = db.select().from(grnLines).where(eq(grnLines.grnId, id)).all();
+    const affectedProductIds = oldLines.map((l) => l.productId);
+
+    db.transaction((tx) => {
+      reverseFinalizedGrnEffects(tx, id, oldLines, now);
+      tx.update(grnHeaders)
+        .set({ status: 'cancelled', updatedAt: now })
+        .where(eq(grnHeaders.id, id))
+        .run();
+      if (affectedProductIds.length > 0) {
+        syncProductsFromLatestGrn(tx, affectedProductIds, now);
+      }
+    });
+
+    recalculateVendorBalance(header.vendorId, now);
+    logAudit('grn', 'void', id, undefined, { grnNumber: header.grnNumber });
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Void failed' };
   }
 }

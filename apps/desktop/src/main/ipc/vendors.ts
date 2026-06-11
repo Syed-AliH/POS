@@ -15,6 +15,8 @@ function mapVendor(row: typeof vendors.$inferSelect): Vendor {
     email: row.email,
     address: row.address,
     paymentTerms: row.paymentTerms,
+    preferredPaymentType: (row.preferredPaymentType as Vendor['preferredPaymentType']) ?? null,
+    outstandingBalance: row.outstandingBalance ?? 0,
   };
 }
 

@@ -6,3 +6,4 @@ export * from './inventory';
 export * from './operations';
 export * from './system';
 export * from './grn';
+export * from './supplierCredit';

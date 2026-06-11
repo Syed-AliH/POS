@@ -280,6 +280,8 @@ export interface GrnLine {
   lineTotal: number;
 }
 
+export type GrnPaymentType = 'cash' | 'credit';
+
 export interface GrnSummary {
   id: string;
   grnNumber: string;
@@ -290,6 +292,7 @@ export interface GrnSummary {
   linesTotal: number;
   receivedDate: string;
   status: 'draft' | 'finalized' | 'cancelled';
+  paymentType: GrnPaymentType;
   notes: string | null;
   createdByName: string;
   createdAt: string;
@@ -301,6 +304,7 @@ export interface CreateGrnInput {
   vendorId: string;
   invoiceNumber?: string;
   receivedDate?: string;
+  paymentType?: GrnPaymentType;
   notes?: string;
   items: Array<{ productId: string; qty: number; unitCost: number; unitRetail?: number }>;
 }
@@ -308,6 +312,7 @@ export interface CreateGrnInput {
 export interface UpdateGrnInput {
   vendorId?: string;
   invoiceNumber?: string;
+  paymentType?: GrnPaymentType;
   notes?: string;
   items?: Array<{ productId: string; qty: number; unitCost: number; unitRetail?: number }>;
 }
@@ -335,6 +340,49 @@ export interface Vendor {
   email: string | null;
   address: string | null;
   paymentTerms: string | null;
+  preferredPaymentType: GrnPaymentType | null;
+  outstandingBalance: number;
+}
+
+export interface SupplierPaymentInput {
+  vendorId: string;
+  amount: number;
+  paymentDate?: string;
+  notes?: string;
+}
+
+export interface SupplierPaymentUpdateInput {
+  amount?: number;
+  paymentDate?: string;
+  notes?: string;
+}
+
+export interface SupplierPaymentSummary {
+  id: string;
+  paymentNumber: string;
+  vendorId: string;
+  vendorName: string;
+  amount: number;
+  paymentDate: string;
+  notes: string | null;
+  balanceAfter: number;
+  createdAt: string;
+}
+
+export interface SupplierPaymentListParams {
+  vendorId?: string;
+  limit?: number;
+}
+
+export interface SupplierLedgerEntry {
+  id: string;
+  createdAt: string;
+  transactionType: 'credit_grn' | 'payment';
+  referenceNumber: string;
+  debitAmount: number;
+  creditAmount: number;
+  runningBalance: number;
+  notes: string | null;
 }
 
 export interface VendorInput {
@@ -642,6 +690,40 @@ export interface InventoryValuation {
   productCount: number;
   negativeStockCount: number;
   negativeStockItems: Array<{ id: string; name: string; sku: string; stockQty: number }>;
+}
+
+export type InventoryStockFilter = 'all' | 'negative' | 'zero' | 'low';
+
+export interface InventoryReportParams {
+  search?: string;
+  categoryId?: string;
+  stockFilter?: InventoryStockFilter;
+}
+
+export interface InventoryReportRow {
+  id: string;
+  productName: string;
+  barcode: string;
+  sku: string;
+  categoryId: string | null;
+  categoryName: string;
+  stockQty: number;
+  reorderLevel: number;
+  costPrice: number;
+  retailPrice: number;
+  inventoryValue: number;
+  lastGrnDate: string | null;
+  updatedAt: string;
+}
+
+export interface InventoryReportSummary {
+  rows: InventoryReportRow[];
+  totalProducts: number;
+  totalUnits: number;
+  totalInventoryValue: number;
+  negativeCount: number;
+  zeroCount: number;
+  lowCount: number;
 }
 
 export interface ProfitReport {

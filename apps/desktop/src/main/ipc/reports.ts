@@ -1,6 +1,8 @@
 import { and, eq } from 'drizzle-orm';
 import {
   categories,
+  grnHeaders,
+  grnLines,
   products,
   returns,
   saleItems,
@@ -8,6 +10,9 @@ import {
 } from '@mama-babi/db-schema';
 import type {
   ApiResult,
+  InventoryReportParams,
+  InventoryReportRow,
+  InventoryReportSummary,
   InventoryValuation,
   PaymentBreakdownRow,
   ProfitReport,
@@ -181,6 +186,96 @@ export function handleInventoryValuation(): ApiResult<InventoryValuation> {
     };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Report failed' };
+  }
+}
+
+function getLastGrnDateByProduct(): Map<string, string> {
+  const db = getDb();
+  const map = new Map<string, string>();
+  const lines = db.select().from(grnLines).all();
+  for (const line of lines) {
+    const header = db.select().from(grnHeaders).where(eq(grnHeaders.id, line.grnId)).get();
+    if (!header || header.status !== 'finalized') continue;
+    const existing = map.get(line.productId);
+    const candidate = header.receivedDate ?? header.createdAt.slice(0, 10);
+    if (!existing || candidate > existing) {
+      map.set(line.productId, candidate);
+    }
+  }
+  return map;
+}
+
+export function handleInventoryReport(params?: InventoryReportParams): ApiResult<InventoryReportSummary> {
+  try {
+    requireRole('super_admin', 'manager');
+    const db = getDb();
+    const lastGrnDates = getLastGrnDateByProduct();
+    const categoryRows = db.select().from(categories).all();
+    const categoryMap = new Map(categoryRows.map((c) => [c.id, c.name]));
+
+    let rows = db
+      .select()
+      .from(products)
+      .where(and(eq(products.isDeleted, false), eq(products.status, 'active')))
+      .all();
+
+    const search = params?.search?.trim().toLowerCase();
+    if (search) {
+      rows = rows.filter(
+        (p) =>
+          p.name.toLowerCase().includes(search) ||
+          p.sku.toLowerCase().includes(search) ||
+          p.barcode.toLowerCase().includes(search),
+      );
+    }
+
+    if (params?.categoryId) {
+      rows = rows.filter((p) => p.categoryId === params.categoryId);
+    }
+
+    const stockFilter = params?.stockFilter ?? 'all';
+    if (stockFilter === 'negative') rows = rows.filter((p) => p.stockQty < 0);
+    else if (stockFilter === 'zero') rows = rows.filter((p) => p.stockQty === 0);
+    else if (stockFilter === 'low') rows = rows.filter((p) => p.stockQty > 0 && p.stockQty <= p.reorderLevel);
+
+    const reportRows: InventoryReportRow[] = rows.map((p) => ({
+      id: p.id,
+      productName: p.name,
+      barcode: p.barcode,
+      sku: p.sku,
+      categoryId: p.categoryId,
+      categoryName: p.categoryId ? categoryMap.get(p.categoryId) ?? 'Uncategorized' : 'Uncategorized',
+      stockQty: p.stockQty,
+      reorderLevel: p.reorderLevel,
+      costPrice: p.costPrice,
+      retailPrice: p.salePrice ?? p.retailPrice,
+      inventoryValue: p.stockQty * p.costPrice,
+      lastGrnDate: lastGrnDates.get(p.id) ?? null,
+      updatedAt: p.updatedAt,
+    }));
+
+    reportRows.sort((a, b) => a.productName.localeCompare(b.productName));
+
+    const allActive = db
+      .select()
+      .from(products)
+      .where(and(eq(products.isDeleted, false), eq(products.status, 'active')))
+      .all();
+
+    return {
+      success: true,
+      data: {
+        rows: reportRows,
+        totalProducts: reportRows.length,
+        totalUnits: reportRows.reduce((sum, r) => sum + r.stockQty, 0),
+        totalInventoryValue: reportRows.reduce((sum, r) => sum + r.inventoryValue, 0),
+        negativeCount: allActive.filter((p) => p.stockQty < 0).length,
+        zeroCount: allActive.filter((p) => p.stockQty === 0).length,
+        lowCount: allActive.filter((p) => p.stockQty > 0 && p.stockQty <= p.reorderLevel).length,
+      },
+    };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Inventory report failed' };
   }
 }
 

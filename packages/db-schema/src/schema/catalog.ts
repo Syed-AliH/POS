@@ -27,6 +27,8 @@ export const vendors = sqliteTable('vendors', {
   email: text('email'),
   address: text('address'),
   paymentTerms: text('payment_terms'),
+  preferredPaymentType: text('preferred_payment_type', { enum: ['cash', 'credit'] }).default('cash'),
+  outstandingBalance: real('outstanding_balance').notNull().default(0),
   ...syncColumns,
   ...timestamps,
 });

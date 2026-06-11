@@ -9,6 +9,7 @@ export const grnHeaders = sqliteTable('grn_headers', {
   invoiceTotal: real('invoice_total').notNull().default(0),
   receivedDate: text('received_date').notNull(),
   status: text('status', { enum: ['draft', 'finalized', 'cancelled'] }).notNull().default('draft'),
+  paymentType: text('payment_type', { enum: ['cash', 'credit'] }).notNull().default('cash'),
   notes: text('notes'),
   createdBy: text('created_by').notNull(),
   ...syncColumns,

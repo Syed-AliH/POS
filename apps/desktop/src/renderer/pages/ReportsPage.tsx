@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
 import { localCalendarDate } from '@shared/datetime';
@@ -66,6 +67,7 @@ export function ReportsPage() {
           <Button variant="secondary" size="sm" onClick={load} disabled={loading}>
             {loading ? 'Loading…' : 'Refresh'}
           </Button>
+          <Link to="/inventory-report" className="text-sm text-pink-700 hover:underline px-2 py-2">Inventory Report →</Link>
         </div>
       </div>
 
