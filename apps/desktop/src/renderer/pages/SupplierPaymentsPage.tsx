@@ -105,12 +105,12 @@ export function SupplierPaymentsPage() {
   const selectedVendor = vendors.find((v) => v.id === vendorId);
 
   return (
-    <div className="h-full overflow-y-auto p-6">
+    <div className="page-shell">
       <h2 className="text-2xl font-bold mb-2">Supplier Payments</h2>
       <p className="text-slate-500 mb-6">Record payments against supplier credit balances and view the full ledger</p>
 
       <div className="grid grid-cols-2 gap-6 mb-6">
-        <div className="bg-white rounded-xl border p-4 space-y-3">
+        <div className="panel p-4 space-y-3">
           <h3 className="font-semibold">Record Payment</h3>
           <label className="text-xs font-medium text-slate-500 uppercase">Supplier</label>
           <select value={vendorId} onChange={(e) => setVendorId(e.target.value)} className="w-full px-3 py-2 border rounded-lg">
@@ -123,7 +123,7 @@ export function SupplierPaymentsPage() {
 
           <div className="p-3 bg-slate-50 rounded-lg">
             <p className="text-xs text-slate-500">Outstanding credit balance</p>
-            <p className="text-2xl font-bold text-pink-700">PKR {outstanding.toFixed(2)}</p>
+            <p className="text-2xl font-bold text-primary-700">PKR {outstanding.toFixed(2)}</p>
             {selectedVendor?.preferredPaymentType && (
               <p className="text-xs text-slate-400 mt-1">Preferred GRN payment: {selectedVendor.preferredPaymentType}</p>
             )}
@@ -137,7 +137,7 @@ export function SupplierPaymentsPage() {
           </Button>
         </div>
 
-        <div className="bg-white rounded-xl border p-4">
+        <div className="panel p-4">
           <h3 className="font-semibold mb-3">Recent Payments</h3>
           {loading && payments.length === 0 ? (
             <p className="text-slate-400 text-sm">Loading…</p>
@@ -167,7 +167,7 @@ export function SupplierPaymentsPage() {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl border">
+      <div className="panel">
         <div className="p-4 border-b">
           <h3 className="font-semibold">Supplier Ledger / Statement</h3>
           <p className="text-xs text-slate-500 mt-1">

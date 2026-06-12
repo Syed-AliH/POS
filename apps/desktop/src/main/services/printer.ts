@@ -3,39 +3,61 @@ import { BrowserWindow } from 'electron';
 import PosPrinterPkg from 'electron-pos-printer';
 
 const { PosPrinter } = PosPrinterPkg as { PosPrinter: { print: (data: unknown[], options: unknown) => Promise<void> } };
-import { formatReceipt, type ReceiptSale } from '@mama-babi/printer';
+import {
+  formatReceipt,
+  SAMPLE_RECEIPT_SALE,
+  type ReceiptSale,
+  type ReceiptTemplateConfig,
+} from '@mama-babi/printer';
 import { getAllSettings } from './settings';
+import { getDefaultReceiptTemplate, receiptTemplateToConfig } from './receiptTemplates';
 
-export async function printReceiptToDevice(sale: ReceiptSale): Promise<{ printed: boolean; fallback?: string }> {
-  const settings = getAllSettings();
-  const printerName = settings.receipt_printer;
-
-  const data = formatReceipt(sale, settings).split('\n').map((line) => ({
+function receiptPrintData(text: string) {
+  return text.split('\n').map((line) => ({
     type: 'text' as const,
     value: line,
-    style: { fontSize: '12px' },
+    style: { fontSize: '12px', fontFamily: 'monospace' },
   }));
+}
+
+export async function printReceiptToDevice(
+  sale: ReceiptSale,
+  templateOverride?: ReceiptTemplateConfig,
+): Promise<{ printed: boolean; fallback?: string }> {
+  const settings = getAllSettings();
+  const printerName = settings.receipt_printer;
+  const template = templateOverride ?? (() => {
+    const tpl = getDefaultReceiptTemplate();
+    return tpl ? receiptTemplateToConfig(tpl) : undefined;
+  })();
+  const widthMm = template?.widthMm ?? 80;
+  const text = formatReceipt(sale, settings, template);
+  const data = receiptPrintData(text);
 
   try {
     const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
     if (!win) throw new Error('No window available for printing');
     await PosPrinter.print(data, {
       preview: !printerName,
-      width: '80mm',
+      width: `${widthMm}mm`,
       margin: '0 0 0 0',
       copies: 1,
       printerName: printerName || undefined,
       timeOutPerLine: 400,
       silent: !!printerName,
-      pageSize: '80mm',
+      pageSize: `${widthMm}mm`,
     });
     return { printed: true };
   } catch (err) {
-    const fallback = formatReceipt(sale, settings);
-    console.log('[print:fallback]\n', fallback);
+    console.log('[print:fallback]\n', text);
     console.warn('[print:error]', err);
-    return { printed: false, fallback };
+    return { printed: false, fallback: text };
   }
+}
+
+export async function printTestReceipt(template?: ReceiptTemplateConfig): Promise<{ printed: boolean }> {
+  const result = await printReceiptToDevice(SAMPLE_RECEIPT_SALE, template);
+  return { printed: result.printed };
 }
 
 export function formatZReport(report: {

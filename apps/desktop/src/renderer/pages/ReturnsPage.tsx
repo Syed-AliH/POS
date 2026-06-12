@@ -255,7 +255,7 @@ export function ReturnsPage() {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl border p-4 mb-6">
+        <div className="panel p-4 mb-6">
           <label className="text-xs font-medium text-slate-500 uppercase">Step 1 — Find sale (F1)</label>
           <div className="flex gap-2 mt-2 mb-3">
             {LOOKUP_MODES.map((mode) => (
@@ -265,8 +265,8 @@ export function ReturnsPage() {
                 onClick={() => handleModeChange(mode.id)}
                 className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
                   lookupMode === mode.id
-                    ? 'bg-pink-50 border-pink-300 text-pink-700 font-medium'
-                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    ? 'border-primary-300 bg-primary-50 font-medium text-primary-700 dark:border-primary-700 dark:bg-primary-950 dark:text-primary-300'
+                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'
                 }`}
               >
                 {mode.label}
@@ -293,8 +293,8 @@ export function ReturnsPage() {
             )}
             <div className="flex-1 overflow-y-auto">
               <table className="w-full text-sm">
-                <thead className="bg-slate-50 sticky top-0 z-10">
-                  <tr className="text-left text-slate-500 border-b">
+                <thead className="table-head">
+                  <tr className="text-left border-b">
                     <th className="p-2 pl-3">Sale #</th>
                     <th className="p-2">Date</th>
                     <th className="p-2">Time</th>
@@ -318,10 +318,8 @@ export function ReturnsPage() {
                     <tr
                       key={row.id}
                       onClick={() => selectSale(row)}
-                      className={`border-t cursor-pointer transition-colors ${
-                        sale?.id === row.id
-                          ? 'bg-pink-50 hover:bg-pink-50'
-                          : 'hover:bg-slate-50'
+                      className={`border-t cursor-pointer row-hover ${
+                        sale?.id === row.id ? 'row-active' : ''
                       }`}
                     >
                       <td className="p-2 pl-3 font-mono font-medium">{row.saleNumber}</td>
@@ -346,7 +344,7 @@ export function ReturnsPage() {
 
           {sale && (
             <div className="space-y-4 mt-4">
-              <div className="flex justify-between items-start p-3 bg-slate-50 rounded-lg">
+              <div className="flex justify-between items-start p-3 bg-slate-50 dark:bg-slate-800 rounded-lg">
                 <div>
                   <p className="font-mono font-semibold">{sale.saleNumber}</p>
                   <p className="text-sm text-slate-500">{formatDateTime(sale.createdAt)} · {sale.cashierName}</p>
@@ -414,7 +412,7 @@ export function ReturnsPage() {
           )}
         </div>
 
-        <div className="bg-white rounded-xl border">
+        <div className="panel">
           <h3 className="p-4 font-semibold border-b">
             Recent Returns
             <span className="text-sm font-normal text-slate-500 ml-2">
@@ -422,7 +420,7 @@ export function ReturnsPage() {
             </span>
           </h3>
           <table className="w-full text-sm">
-            <thead className="bg-slate-50">
+            <thead className="table-head">
               <tr><th className="p-3 text-left">Return #</th><th className="p-3">Date</th><th className="p-3">Time</th><th className="p-3">Sale #</th><th className="p-3">Refund</th><th className="p-3">Method</th></tr>
             </thead>
             <tbody>

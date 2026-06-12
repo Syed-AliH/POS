@@ -69,18 +69,18 @@ export function ShortcutHelp() {
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[100]" onClick={() => setOpen(false)}>
-      <div className="bg-white rounded-xl p-6 w-full max-w-lg shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <h3 className="font-semibold text-lg mb-1">Keyboard Shortcuts</h3>
-        <p className="text-sm text-slate-500 mb-4">Logged in as {session?.name} ({session?.role})</p>
+      <div className="panel w-full max-w-lg p-6 shadow-xl dark:shadow-none" onClick={(e) => e.stopPropagation()}>
+        <h3 className="mb-1 text-lg font-semibold text-slate-900 dark:text-slate-50">Keyboard Shortcuts</h3>
+        <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">Logged in as {session?.name} ({session?.role})</p>
 
         <div className="space-y-4 max-h-[28rem] overflow-y-auto">
           {pageShortcuts.length > 0 && (
             <section>
               <h4 className="text-xs font-semibold text-slate-400 uppercase mb-2">This page</h4>
               {pageShortcuts.map((s) => (
-                <div key={s.key} className="flex justify-between py-1.5 text-sm border-b border-slate-100">
-                  <span>{s.label}</span>
-                  <kbd className="px-2 py-0.5 bg-slate-100 rounded text-xs font-mono">{s.key}</kbd>
+                <div key={s.key} className="flex justify-between border-b border-slate-100 py-1.5 text-sm dark:border-slate-800">
+                  <span className="text-slate-700 dark:text-slate-300">{s.label}</span>
+                  <kbd className="rounded bg-slate-100 px-2 py-0.5 font-mono text-xs dark:bg-slate-800 dark:text-slate-200">{s.key}</kbd>
                 </div>
               ))}
             </section>
@@ -89,7 +89,7 @@ export function ShortcutHelp() {
             <h4 className="text-xs font-semibold text-slate-400 uppercase mb-2">Full POS workflow</h4>
             {WORKFLOW_GUIDE.map((w) => (
               <div key={w.step} className="flex gap-3 py-1.5 text-sm border-b border-slate-100">
-                <span className="w-5 h-5 rounded-full bg-pink-100 text-pink-700 flex items-center justify-center text-xs font-bold shrink-0">{w.step}</span>
+                <span className="w-5 h-5 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-xs font-bold shrink-0">{w.step}</span>
                 <div><span className="font-medium">{w.label}</span><span className="text-slate-500"> — {w.desc}</span></div>
               </div>
             ))}

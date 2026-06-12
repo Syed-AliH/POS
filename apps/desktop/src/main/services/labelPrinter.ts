@@ -1,15 +1,25 @@
 import { BrowserWindow } from 'electron';
 // @ts-expect-error no types published
 import PosPrinterPkg from 'electron-pos-printer';
-import { buildLabelPrintData, type LabelLayout, type LabelProduct } from '@mama-babi/printer';
+import { buildLabelPrintData, SAMPLE_LABEL_PRODUCT, type LabelLayout, type LabelProduct } from '@mama-babi/printer';
 import { getAllSettings } from './settings';
 
 const { PosPrinter } = PosPrinterPkg as { PosPrinter: { print: (data: unknown[], options: unknown) => Promise<void> } };
+
+export async function printTestLabel(
+  layout: LabelLayout,
+  widthMm: number,
+  heightMm: number,
+): Promise<{ printed: boolean }> {
+  const result = await printLabelsBatch([SAMPLE_LABEL_PRODUCT], layout, widthMm, heightMm);
+  return { printed: result.printed };
+}
 
 export async function printLabelsBatch(
   products: LabelProduct[],
   layout: LabelLayout,
   widthMm: number,
+  heightMm = 30,
 ): Promise<{ printed: boolean; labelCount: number }> {
   const settings = getAllSettings();
   const printerName = settings.label_printer || settings.receipt_printer;
@@ -26,7 +36,7 @@ export async function printLabelsBatch(
     printerName: printerName || undefined,
     timeOutPerLine: 400,
     silent: !!printerName,
-    pageSize: { width: widthMm * 1000, height: 30000 },
+    pageSize: { width: widthMm * 1000, height: heightMm * 1000 },
   };
 
   let printed = false;

@@ -420,10 +420,10 @@ export function CheckoutPage() {
       <WorkflowStepper steps={WORKFLOW_STEPS} currentStep={workflowStep} />
 
       {productCount === 0 && (
-        <div className="mx-4 mt-3 p-4 bg-amber-50 border border-amber-200 rounded-xl flex justify-between items-center gap-4">
+        <div className="mx-4 mt-3 flex items-center justify-between gap-4 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/50">
           <div>
-            <p className="font-semibold text-amber-900">No products in catalog</p>
-            <p className="text-sm text-amber-700">
+            <p className="font-semibold text-amber-900 dark:text-amber-200">No products in catalog</p>
+            <p className="text-sm text-amber-700 dark:text-amber-300">
               {isManager ? 'Load demo data or add products in Products tab' : 'Ask a manager to add products first'}
             </p>
           </div>
@@ -437,9 +437,9 @@ export function CheckoutPage() {
       )}
 
       <div className="flex-1 flex overflow-hidden min-h-0">
-        <div className="w-[60%] flex flex-col border-r border-slate-200 bg-white">
-          <div className="p-4 border-b border-slate-100 flex justify-between items-center">
-            <h2 className="font-semibold text-lg">
+        <div className="flex w-[60%] flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
+          <div className="flex items-center justify-between border-b border-slate-100 p-4 dark:border-slate-800">
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">
               Cart ({items.length})
               {heldSaleId && <span className="text-xs text-amber-600 ml-2">Resumed hold</span>}
             </h2>
@@ -454,9 +454,9 @@ export function CheckoutPage() {
           <div className="flex-1 overflow-y-auto">
             {items.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full p-8 text-center">
-                <div className="w-16 h-16 rounded-full bg-pink-100 flex items-center justify-center text-2xl mb-4">🛒</div>
-                <h3 className="font-semibold text-lg text-slate-700 mb-2">Start a sale</h3>
-                <ol className="text-sm text-slate-500 space-y-2 text-left max-w-xs">
+                <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-primary-100 text-2xl dark:bg-primary-950">🛒</div>
+                <h3 className="mb-2 text-lg font-semibold text-slate-700 dark:text-slate-200">Start a sale</h3>
+                <ol className="max-w-xs space-y-2 text-left text-sm text-slate-500 dark:text-slate-400">
                   <li><strong>1.</strong> Press <kbd className="px-1.5 py-0.5 bg-slate-100 rounded text-xs">F1</kbd> and type a product name</li>
                   <li><strong>2.</strong> Or scan a barcode (scanner auto-adds)</li>
                   <li><strong>3.</strong> Press <kbd className="px-1.5 py-0.5 bg-slate-100 rounded text-xs">F4</kbd> to charge when ready</li>
@@ -467,8 +467,8 @@ export function CheckoutPage() {
               </div>
             ) : (
               <table className="w-full">
-                <thead className="bg-slate-50 sticky top-0">
-                  <tr className="text-left text-sm text-slate-500">
+                <thead className="sticky top-0 bg-slate-50 dark:bg-slate-800/90">
+                  <tr className="text-left text-sm text-slate-500 dark:text-slate-400">
                     <th className="p-3">Product</th>
                     <th className="p-3 w-28">Qty</th>
                     <th className="p-3 w-16">Disc%</th>
@@ -486,12 +486,12 @@ export function CheckoutPage() {
                     return (
                       <tr
                         key={item.productId}
-                        className="border-t border-slate-100 cursor-pointer hover:bg-slate-50"
+                        className="cursor-pointer border-t border-slate-100 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50"
                         title="Double-click for product history"
                         onDoubleClick={() => setHistoryProduct({ id: item.productId, name: item.productName })}
                       >
                         <td className="p-3">
-                          <div className="font-medium">{item.productName}</div>
+                          <div className="font-medium text-slate-900 dark:text-slate-100">{item.productName}</div>
                           <div className="text-xs text-slate-400">{item.productSku}</div>
                           <div className={`text-xs mt-0.5 font-medium ${negativeStock ? 'text-red-600' : available <= 0 ? 'text-amber-600' : lowStock ? 'text-amber-600' : 'text-green-700'}`}>
                             Available: {available} <span className="text-slate-400 font-normal">({onHand} on hand)</span>
@@ -499,11 +499,11 @@ export function CheckoutPage() {
                         </td>
                         <td className="p-3" onDoubleClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center gap-2">
-                            <button type="button" className="w-10 h-10 rounded bg-slate-100 font-bold" onClick={() => updateQuantity(item.productId, item.quantity - 1)}>-</button>
-                            <span className="w-8 text-center font-medium">{item.quantity}</span>
+                            <button type="button" className="h-10 w-10 rounded bg-slate-100 font-bold dark:bg-slate-800 dark:text-slate-100" onClick={() => updateQuantity(item.productId, item.quantity - 1)}>-</button>
+                            <span className="w-8 text-center font-medium text-slate-900 dark:text-slate-100">{item.quantity}</span>
                             <button
                               type="button"
-                              className="w-10 h-10 rounded bg-slate-100 font-bold"
+                              className="h-10 w-10 rounded bg-slate-100 font-bold dark:bg-slate-800 dark:text-slate-100"
                               onClick={() => {
                                 const nextAvailable = onHand - item.quantity - 1;
                                 updateQuantity(item.productId, item.quantity + 1);
@@ -535,8 +535,8 @@ export function CheckoutPage() {
             )}
           </div>
 
-          <div className="p-4 border-t border-slate-200 bg-slate-50 space-y-1">
-            <div className="flex justify-between text-sm"><span>Subtotal</span><span>PKR {getSubtotal().toFixed(2)}</span></div>
+          <div className="space-y-1 border-t border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/80">
+            <div className="flex justify-between text-sm text-slate-700 dark:text-slate-300"><span>Subtotal</span><span>PKR {getSubtotal().toFixed(2)}</span></div>
             {discountAmount > 0 && (
               <div className="flex justify-between text-sm text-green-700">
                 <span>Promo{appliedPromos.length ? `: ${appliedPromos.join(', ')}` : ''}</span>
@@ -550,7 +550,7 @@ export function CheckoutPage() {
               </div>
             )}
             <div className="flex justify-between text-sm"><span>Tax</span><span>PKR {getTax(taxInclusive).toFixed(2)}</span></div>
-            <div className="flex justify-between text-xl font-bold text-pink-700 pt-2 border-t">
+            <div className="flex justify-between border-t pt-2 text-xl font-bold text-primary-700 dark:border-slate-700 dark:text-primary-400">
               <span>Total</span><span>PKR {total.toFixed(2)}</span>
             </div>
             {secondaryTotal != null && (
@@ -561,9 +561,9 @@ export function CheckoutPage() {
           </div>
         </div>
 
-        <div className="w-[40%] flex flex-col bg-slate-50">
-          <div className="p-4 border-b border-slate-200 bg-white">
-            <label className="text-xs font-medium text-slate-500 uppercase tracking-wide">Step 1 — Find product (F1)</label>
+        <div className="flex w-[40%] flex-col bg-slate-50 dark:bg-slate-900/50">
+          <div className="border-b border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+            <label className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Step 1 — Find product (F1)</label>
             <input
               ref={searchRef}
               type="text"
@@ -571,24 +571,24 @@ export function CheckoutPage() {
               value={search}
               onChange={(e) => handleSearch(e.target.value)}
               onKeyDown={handleSearchKeyDown}
-              className="w-full mt-1 px-4 py-3 rounded-lg border border-slate-200 text-lg focus:outline-none focus:ring-2 focus:ring-pink-500"
+              className="mt-2 w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-4 text-xl font-medium text-slate-900 shadow-sm focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
             />
             {search.length > 0 && search.length < 2 && (
               <p className="text-xs text-slate-400 mt-1">Type at least 2 characters…</p>
             )}
             {searchResults.length > 0 && (
-              <div className="mt-2 bg-white rounded-lg border border-slate-200 max-h-52 overflow-y-auto shadow-sm">
+              <div className="mt-2 max-h-52 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
                 {searchResults.map((p, idx) => {
                   const available = getAvailableStock(p.id, p.stockQty);
                   return (
                     <button
                       key={p.id}
                       type="button"
-                      className={`w-full text-left px-4 py-3 border-b border-slate-100 last:border-0 ${idx === searchIndex ? 'bg-pink-100' : 'hover:bg-pink-50'}`}
+                      className={`w-full border-b border-slate-100 px-4 py-3 text-left last:border-0 dark:border-slate-800 ${idx === searchIndex ? 'bg-primary-100 dark:bg-primary-950' : 'hover:bg-primary-50 dark:hover:bg-slate-800'}`}
                       onClick={() => { void addProductSafe(p); }}
                       onMouseEnter={() => setSearchIndex(idx)}
                     >
-                      <div className="font-medium">{p.name}</div>
+                      <div className="font-medium text-slate-900 dark:text-slate-100">{p.name}</div>
                       <div className="text-sm text-slate-500 flex justify-between">
                         <span>PKR {(p.salePrice ?? p.retailPrice).toFixed(2)}</span>
                         <span className={available < 0 ? 'text-red-600 font-medium' : available <= 0 ? 'text-amber-600 font-medium' : available <= 5 ? 'text-amber-600' : ''}>
@@ -606,8 +606,8 @@ export function CheckoutPage() {
             )}
           </div>
 
-          <div className="px-4 py-3 space-y-2 border-b border-slate-200">
-            <label className="text-xs font-medium text-slate-500 uppercase tracking-wide">Customer (optional, F5)</label>
+          <div className="space-y-2 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+            <label className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Customer (optional, F5)</label>
             <input
               ref={customerRef}
               type="tel"
@@ -617,12 +617,12 @@ export function CheckoutPage() {
               className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
             />
             {customerResults.length > 0 && (
-              <div className="bg-white rounded-lg border max-h-24 overflow-y-auto">
+              <div className="max-h-24 overflow-y-auto rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
                 {customerResults.map((c) => (
                   <button
                     key={c.id}
                     type="button"
-                    className="w-full text-left px-3 py-2 text-sm hover:bg-pink-50 border-b last:border-0"
+                    className="w-full border-b px-3 py-2 text-left text-sm last:border-0 hover:bg-primary-50 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-800"
                     onClick={() => {
                       setCustomer(c);
                       setCustomerPhone(c.phone ?? '');
@@ -649,7 +649,7 @@ export function CheckoutPage() {
               )}
             </div>
             {customer && (
-              <div className="flex items-center justify-between text-sm bg-pink-50 p-2 rounded-lg border border-pink-200">
+              <div className="flex items-center justify-between text-sm bg-primary-50 p-2 rounded-lg border border-primary-200">
                 <span>Linked · {customer.loyaltyPoints} loyalty pts</span>
                 <div className="flex gap-2 items-center">
                   <input
@@ -665,16 +665,18 @@ export function CheckoutPage() {
             )}
           </div>
 
-          <div className="p-4 border-b border-slate-200">
-            <label className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2 block">Step 3 — Payment</label>
+          <div className="border-b border-slate-200 p-4 dark:border-slate-800">
+            <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Step 3 — Payment</label>
             <div className="flex gap-2">
               {(['cash', 'card', 'wallet'] as PaymentMethod[]).map((m) => (
                 <button
                   key={m}
                   type="button"
                   onClick={() => setPaymentMethod(m)}
-                  className={`flex-1 py-2.5 rounded-lg text-xs font-medium capitalize min-h-[44px] ${
-                    paymentMethod === m ? 'bg-pink-600 text-white' : 'bg-white border border-slate-200'
+                  className={`min-h-[44px] flex-1 rounded-lg py-2.5 text-xs font-medium capitalize ${
+                    paymentMethod === m
+                      ? 'bg-primary-600 text-white'
+                      : 'border border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200'
                   }`}
                 >
                   {m === 'wallet' ? 'Gift Card' : m.replace('_', ' ')}
@@ -701,8 +703,8 @@ export function CheckoutPage() {
           )}
 
           {paymentMethod === 'cash' && (
-            <div className="p-4 border-b border-slate-200">
-              <label className="text-sm text-slate-600">Amount tendered (F6)</label>
+            <div className="border-b border-slate-200 p-4 dark:border-slate-800">
+              <label className="text-sm text-slate-600 dark:text-slate-400">Amount tendered (F6)</label>
               <input
                 ref={tenderRef}
                 type="number"
@@ -721,7 +723,7 @@ export function CheckoutPage() {
           )}
 
           {paymentMethod === 'card' && (
-            <div className="p-4 text-sm text-slate-500 border-b border-slate-200">
+            <div className="border-b border-slate-200 p-4 text-sm text-slate-500 dark:border-slate-800 dark:text-slate-400">
               No extra input needed — press <strong>F4</strong> to charge PKR {total.toFixed(2)}
             </div>
           )}
@@ -805,7 +807,7 @@ export function CheckoutPage() {
           <div className="space-y-2 max-h-64 overflow-y-auto">
             {heldSales.map((s) => (
               <div key={s.id} className="flex gap-2 items-center p-3 border rounded-lg">
-                <button type="button" onClick={() => handleResume(s)} className="flex-1 text-left hover:bg-pink-50 rounded p-1">
+                <button type="button" onClick={() => handleResume(s)} className="flex-1 text-left hover:bg-primary-50 rounded p-1">
                   <div className="font-medium">{s.heldKey}</div>
                   <div className="text-sm text-slate-500">{s.items.length} items — PKR {s.totalAmount.toFixed(2)}</div>
                 </button>

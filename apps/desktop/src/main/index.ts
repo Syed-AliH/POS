@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { getDbPath, initDatabase } from './db';
 import { registerIpcHandlers } from './ipc';
 import { seedLabelTemplatesIfEmpty } from './services/labelTemplates';
+import { seedReceiptTemplatesIfEmpty } from './services/receiptTemplates';
 import { seedDemoProductsIfEmpty } from './services/demoProducts';
 import { ensureAuthCredentials } from './services/ensureAuth';
 import { seedIfEmpty } from './services/seed';
@@ -105,6 +106,7 @@ app.whenReady().then(async () => {
   seedDemoProductsIfEmpty();
   ensureDefaultSettings();
   seedLabelTemplatesIfEmpty();
+  seedReceiptTemplatesIfEmpty();
   registerIpcHandlers();
   Menu.setApplicationMenu(null);
   createWindow();

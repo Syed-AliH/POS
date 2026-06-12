@@ -115,12 +115,12 @@ export function ProductSearchModal({ open, onClose, onSelect, getAvailableStock 
         </div>
       </div>
       <p className="text-xs text-slate-400 mb-2 shrink-0">Master: name prefix · Refine: narrow list · ↑↓ Enter add · Esc close</p>
-      <div className="border rounded-lg h-[280px] flex flex-col overflow-hidden">
-        <div className="flex justify-between items-center px-4 py-2 bg-slate-50 border-b text-xs font-medium text-slate-500 shrink-0">
-          <button type="button" onClick={() => toggleSort('name')} className="text-left hover:text-pink-700">
+      <div className="flex h-[280px] flex-col overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs font-medium text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
+          <button type="button" onClick={() => toggleSort('name')} className="text-left hover:text-primary-700">
             Product Name{sortIcon('name')}
           </button>
-          <button type="button" onClick={() => toggleSort('price')} className="text-right hover:text-pink-700 min-w-[80px]">
+          <button type="button" onClick={() => toggleSort('price')} className="text-right hover:text-primary-700 min-w-[80px]">
             Price{sortIcon('price')}
           </button>
         </div>
@@ -134,10 +134,10 @@ export function ProductSearchModal({ open, onClose, onSelect, getAvailableStock 
                 key={p.id}
                 type="button"
                 onClick={() => onSelect(p)}
-                className={`w-full text-left px-4 py-2 border-b last:border-b-0 flex justify-between items-center ${i === selectedIdx ? 'bg-pink-50' : 'hover:bg-slate-50'}`}
+                className={`flex w-full items-center justify-between border-b px-4 py-2 text-left last:border-b-0 dark:border-slate-800 ${i === selectedIdx ? 'bg-primary-50 dark:bg-primary-950' : 'hover:bg-slate-50 dark:hover:bg-slate-800'}`}
               >
                 <div>
-                  <div className="font-medium">{p.name}</div>
+                  <div className="font-medium text-slate-900 dark:text-slate-100">{p.name}</div>
                   <div className={`text-xs ${available < 0 ? 'text-red-600 font-medium' : available <= 0 ? 'text-amber-600 font-medium' : 'text-slate-500'}`}>
                     {p.sku} · {available < 0 ? `Stock: ${available}` : available === 0 ? 'No stock on hand' : `Available: ${available}`}
                   </div>

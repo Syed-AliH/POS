@@ -52,7 +52,7 @@ export async function handleLabelPrintBatch(input: {
 
     if (!labelProducts.length) return { success: false, error: 'No valid products' };
 
-    const result = await printLabelsBatch(labelProducts, template.layout, template.widthMm);
+    const result = await printLabelsBatch(labelProducts, template.layout, template.widthMm, template.heightMm);
     logAudit('labels', 'print_batch', input.templateId, undefined, { labelCount: result.labelCount });
     return { success: true, data: result };
   } catch (e) {

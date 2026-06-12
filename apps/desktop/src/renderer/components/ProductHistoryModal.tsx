@@ -58,7 +58,7 @@ export function ProductHistoryModal({ open, productId, productName, onClose }: P
                 type="button"
                 onClick={() => setActiveTab(tab)}
                 className={`px-4 py-2 rounded-lg text-sm font-medium capitalize ${
-                  activeTab === tab ? 'bg-pink-100 text-pink-800' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  activeTab === tab ? 'bg-primary-100 text-primary-800' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}
               >
                 {tab === 'sales' ? 'Sales' : 'Purchases'}

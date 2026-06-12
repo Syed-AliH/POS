@@ -8,7 +8,9 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "clsx": "^2.1.1"
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^3.6.0"
   },
   "peerDependencies": {
     "react": "^19.0.0"

@@ -54,11 +54,11 @@ export function ExpensesPage() {
   };
 
   return (
-    <div className="h-full overflow-y-auto p-6">
+    <div className="page-shell">
       <h2 className="text-2xl font-bold mb-2">Expenses</h2>
-      <div className="mb-4 p-3 bg-pink-50 rounded-lg inline-block">
+      <div className="mb-4 p-3 bg-primary-50 rounded-lg inline-block">
         <span className="text-sm text-slate-600">Period total (approved): </span>
-        <span className="font-bold text-pink-800">PKR {dailyTotal.toFixed(2)}</span>
+        <span className="font-bold text-primary-800">PKR {dailyTotal.toFixed(2)}</span>
       </div>
       {message && <div className="mb-4 p-3 bg-blue-50 rounded-lg text-sm">{message}</div>}
 
@@ -73,7 +73,7 @@ export function ExpensesPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-6">
-        <div className="bg-white rounded-xl border p-4 space-y-3">
+        <div className="panel p-4 space-y-3">
           <h3 className="font-semibold">Record Expense</h3>
           <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="w-full px-3 py-2 border rounded-lg">
             {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -83,7 +83,7 @@ export function ExpensesPage() {
           <Button onClick={handleCreate}>Submit</Button>
         </div>
 
-        <div className="bg-white rounded-xl border p-4">
+        <div className="panel p-4">
           <h3 className="font-semibold mb-3">Recent Expenses</h3>
           {expenses.map((e) => (
             <div key={e.id} className="flex justify-between items-center py-2 border-b text-sm">

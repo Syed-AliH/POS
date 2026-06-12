@@ -34,6 +34,47 @@ function lineRetailPrice(line: GrnDraftLine): number {
   return parseMarkupInput(line.retailInput, line.unitCost) ?? line.unitRetail;
 }
 
+type LineTotals = {
+  qtyTotal: number;
+  costTotal: number;
+  retailTotal: number;
+  margin: number;
+};
+
+function summarizeDraftLines(lines: GrnDraftLine[]): LineTotals {
+  let qtyTotal = 0;
+  let costTotal = 0;
+  let retailTotal = 0;
+  for (const line of lines) {
+    qtyTotal += line.qty;
+    costTotal += line.qty * line.unitCost;
+    retailTotal += line.qty * lineRetailPrice(line);
+  }
+  return {
+    qtyTotal,
+    costTotal,
+    retailTotal,
+    margin: lineMarginPct(qtyTotal > 0 ? costTotal / qtyTotal : 0, qtyTotal > 0 ? retailTotal / qtyTotal : 0),
+  };
+}
+
+function summarizeGrnItems(items: GrnSummary['items']): LineTotals {
+  let qtyTotal = 0;
+  let costTotal = 0;
+  let retailTotal = 0;
+  for (const item of items) {
+    qtyTotal += item.qty;
+    costTotal += item.lineTotal;
+    retailTotal += item.qty * item.unitRetail;
+  }
+  return {
+    qtyTotal,
+    costTotal,
+    retailTotal,
+    margin: lineMarginPct(qtyTotal > 0 ? costTotal / qtyTotal : 0, qtyTotal > 0 ? retailTotal / qtyTotal : 0),
+  };
+}
+
 function grnItemsToDraftLines(items: GrnSummary['items']): GrnDraftLine[] {
   return items.map((item) => ({
     productId: item.productId,
@@ -108,6 +149,7 @@ export function GrnPage() {
   const recordDetailRef = useRef<HTMLDivElement>(null);
 
   const linesTotal = useMemo(() => lines.reduce((s, l) => s + l.qty * l.unitCost, 0), [lines]);
+  const lineTotals = useMemo(() => summarizeDraftLines(lines), [lines]);
 
   const sortedLines = useMemo(() => {
     const rows = lines.map((line, idx) => {
@@ -127,6 +169,11 @@ export function GrnPage() {
   }, [lines, products, lineSortKey, lineSortDir]);
 
   const editLinesTotal = useMemo(() => editLines.reduce((s, l) => s + l.qty * l.unitCost, 0), [editLines]);
+  const editLineTotals = useMemo(() => summarizeDraftLines(editLines), [editLines]);
+  const recordLineTotals = useMemo(
+    () => (editingRecord ? summarizeGrnItems(editingRecord.items) : null),
+    [editingRecord],
+  );
 
   const sortedEditLines = useMemo(() => {
     const rows = editLines.map((line, idx) => {
@@ -531,7 +578,7 @@ export function GrnPage() {
   ).slice(0, 8);
 
   return (
-    <div className="h-full overflow-y-auto p-6">
+    <div className="page-shell">
       <h2 className="text-2xl font-bold mb-2">Goods Received (GRN)</h2>
       <p className="text-slate-500 mb-4">Receive stock from vendors and update product cost and retail prices</p>
 
@@ -541,40 +588,60 @@ export function GrnPage() {
       </div>
 
       {tab === 'create' && (
-        <div className="grid grid-cols-2 gap-6">
-          <div className="bg-white rounded-xl border p-4 space-y-3">
-            <h3 className="font-semibold">Header</h3>
-            <select value={vendorId} onChange={(e) => setVendorId(e.target.value)} className="w-full px-3 py-2 border rounded-lg">
-              {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-            </select>
-            <div>
-              <label className="text-xs font-medium text-slate-500 uppercase">Payment Type</label>
-              <select value={paymentType} onChange={(e) => setPaymentType(e.target.value as GrnPaymentType)} className="w-full px-3 py-2 border rounded-lg mt-1">
-                <option value="cash">Cash</option>
-                <option value="credit">Credit</option>
-              </select>
-              <p className="text-xs text-slate-400 mt-1">Defaults from supplier&apos;s last preference — change if needed</p>
+        <div className="flex flex-col gap-6">
+          <div className="panel p-4">
+            <h3 className="font-semibold mb-4">Header</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div>
+                <label className="section-label mb-1 block">Supplier</label>
+                <select value={vendorId} onChange={(e) => setVendorId(e.target.value)} className="form-select h-10">
+                  {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="section-label mb-1 block">Payment type</label>
+                <select value={paymentType} onChange={(e) => setPaymentType(e.target.value as GrnPaymentType)} className="form-select h-10">
+                  <option value="cash">Cash</option>
+                  <option value="credit">Credit</option>
+                </select>
+              </div>
+              <div>
+                <label className="section-label mb-1 block">Supplier invoice #</label>
+                <input placeholder="Optional" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} className="form-input h-10" />
+              </div>
+              <div className="sm:col-span-2 lg:col-span-1">
+                <label className="section-label mb-1 block">Notes</label>
+                <input placeholder="Optional notes" value={notes} onChange={(e) => setNotes(e.target.value)} className="form-input h-10" />
+              </div>
             </div>
-            <input placeholder="Supplier invoice #" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
-            <textarea placeholder="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full px-3 py-2 border rounded-lg h-16" />
-
-            <div className="p-3 rounded-lg text-sm font-medium bg-slate-50 text-slate-700">
-              Lines total: PKR {linesTotal.toFixed(2)}
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-4 border-t border-slate-200 pt-4 dark:border-slate-700">
+              <p className="text-xs text-slate-500 max-w-xl">
+                Save Draft keeps the GRN editable. Finalize updates inventory and product prices immediately.
+              </p>
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="rounded-lg bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-800 dark:bg-slate-800 dark:text-slate-100">
+                  Lines total: PKR {linesTotal.toFixed(2)}
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="secondary" onClick={handleSaveDraft} disabled={!lines.length || savingDraft || finalizing}>
+                    {savingDraft ? 'Saving…' : 'Save Draft'}
+                  </Button>
+                  <Button onClick={handleFinalizeNew} disabled={!lines.length || savingDraft || finalizing}>
+                    {finalizing ? 'Finalizing…' : 'Finalize GRN'}
+                  </Button>
+                </div>
+              </div>
             </div>
-            <div className="flex gap-2">
-              <Button variant="secondary" onClick={handleSaveDraft} disabled={!lines.length || savingDraft || finalizing}>
-                {savingDraft ? 'Saving…' : 'Save Draft'}
-              </Button>
-              <Button onClick={handleFinalizeNew} disabled={!lines.length || savingDraft || finalizing}>
-                {finalizing ? 'Finalizing…' : 'Finalize GRN'}
-              </Button>
-            </div>
-            <p className="text-xs text-slate-500">Save Draft keeps the GRN editable. Finalize GRN updates inventory and product prices immediately.</p>
           </div>
 
-          <div className="bg-white rounded-xl border p-4 space-y-3">
-            <h3 className="font-semibold">Add Products</h3>
-            <div className="flex gap-2">
+          <div className="panel flex flex-col p-4">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <h3 className="font-semibold">Add Products</h3>
+              {lines.length > 0 && (
+                <span className="text-sm text-slate-500">{lines.length} line{lines.length !== 1 ? 's' : ''}</span>
+              )}
+            </div>
+            <div className="mb-4 flex gap-2">
               <input
                 placeholder="Search product… (F1)"
                 value={productSearch}
@@ -585,85 +652,91 @@ export function GrnPage() {
                     setShowProductSearch(true);
                   }
                 }}
-                className="flex-1 px-3 py-2 border rounded-lg"
+                className="form-input h-10 flex-1"
               />
               <Button variant="secondary" size="sm" onClick={() => setShowProductSearch(true)}>F1 Search</Button>
             </div>
             {productSearch && (
-              <div className="border rounded-lg max-h-32 overflow-y-auto">
+              <div className="mb-4 max-h-32 overflow-y-auto rounded-lg border">
                 {filteredProducts.map((p) => (
-                  <button key={p.id} type="button" onClick={() => addLine(p)} className="w-full text-left px-3 py-2 hover:bg-slate-50 text-sm border-b">
+                  <button key={p.id} type="button" onClick={() => addLine(p)} className="w-full border-b px-3 py-2 text-left text-sm row-hover last:border-b-0">
                     {p.name} <span className="text-slate-400">({p.sku})</span>
                   </button>
                 ))}
               </div>
             )}
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[600px]">
-                <thead>
-                  <tr className="text-slate-500">
-                    <th className="text-left p-1">
-                      <button type="button" onClick={() => toggleLineSort('product')} className="hover:text-pink-700 font-medium">
+            <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+              <table className="w-full text-sm">
+                <thead className="table-head">
+                  <tr>
+                    <th className="min-w-[220px] p-2 pl-3 text-left">
+                      <button type="button" onClick={() => toggleLineSort('product')} className="font-medium hover:text-primary-700 dark:hover:text-primary-400">
                         Product{lineSortIcon('product')}
                       </button>
                     </th>
-                    <th className="p-1">
-                      <button type="button" onClick={() => toggleLineSort('qty')} className="hover:text-pink-700 font-medium">
+                    <th className="w-20 p-2">
+                      <button type="button" onClick={() => toggleLineSort('qty')} className="font-medium hover:text-primary-700 dark:hover:text-primary-400">
                         Qty{lineSortIcon('qty')}
                       </button>
                     </th>
-                    <th className="p-1">
-                      <button type="button" onClick={() => toggleLineSort('cost')} className="hover:text-pink-700 font-medium">
+                    <th className="w-28 p-2">
+                      <button type="button" onClick={() => toggleLineSort('cost')} className="font-medium hover:text-primary-700 dark:hover:text-primary-400">
                         Cost{lineSortIcon('cost')}
                       </button>
                     </th>
-                    <th className="p-1">
-                      <button type="button" onClick={() => toggleLineSort('retail')} className="hover:text-pink-700 font-medium">
+                    <th className="w-32 p-2">
+                      <button type="button" onClick={() => toggleLineSort('retail')} className="font-medium hover:text-primary-700 dark:hover:text-primary-400">
                         Retail{lineSortIcon('retail')}
                       </button>
                     </th>
-                    <th className="p-1">
-                      <button type="button" onClick={() => toggleLineSort('margin')} className="hover:text-pink-700 font-medium">
+                    <th className="w-24 p-2">
+                      <button type="button" onClick={() => toggleLineSort('margin')} className="font-medium hover:text-primary-700 dark:hover:text-primary-400">
                         Margin %{lineSortIcon('margin')}
                       </button>
                     </th>
-                    <th className="p-1 text-right">
-                      <button type="button" onClick={() => toggleLineSort('total')} className="hover:text-pink-700 font-medium">
+                    <th className="w-28 p-2 text-right">
+                      <button type="button" onClick={() => toggleLineSort('total')} className="font-medium hover:text-primary-700 dark:hover:text-primary-400">
                         Total{lineSortIcon('total')}
                       </button>
                     </th>
-                    <th className="p-1 w-6" />
+                    <th className="w-10 p-2" />
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedLines.map(({ idx, line, productName, productSku, retail, margin }) => {
+                  {sortedLines.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="p-12 text-center text-slate-400">
+                        Search or press F1 to add products to this GRN
+                      </td>
+                    </tr>
+                  ) : sortedLines.map(({ idx, line, productName, productSku, retail, margin }) => {
                     const previewRetail = retail;
                     return (
-                      <tr key={line.productId} className="border-t">
-                        <td className="p-1">
+                      <tr key={line.productId} className="border-t border-slate-100 dark:border-slate-800">
+                        <td className="p-2 pl-3">
                           <div className="font-medium">{productName}</div>
                           <div className="text-xs text-slate-400">{productSku || line.productId}</div>
                         </td>
-                        <td className="p-1">
+                        <td className="p-2">
                           <input
                             type="number"
                             min={1}
                             value={line.qty}
                             onChange={(e) => updateLine(idx, { qty: parseInt(e.target.value, 10) || 1 })}
-                            className="w-14 px-1 border rounded"
+                            className="w-full min-w-[4rem] rounded border px-2 py-1 dark:border-slate-700 dark:bg-slate-900"
                           />
                         </td>
-                        <td className="p-1">
+                        <td className="p-2">
                           <input
                             type="number"
                             min={0}
                             step={0.01}
                             value={line.unitCost}
                             onChange={(e) => updateLine(idx, { unitCost: parseFloat(e.target.value) || 0 })}
-                            className="w-20 px-1 border rounded"
+                            className="w-full min-w-[5rem] rounded border px-2 py-1 dark:border-slate-700 dark:bg-slate-900"
                           />
                         </td>
-                        <td className="p-1">
+                        <td className="p-2">
                           <input
                             type="text"
                             value={line.retailInput}
@@ -682,22 +755,39 @@ export function GrnPage() {
                               }
                             }}
                             placeholder="PKR or 10%"
-                            className="w-24 px-1 border rounded"
+                            className="w-full min-w-[6rem] rounded border px-2 py-1 dark:border-slate-700 dark:bg-slate-900"
                             title="Retail price per unit — use 10% for markup on cost"
                           />
                           {line.retailInput.includes('%') && (
                             <p className="text-xs text-slate-400">→ {previewRetail.toFixed(2)}</p>
                           )}
                         </td>
-                        <td className="p-1 text-slate-600">{margin.toFixed(1)}%</td>
-                        <td className="p-1 text-right">{(line.qty * line.unitCost).toFixed(2)}</td>
-                        <td className="p-1">
-                          <button type="button" className="text-red-500 text-xs" onClick={() => setLines(lines.filter((_, i) => i !== idx))}>×</button>
+                        <td className="p-2 text-center text-slate-600 dark:text-slate-400">{margin.toFixed(1)}%</td>
+                        <td className="p-2 text-right font-medium">{(line.qty * line.unitCost).toFixed(2)}</td>
+                        <td className="p-2 text-center">
+                          <button type="button" className="text-red-500 text-xs hover:text-red-700" onClick={() => setLines(lines.filter((_, i) => i !== idx))}>×</button>
                         </td>
                       </tr>
                     );
                   })}
                 </tbody>
+                {lines.length > 0 && (
+                  <tfoot>
+                    <tr className="border-t-2 border-slate-200 bg-slate-50 font-semibold dark:border-slate-700 dark:bg-slate-800/80">
+                      <td className="p-2 pl-3">Total</td>
+                      <td className="p-2 text-center">{lineTotals.qtyTotal}</td>
+                      <td className="p-2 text-center" title="Total cost">
+                        {lineTotals.costTotal.toFixed(2)}
+                      </td>
+                      <td className="p-2 text-center" title="Total retail value">
+                        {lineTotals.retailTotal.toFixed(2)}
+                      </td>
+                      <td className="p-2 text-center text-slate-600 dark:text-slate-400">{lineTotals.margin.toFixed(1)}%</td>
+                      <td className="p-2 text-right">{lineTotals.costTotal.toFixed(2)}</td>
+                      <td className="p-2" />
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           </div>
@@ -716,7 +806,7 @@ export function GrnPage() {
             <input type="date" value={filterEnd} onChange={(e) => setFilterEnd(e.target.value)} className="px-3 py-2 border rounded-lg text-sm" />
             <input placeholder="GRN #" value={filterGrn} onChange={(e) => setFilterGrn(e.target.value)} className="px-3 py-2 border rounded-lg text-sm" />
           </div>
-          <table className="w-full bg-white rounded-xl border text-sm">
+          <table className="data-table-wrap w-full text-sm">
             <thead className="bg-slate-50">
               <tr className="text-left text-slate-500">
                 <th className="p-3">GRN #</th><th className="p-3">Vendor</th><th className="p-3">Payment</th><th className="p-3">Created</th><th className="p-3">Received</th><th className="p-3 text-right">Total</th><th className="p-3">Status</th><th className="p-3"></th>
@@ -726,10 +816,10 @@ export function GrnPage() {
               {records.map((g) => (
                 <tr
                   key={g.id}
-                  className={`border-t cursor-pointer hover:bg-pink-50 ${editingRecord?.id === g.id ? 'bg-pink-50' : ''}`}
+                  className={`border-t cursor-pointer hover:bg-primary-50 ${editingRecord?.id === g.id ? 'bg-primary-50' : ''}`}
                   onClick={() => selectRecord(g)}
                 >
-                  <td className="p-3 font-mono text-pink-700">{g.grnNumber}</td>
+                  <td className="p-3 font-mono text-primary-700">{g.grnNumber}</td>
                   <td className="p-3">{g.vendorName}</td>
                   <td className="p-3 capitalize text-xs">{g.paymentType ?? 'cash'}</td>
                   <td className="p-3 text-xs text-slate-600 whitespace-nowrap">{formatDateTime(g.createdAt)}</td>
@@ -739,7 +829,7 @@ export function GrnPage() {
                   <td className="p-3">
                     <div className="flex gap-2 justify-end">
                       {(g.status === 'draft' || g.status === 'finalized') && (
-                        <span className="text-xs text-pink-600 self-center">View / Edit</span>
+                        <span className="text-xs text-primary-600 self-center">View / Edit</span>
                       )}
                       {g.status === 'draft' && (
                         <Button
@@ -761,13 +851,13 @@ export function GrnPage() {
           </table>
 
           {editingRecord && (
-            <div ref={recordDetailRef} className="mt-6 bg-white rounded-xl border p-4 space-y-4">
+            <div ref={recordDetailRef} className="mt-6 panel p-4 space-y-4">
               <div className="flex justify-between items-start gap-4">
                 <div>
                   <h3 className="font-semibold text-lg">{editingRecord.grnNumber}</h3>
                   <p className="text-sm text-slate-500">
                     {editingRecord.vendorName} · {editingRecord.paymentType ?? 'cash'} · Received {formatDateOnly(editingRecord.receivedDate)} · {editingRecord.status}
-                    {canEditRecord && <span className="text-pink-600"> · editable</span>}
+                    {canEditRecord && <span className="text-primary-600"> · editable</span>}
                     {editingRecord.invoiceNumber ? ` · Invoice ${editingRecord.invoiceNumber}` : ''}
                   </p>
                   <p className="text-xs text-slate-400 mt-1">
@@ -784,54 +874,68 @@ export function GrnPage() {
 
               {canEditRecord ? (
                 <>
-                  <div className="grid grid-cols-2 gap-4">
-                    <select
-                      value={editVendorId}
-                      onChange={(e) => {
-                        setEditVendorId(e.target.value);
-                        applyVendorPaymentPreference(e.target.value, setEditPaymentType);
-                      }}
-                      className="w-full px-3 py-2 border rounded-lg text-sm"
-                    >
-                      {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-                    </select>
-                    <select value={editPaymentType} onChange={(e) => setEditPaymentType(e.target.value as GrnPaymentType)} className="w-full px-3 py-2 border rounded-lg text-sm">
-                      <option value="cash">Cash</option>
-                      <option value="credit">Credit</option>
-                    </select>
-                    <input placeholder="Supplier invoice #" value={editInvoiceNumber} onChange={(e) => setEditInvoiceNumber(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" />
-                    <input placeholder="Notes" value={editNotes} onChange={(e) => setEditNotes(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div>
+                      <label className="section-label mb-1 block">Supplier</label>
+                      <select
+                        value={editVendorId}
+                        onChange={(e) => {
+                          setEditVendorId(e.target.value);
+                          applyVendorPaymentPreference(e.target.value, setEditPaymentType);
+                        }}
+                        className="form-select h-10 text-sm"
+                      >
+                        {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="section-label mb-1 block">Payment type</label>
+                      <select value={editPaymentType} onChange={(e) => setEditPaymentType(e.target.value as GrnPaymentType)} className="form-select h-10 text-sm">
+                        <option value="cash">Cash</option>
+                        <option value="credit">Credit</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="section-label mb-1 block">Supplier invoice #</label>
+                      <input placeholder="Optional" value={editInvoiceNumber} onChange={(e) => setEditInvoiceNumber(e.target.value)} className="form-input h-10 text-sm" />
+                    </div>
+                    <div>
+                      <label className="section-label mb-1 block">Notes</label>
+                      <input placeholder="Optional notes" value={editNotes} onChange={(e) => setEditNotes(e.target.value)} className="form-input h-10 text-sm" />
+                    </div>
                   </div>
-                  <div className="flex gap-2">
-                    <input
-                      placeholder="Search product to add… (F1)"
-                      value={editProductSearch}
-                      onChange={(e) => setEditProductSearch(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'F1') {
-                          e.preventDefault();
-                          setShowRecordProductSearch(true);
-                        }
-                      }}
-                      className="flex-1 px-3 py-2 border rounded-lg text-sm"
-                    />
-                    <Button variant="secondary" size="sm" onClick={() => setShowRecordProductSearch(true)}>F1 Search</Button>
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 dark:border-slate-700">
+                    <div className="flex flex-1 gap-2 min-w-[240px]">
+                      <input
+                        placeholder="Search product to add… (F1)"
+                        value={editProductSearch}
+                        onChange={(e) => setEditProductSearch(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'F1') {
+                            e.preventDefault();
+                            setShowRecordProductSearch(true);
+                          }
+                        }}
+                        className="form-input h-10 flex-1 text-sm"
+                      />
+                      <Button variant="secondary" size="sm" onClick={() => setShowRecordProductSearch(true)}>F1 Search</Button>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-800 dark:bg-slate-800 dark:text-slate-100">
+                      Lines total: PKR {editLinesTotal.toFixed(2)}
+                    </div>
                   </div>
                   {editProductSearch && (
-                    <div className="border rounded-lg max-h-32 overflow-y-auto">
+                    <div className="max-h-32 overflow-y-auto rounded-lg border">
                       {products.filter((p) =>
                         p.name.toLowerCase().includes(editProductSearch.toLowerCase()) ||
                         p.sku.toLowerCase().includes(editProductSearch.toLowerCase()),
                       ).slice(0, 8).map((p) => (
-                        <button key={p.id} type="button" onClick={() => addEditLine(p)} className="w-full text-left px-3 py-2 hover:bg-slate-50 text-sm border-b">
+                        <button key={p.id} type="button" onClick={() => addEditLine(p)} className="w-full border-b px-3 py-2 text-left text-sm row-hover last:border-b-0">
                           {p.name} <span className="text-slate-400">({p.sku})</span>
                         </button>
                       ))}
                     </div>
                   )}
-                  <div className="p-3 rounded-lg text-sm font-medium bg-slate-50 text-slate-700">
-                    Lines total: PKR {editLinesTotal.toFixed(2)}
-                  </div>
                   {editingRecord.status === 'finalized' && (
                     <p className="text-xs text-slate-500">Saving updates stock levels and product cost/retail prices.</p>
                   )}
@@ -840,34 +944,34 @@ export function GrnPage() {
                 <p className="text-sm text-slate-600">{editingRecord.notes}</p>
               ) : null}
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm min-w-[640px]">
-                  <thead>
-                    <tr className="text-slate-500">
-                      <th className="text-left p-1">Product</th>
-                      <th className="p-1">Qty</th>
-                      <th className="p-1">Cost</th>
-                      <th className="p-1">Retail</th>
-                      <th className="p-1">Margin %</th>
-                      <th className="p-1 text-right">Total</th>
-                      {canEditRecord && <th className="p-1 w-6" />}
+              <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                <table className="w-full text-sm">
+                  <thead className="table-head">
+                    <tr>
+                      <th className="min-w-[220px] p-2 pl-3 text-left">Product</th>
+                      <th className="w-20 p-2">Qty</th>
+                      <th className="w-28 p-2">Cost</th>
+                      <th className="w-32 p-2">Retail</th>
+                      <th className="w-24 p-2">Margin %</th>
+                      <th className="w-28 p-2 text-right">Total</th>
+                      {canEditRecord && <th className="w-10 p-2" />}
                     </tr>
                   </thead>
                   <tbody>
                     {canEditRecord ? (
                       sortedEditLines.map(({ idx, line, productName, productSku, retail, margin }) => (
-                        <tr key={line.productId} className="border-t">
-                          <td className="p-1">
+                        <tr key={line.productId} className="border-t border-slate-100 dark:border-slate-800">
+                          <td className="p-2 pl-3">
                             <div className="font-medium">{productName}</div>
                             <div className="text-xs text-slate-400">{productSku || line.productId}</div>
                           </td>
-                          <td className="p-1">
-                            <input type="number" min={1} value={line.qty} onChange={(e) => updateEditLine(idx, { qty: parseInt(e.target.value, 10) || 1 })} className="w-14 px-1 border rounded" />
+                          <td className="p-2">
+                            <input type="number" min={1} value={line.qty} onChange={(e) => updateEditLine(idx, { qty: parseInt(e.target.value, 10) || 1 })} className="w-full min-w-[4rem] rounded border px-2 py-1 dark:border-slate-700 dark:bg-slate-900" />
                           </td>
-                          <td className="p-1">
-                            <input type="number" min={0} step={0.01} value={line.unitCost} onChange={(e) => updateEditLine(idx, { unitCost: parseFloat(e.target.value) || 0 })} className="w-20 px-1 border rounded" />
+                          <td className="p-2">
+                            <input type="number" min={0} step={0.01} value={line.unitCost} onChange={(e) => updateEditLine(idx, { unitCost: parseFloat(e.target.value) || 0 })} className="w-full min-w-[5rem] rounded border px-2 py-1 dark:border-slate-700 dark:bg-slate-900" />
                           </td>
-                          <td className="p-1">
+                          <td className="p-2">
                             <input
                               type="text"
                               value={line.retailInput}
@@ -880,14 +984,14 @@ export function GrnPage() {
                               }}
                               onBlur={() => handleEditRetailBlur(idx)}
                               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleEditRetailBlur(idx); } }}
-                              className="w-24 px-1 border rounded"
+                              className="w-full min-w-[6rem] rounded border px-2 py-1 dark:border-slate-700 dark:bg-slate-900"
                             />
                             {line.retailInput.includes('%') && <p className="text-xs text-slate-400">→ {retail.toFixed(2)}</p>}
                           </td>
-                          <td className="p-1 text-slate-600">{margin.toFixed(1)}%</td>
-                          <td className="p-1 text-right">{(line.qty * line.unitCost).toFixed(2)}</td>
-                          <td className="p-1">
-                            <button type="button" className="text-red-500 text-xs" onClick={() => setEditLines(editLines.filter((_, i) => i !== idx))}>×</button>
+                          <td className="p-2 text-center text-slate-600 dark:text-slate-400">{margin.toFixed(1)}%</td>
+                          <td className="p-2 text-right font-medium">{(line.qty * line.unitCost).toFixed(2)}</td>
+                          <td className="p-2 text-center">
+                            <button type="button" className="text-red-500 text-xs hover:text-red-700" onClick={() => setEditLines(editLines.filter((_, i) => i !== idx))}>×</button>
                           </td>
                         </tr>
                       ))
@@ -895,18 +999,31 @@ export function GrnPage() {
                       editingRecord.items.map((item) => {
                         const margin = lineMarginPct(item.unitCost, item.unitRetail);
                         return (
-                          <tr key={item.id} className="border-t">
-                            <td className="p-1">{item.productName} <span className="text-slate-400 text-xs">({item.productSku})</span></td>
-                            <td className="p-1 text-center">{item.qty}</td>
-                            <td className="p-1 text-center">{item.unitCost.toFixed(2)}</td>
-                            <td className="p-1 text-center">{item.unitRetail.toFixed(2)}</td>
-                            <td className="p-1 text-center">{margin.toFixed(1)}%</td>
-                            <td className="p-1 text-right">{item.lineTotal.toFixed(2)}</td>
+                          <tr key={item.id} className="border-t border-slate-100 dark:border-slate-800">
+                            <td className="p-2 pl-3">{item.productName} <span className="text-slate-400 text-xs">({item.productSku})</span></td>
+                            <td className="p-2 text-center">{item.qty}</td>
+                            <td className="p-2 text-center">{item.unitCost.toFixed(2)}</td>
+                            <td className="p-2 text-center">{item.unitRetail.toFixed(2)}</td>
+                            <td className="p-2 text-center">{margin.toFixed(1)}%</td>
+                            <td className="p-2 text-right">{item.lineTotal.toFixed(2)}</td>
                           </tr>
                         );
                       })
                     )}
                   </tbody>
+                  {(canEditRecord ? editLines.length > 0 : (editingRecord?.items.length ?? 0) > 0) && (
+                    <tfoot>
+                      <tr className="border-t-2 border-slate-200 bg-slate-50 font-semibold dark:border-slate-700 dark:bg-slate-800/80">
+                        <td className="p-1.5">Total</td>
+                        <td className="p-1.5 text-center">{(canEditRecord ? editLineTotals : recordLineTotals)!.qtyTotal}</td>
+                        <td className="p-1.5 text-center">{(canEditRecord ? editLineTotals : recordLineTotals)!.costTotal.toFixed(2)}</td>
+                        <td className="p-1.5 text-center">{(canEditRecord ? editLineTotals : recordLineTotals)!.retailTotal.toFixed(2)}</td>
+                        <td className="p-1.5 text-center text-slate-600 dark:text-slate-400">{(canEditRecord ? editLineTotals : recordLineTotals)!.margin.toFixed(1)}%</td>
+                        <td className="p-1.5 text-right">{(canEditRecord ? editLineTotals : recordLineTotals)!.costTotal.toFixed(2)}</td>
+                        {canEditRecord && <td className="p-1.5" />}
+                      </tr>
+                    </tfoot>
+                  )}
                 </table>
               </div>
 

@@ -39,6 +39,8 @@ export const IPC_CHANNELS = {
   SYNC_QUEUE_LIST: 'sync:queue-list',
 
   PRINT_RECEIPT: 'print:receipt',
+  PRINT_TEST_RECEIPT: 'print:test-receipt',
+  PRINT_TEST_LABEL: 'print:test-label',
   PRINT_Z_REPORT: 'print:z-report',
   LABEL_TEMPLATES: 'label:templates',
   LABEL_PRINT_BATCH: 'label:print-batch',

@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { Spinner } from '@mama-babi/ui';
 import { useAuthStore } from './stores/authStore';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Layout } from './components/Layout';
@@ -25,13 +26,11 @@ const ExpensesPage = lazy(() => import('./pages/ExpensesPage').then((m) => ({ de
 const StocktakePage = lazy(() => import('./pages/StocktakePage').then((m) => ({ default: m.StocktakePage })));
 const InventoryReportPage = lazy(() => import('./pages/InventoryReportPage').then((m) => ({ default: m.InventoryReportPage })));
 const SupplierPaymentsPage = lazy(() => import('./pages/SupplierPaymentsPage').then((m) => ({ default: m.SupplierPaymentsPage })));
+const ReceiptDesignerPage = lazy(() => import('./pages/ReceiptDesignerPage').then((m) => ({ default: m.ReceiptDesignerPage })));
+const LabelDesignerPage = lazy(() => import('./pages/LabelDesignerPage').then((m) => ({ default: m.LabelDesignerPage })));
 
 function PageLoader() {
-  return (
-    <div className="h-screen flex items-center justify-center text-slate-500">
-      Loading...
-    </div>
-  );
+  return <Spinner className="h-screen" label="Loading…" />;
 }
 
 export function App() {
@@ -47,10 +46,10 @@ export function App() {
 
   if (initError && !session) {
     return (
-      <div className="h-screen flex items-center justify-center p-8">
+      <div className="h-screen flex items-center justify-center p-8 bg-surface-muted dark:bg-slate-950">
         <div className="max-w-md text-center">
-          <h1 className="text-xl font-bold text-red-600 mb-2">Startup Error</h1>
-          <p className="text-slate-600">{initError}</p>
+          <h1 className="text-xl font-bold text-red-600 mb-2 dark:text-red-400">Startup Error</h1>
+          <p className="text-slate-600 dark:text-slate-300">{initError}</p>
           <p className="text-sm text-slate-400 mt-4">Try restarting with: pnpm dev</p>
         </div>
       </div>
@@ -91,6 +90,8 @@ export function App() {
             <Route path="customers" element={<ProtectedRoute roles={['manager', 'super_admin']}><CustomersPage /></ProtectedRoute>} />
             <Route path="promotions" element={<ProtectedRoute roles={['manager', 'super_admin']}><PromotionsPage /></ProtectedRoute>} />
             <Route path="labels" element={<ProtectedRoute roles={['manager', 'super_admin']}><LabelsPage /></ProtectedRoute>} />
+            <Route path="label-designer" element={<ProtectedRoute roles={['manager', 'super_admin']}><LabelDesignerPage /></ProtectedRoute>} />
+            <Route path="receipt-designer" element={<ProtectedRoute roles={['manager', 'super_admin']}><ReceiptDesignerPage /></ProtectedRoute>} />
             <Route path="reports" element={<ProtectedRoute roles={['manager', 'super_admin']}><ReportsPage /></ProtectedRoute>} />
             <Route path="inventory-report" element={<ProtectedRoute roles={['manager', 'super_admin']}><InventoryReportPage /></ProtectedRoute>} />
             <Route path="supplier-payments" element={<ProtectedRoute roles={['manager', 'super_admin']}><SupplierPaymentsPage /></ProtectedRoute>} />

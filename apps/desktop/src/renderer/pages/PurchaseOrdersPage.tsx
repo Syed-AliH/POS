@@ -131,12 +131,12 @@ export function PurchaseOrdersPage() {
   };
 
   return (
-    <div className="h-full overflow-y-auto p-6">
-      <h2 className="text-2xl font-bold mb-6">Purchase Orders</h2>
+    <div className="page-shell">
+      <h2 className="page-title mb-6">Purchase Orders</h2>
       {message && <div className="mb-4 p-3 bg-blue-50 rounded-lg text-sm">{message}</div>}
 
       <div className="grid grid-cols-2 gap-6 mb-6">
-        <div className="bg-white rounded-xl border border-slate-200 p-4">
+        <div className="panel p-4">
           <div className="flex justify-between items-center mb-3">
             <h3 className="font-semibold">Reorder Suggestions ({suggestions.length})</h3>
             <Button size="sm" variant="secondary" onClick={() => createFromSuggestions()}>Use All</Button>
@@ -151,7 +151,7 @@ export function PurchaseOrdersPage() {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+        <div className="panel p-4 space-y-3">
           <h3 className="font-semibold">Create PO</h3>
           <select value={vendorId} onChange={(e) => setVendorId(e.target.value)} className="w-full px-3 py-2 border rounded-lg">
             <option value="">Select vendor</option>
@@ -204,14 +204,14 @@ export function PurchaseOrdersPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-6">
-        <div className="bg-white rounded-xl border border-slate-200 p-4">
+        <div className="panel p-4">
           <h3 className="font-semibold mb-3">PO List</h3>
           <div className="space-y-2 max-h-96 overflow-y-auto">
             {orders.map((po) => (
               <button
                 key={po.id}
                 onClick={() => { setSelectedPo(po); setReceiveQty({}); }}
-                className={`w-full text-left p-3 border rounded-lg ${selectedPo?.id === po.id ? 'bg-pink-50 border-pink-300' : 'hover:bg-slate-50'}`}
+                className={`w-full text-left p-3 border rounded-lg ${selectedPo?.id === po.id ? 'bg-primary-50 border-primary-300' : 'hover:bg-slate-50'}`}
               >
                 <div className="flex justify-between">
                   <span className="font-medium">{po.poNumber}</span>
@@ -224,7 +224,7 @@ export function PurchaseOrdersPage() {
         </div>
 
         {selectedPo && (
-          <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <div className="panel p-4">
             <div className="flex justify-between items-start mb-3">
               <div>
                 <h3 className="font-semibold">{selectedPo.poNumber}</h3>

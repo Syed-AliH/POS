@@ -47,17 +47,17 @@ export function CustomersPage() {
     : customers;
 
   return (
-    <div className="h-full overflow-y-auto p-6">
-      <h2 className="text-2xl font-bold mb-6">Customers</h2>
+    <div className="page-shell">
+      <h2 className="page-title mb-6">Customers</h2>
       {message && <div className="mb-4 p-3 bg-blue-50 rounded-lg text-sm">{message}</div>}
       {rules[0] && (
-        <div className="mb-4 p-3 bg-pink-50 rounded-lg text-sm">
+        <div className="mb-4 p-3 bg-primary-50 rounded-lg text-sm">
           Loyalty: {rules[0].pointsAwarded} pts per PKR {rules[0].spendThreshold} · Redeem PKR {rules[0].redemptionRate}/pt
         </div>
       )}
 
       <div className="grid grid-cols-2 gap-6">
-        <div className="bg-white rounded-xl border p-4 space-y-3">
+        <div className="panel p-4 space-y-3">
           <h3 className="font-semibold">{editingId ? 'Edit Customer' : 'Add Customer'}</h3>
           <div>
             <label className="text-sm font-medium text-slate-600">Name *</label>
@@ -76,14 +76,14 @@ export function CustomersPage() {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl border p-4">
+        <div className="panel p-4">
           <input placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)} className="w-full px-3 py-2 border rounded-lg mb-3" />
           <div className="space-y-2 max-h-[28rem] overflow-y-auto">
             {filtered.map((c) => (
-              <button key={c.id} onClick={() => startEdit(c)} className="w-full text-left p-3 border rounded-lg hover:bg-pink-50">
+              <button key={c.id} onClick={() => startEdit(c)} className="w-full text-left p-3 border rounded-lg hover:bg-primary-50">
                 <div className="font-medium">{c.name}</div>
                 <div className="text-sm text-slate-500">{c.phone ?? '—'}</div>
-                <div className="text-sm text-pink-700 font-semibold">{c.loyaltyPoints} pts · PKR {c.totalSpent.toFixed(0)} spent</div>
+                <div className="text-sm text-primary-700 font-semibold">{c.loyaltyPoints} pts · PKR {c.totalSpent.toFixed(0)} spent</div>
               </button>
             ))}
           </div>

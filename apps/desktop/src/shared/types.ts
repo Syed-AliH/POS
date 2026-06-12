@@ -507,16 +507,22 @@ export interface PromotionPreviewInput {
   subtotal: number;
 }
 
+export type {
+  LabelElement,
+  LabelFieldType,
+  LabelLayout,
+  ReceiptTemplateConfig,
+  ReceiptTemplateFooter,
+  ReceiptTemplateHeader,
+  ReceiptTemplateSections,
+} from '@mama-babi/printer';
+
 export interface LabelTemplateSummary {
   id: string;
   name: string;
   widthMm: number;
   heightMm: number;
-  layout: {
-    fields: Array<'name' | 'price' | 'sku' | 'barcode'>;
-    showBarcode: boolean;
-    fontSize?: string;
-  };
+  layout: import('@mama-babi/printer').LabelLayout;
   isDefault: boolean;
 }
 
@@ -653,8 +659,10 @@ export interface StocktakeSession {
 export interface ReceiptTemplate {
   id: string;
   name: string;
-  header: { storeName?: string; showLogo?: boolean; showAddress?: boolean; customLine?: string };
-  footer: { message?: string; returnPolicy?: string; customLine?: string };
+  widthMm: 58 | 80;
+  sections: import('@mama-babi/printer').ReceiptTemplateSections;
+  header: import('@mama-babi/printer').ReceiptTemplateHeader;
+  footer: import('@mama-babi/printer').ReceiptTemplateFooter;
   isDefault: boolean;
 }
 

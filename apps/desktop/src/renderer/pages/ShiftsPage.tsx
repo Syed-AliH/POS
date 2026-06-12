@@ -72,12 +72,12 @@ export function ShiftsPage() {
   };
 
   return (
-    <div className="h-full overflow-y-auto p-6">
-      <h2 className="text-2xl font-bold mb-6">Shifts & End of Day</h2>
+    <div className="page-shell">
+      <h2 className="page-title mb-6">Shifts & End of Day</h2>
       {message && <div className="mb-4 p-3 bg-blue-50 rounded-lg text-sm">{message}</div>}
 
       <div className="grid grid-cols-2 gap-6 mb-6">
-        <div className="bg-white rounded-xl border border-slate-200 p-4">
+        <div className="panel p-4">
           <h3 className="font-semibold mb-3">Current Shift</h3>
           {currentShift ? (
             <div className="space-y-2 text-sm">
@@ -98,7 +98,7 @@ export function ShiftsPage() {
         </div>
 
         {eod && (
-          <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <div className="panel p-4">
             <h3 className="font-semibold mb-3">Today&apos;s EOD ({eod.date})</h3>
             <div className="space-y-1 text-sm">
               <p>Transactions: {eod.transactionCount}</p>
@@ -118,7 +118,7 @@ export function ShiftsPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-6 mb-6">
-        <div className="bg-white rounded-xl border">
+        <div className="panel">
           <div className="p-4 border-b flex gap-2 items-center">
             <h3 className="font-semibold flex-1">Historical Closings</h3>
             <input type="date" value={closingFilterStart} onChange={(e) => setClosingFilterStart(e.target.value)} className="px-2 py-1 border rounded text-sm" />
@@ -139,7 +139,7 @@ export function ShiftsPage() {
         </div>
 
         {selectedClosing ? (
-          <div className="bg-white rounded-xl border p-4 text-sm space-y-1">
+          <div className="panel p-4 text-sm space-y-1">
             <h3 className="font-semibold mb-2">Closing: {selectedClosing.closingDate}</h3>
             <p>Total Sales: PKR {selectedClosing.totalSales.toFixed(2)} ({selectedClosing.transactionCount} txns)</p>
             <p>Returns: PKR {selectedClosing.returnsTotal.toFixed(2)}</p>
@@ -161,7 +161,7 @@ export function ShiftsPage() {
         )}
       </div>
 
-      <div className="bg-white rounded-xl border border-slate-200">
+      <div className="panel">
         <h3 className="p-4 font-semibold border-b">Shift History</h3>
         <table className="w-full text-sm">
           <thead className="bg-slate-50">

@@ -5,6 +5,7 @@ import { getDb } from '../db';
 import { requireRole } from '../session';
 import { logAudit } from '../services/audit';
 import { listLabelTemplates } from '../services/labelTemplates';
+import { normalizeReceiptTemplateRow, receiptTemplateToStorage } from '../services/receiptTemplates';
 
 export function handleReceiptTemplates(): ApiResult<ReceiptTemplate[]> {
   try {
@@ -13,13 +14,7 @@ export function handleReceiptTemplates(): ApiResult<ReceiptTemplate[]> {
     const rows = db.select().from(receiptTemplates).where(eq(receiptTemplates.isDeleted, false)).all();
     return {
       success: true,
-      data: rows.map((r) => ({
-        id: r.id,
-        name: r.name,
-        header: JSON.parse(r.headerJson),
-        footer: JSON.parse(r.footerJson),
-        isDefault: r.isDefault,
-      })),
+      data: rows.map(normalizeReceiptTemplateRow),
     };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'List failed' };
@@ -28,7 +23,7 @@ export function handleReceiptTemplates(): ApiResult<ReceiptTemplate[]> {
 
 export function handleReceiptTemplateUpdate(
   id: string,
-  input: { name?: string; header?: ReceiptTemplate['header']; footer?: ReceiptTemplate['footer'] },
+  input: Partial<ReceiptTemplate>,
 ): ApiResult<ReceiptTemplate> {
   try {
     requireRole('super_admin', 'manager');
@@ -36,25 +31,36 @@ export function handleReceiptTemplateUpdate(
     const existing = db.select().from(receiptTemplates).where(eq(receiptTemplates.id, id)).get();
     if (!existing) return { success: false, error: 'Template not found' };
 
+    const current = normalizeReceiptTemplateRow(existing);
+    const merged: ReceiptTemplate = {
+      ...current,
+      ...input,
+      name: input.name ?? current.name,
+      widthMm: input.widthMm ?? current.widthMm,
+      header: { ...current.header, ...input.header },
+      footer: { ...current.footer, ...input.footer },
+      sections: { ...current.sections, ...input.sections },
+    };
+
     const now = new Date().toISOString();
-    const header = input.header ?? JSON.parse(existing.headerJson);
-    const footer = input.footer ?? JSON.parse(existing.footerJson);
+    const { headerJson, footerJson } = receiptTemplateToStorage(merged);
 
     db.update(receiptTemplates)
       .set({
-        name: input.name ?? existing.name,
-        headerJson: JSON.stringify(header),
-        footerJson: JSON.stringify(footer),
+        name: merged.name,
+        headerJson,
+        footerJson,
         updatedAt: now,
       })
       .where(eq(receiptTemplates.id, id))
       .run();
 
     logAudit('templates', 'update_receipt', id);
-    return {
-      success: true,
-      data: { id, name: input.name ?? existing.name, header, footer, isDefault: existing.isDefault },
-    };
+
+    const saved = db.select().from(receiptTemplates).where(eq(receiptTemplates.id, id)).get();
+    if (!saved) return { success: false, error: 'Failed to read saved template' };
+
+    return { success: true, data: normalizeReceiptTemplateRow(saved) };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Update failed' };
   }
@@ -62,7 +68,7 @@ export function handleReceiptTemplateUpdate(
 
 export function handleLabelTemplateUpdate(
   id: string,
-  input: { name?: string; layout?: LabelTemplateSummary['layout'] },
+  input: { name?: string; widthMm?: number; heightMm?: number; layout?: LabelTemplateSummary['layout'] },
 ): ApiResult<LabelTemplateSummary> {
   try {
     requireRole('super_admin', 'manager');
@@ -70,12 +76,15 @@ export function handleLabelTemplateUpdate(
     const existing = db.select().from(labelTemplates).where(eq(labelTemplates.id, id)).get();
     if (!existing) return { success: false, error: 'Template not found' };
 
+    const currentLayout = JSON.parse(existing.layoutJson) as LabelTemplateSummary['layout'];
+    const layout = input.layout ?? currentLayout;
     const now = new Date().toISOString();
-    const layout = input.layout ?? (JSON.parse(existing.layoutJson) as LabelTemplateSummary['layout']);
 
     db.update(labelTemplates)
       .set({
         name: input.name ?? existing.name,
+        widthMm: input.widthMm ?? existing.widthMm,
+        heightMm: input.heightMm ?? existing.heightMm,
         layoutJson: JSON.stringify(layout),
         updatedAt: now,
       })
@@ -83,7 +92,13 @@ export function handleLabelTemplateUpdate(
       .run();
 
     logAudit('templates', 'update_label', id);
-    const updated = listLabelTemplates().find((t) => t.id === id)!;
+
+    const row = db.select().from(labelTemplates).where(eq(labelTemplates.id, id)).get();
+    if (!row) return { success: false, error: 'Failed to read saved template' };
+
+    const updated = listLabelTemplates().find((t) => t.id === id);
+    if (!updated) return { success: false, error: 'Failed to load saved template' };
+
     return { success: true, data: updated };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Update failed' };

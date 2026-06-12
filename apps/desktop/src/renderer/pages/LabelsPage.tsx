@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
+import { LabelCanvasPreview } from '@renderer/components/designer/LabelCanvasPreview';
+import { normalizeLabelLayout } from '@mama-babi/printer';
 import type { LabelTemplateSummary, Product } from '@shared/types';
 
 const api = getApi();
@@ -13,15 +16,21 @@ export function LabelsPage() {
   const [search, setSearch] = useState('');
   const [message, setMessage] = useState('');
   const [printing, setPrinting] = useState(false);
+  const [currency, setCurrency] = useState('PKR');
 
   const load = async () => {
-    const [t, p] = await Promise.all([api.labels.templates(), api.products.list()]);
+    const [t, p, s] = await Promise.all([
+      api.labels.templates(),
+      api.products.list(),
+      api.settings.getAll(),
+    ]);
     if (t.success) {
       setTemplates(t.data ?? []);
       const defaultTpl = t.data?.find((x) => x.isDefault) ?? t.data?.[0];
       if (defaultTpl) setSelectedTemplateId(defaultTpl.id);
     }
     if (p.success) setProducts(p.data ?? []);
+    if (s.success && s.data?.currency) setCurrency(s.data.currency);
   };
 
   useEffect(() => { load(); }, []);
@@ -71,18 +80,27 @@ export function LabelsPage() {
   const previewProduct = products.find((p) => selected[p.id]);
 
   return (
-    <div className="h-full overflow-y-auto p-6">
-      <h2 className="text-2xl font-bold mb-6">Label Batch Print</h2>
-      {message && <div className="mb-4 p-3 bg-blue-50 rounded-lg text-sm">{message}</div>}
+    <div className="page-shell h-full overflow-y-auto">
+      <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
+        <div>
+          <h2 className="text-2xl font-bold">Label Batch Print</h2>
+          <p className="text-sm text-slate-500 mt-1">Select products and print barcode labels using saved templates.</p>
+        </div>
+        <Link to="/label-designer">
+          <Button variant="outline" size="sm">Edit templates in Label Designer</Button>
+        </Link>
+      </div>
+
+      {message && <div className="mb-4 p-3 bg-primary-50 rounded-lg text-sm">{message}</div>}
 
       <div className="grid grid-cols-3 gap-6">
-        <div className="col-span-2 bg-white rounded-xl border border-slate-200 p-4">
+        <div className="col-span-2 panel p-4 dark:border-slate-700 dark:bg-slate-900">
           <div className="flex gap-4 mb-4">
             <input
               placeholder="Search products..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="flex-1 px-3 py-2 border rounded-lg"
+              className="form-input flex-1"
             />
             <Button variant="ghost" size="sm" onClick={() => setSelected({})}>Clear</Button>
           </div>
@@ -90,7 +108,7 @@ export function LabelsPage() {
             {filtered.map((p) => (
               <div
                 key={p.id}
-                className={`flex items-center gap-3 p-2 rounded-lg border ${selected[p.id] ? 'bg-pink-50 border-pink-200' : 'border-transparent hover:bg-slate-50'}`}
+                className={`flex items-center gap-3 p-2 rounded-lg border ${selected[p.id] ? 'bg-primary-50 border-primary-200' : 'border-transparent hover:bg-slate-50'}`}
               >
                 <input
                   type="checkbox"
@@ -102,7 +120,7 @@ export function LabelsPage() {
                   <div className="text-xs text-slate-500">{p.sku} · {p.barcode}</div>
                 </div>
                 <div className="text-sm font-semibold w-20 text-right">
-                  PKR {(p.salePrice ?? p.retailPrice).toFixed(0)}
+                  {currency} {(p.salePrice ?? p.retailPrice).toFixed(0)}
                 </div>
                 {selected[p.id] && (
                   <input
@@ -120,7 +138,7 @@ export function LabelsPage() {
         </div>
 
         <div className="space-y-4">
-          <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <div className="panel p-4 dark:border-slate-700 dark:bg-slate-900">
             <h3 className="font-semibold mb-3">Template</h3>
             <div className="space-y-2">
               {templates.map((t) => (
@@ -139,22 +157,21 @@ export function LabelsPage() {
           </div>
 
           {activeTemplate && previewProduct && (
-            <div className="bg-white rounded-xl border border-slate-200 p-4">
-              <h3 className="font-semibold mb-2 text-sm">Preview</h3>
-              <div className="border border-dashed border-slate-300 p-3 rounded text-sm space-y-1">
-                {activeTemplate.layout.fields.includes('name') && (
-                  <div className="font-semibold">{previewProduct.name}</div>
-                )}
-                {activeTemplate.layout.fields.includes('price') && (
-                  <div className="font-bold">PKR {(previewProduct.salePrice ?? previewProduct.retailPrice).toFixed(2)}</div>
-                )}
-                {activeTemplate.layout.fields.includes('sku') && (
-                  <div className="text-xs text-slate-500">{previewProduct.sku}</div>
-                )}
-                {activeTemplate.layout.showBarcode && (
-                  <div className="text-xs font-mono mt-2">||||| {previewProduct.barcode} |||||</div>
-                )}
-              </div>
+            <div className="panel p-4 flex flex-col items-center dark:border-slate-700 dark:bg-slate-900">
+              <h3 className="font-semibold mb-3 text-sm self-start">Preview</h3>
+              <LabelCanvasPreview
+                layout={normalizeLabelLayout(activeTemplate.layout, activeTemplate.layout.storeName)}
+                product={{
+                  name: previewProduct.name,
+                  sku: previewProduct.sku,
+                  barcode: previewProduct.barcode,
+                  price: previewProduct.salePrice ?? previewProduct.retailPrice,
+                }}
+                widthMm={activeTemplate.widthMm}
+                heightMm={activeTemplate.heightMm}
+                currency={currency}
+                scale={4}
+              />
             </div>
           )}
 

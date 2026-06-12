@@ -112,7 +112,7 @@ export function ReceiptSearchModal({ open, onClose, onSelectReturn }: Props) {
               key={s.id}
               type="button"
               onClick={() => selectSale(s)}
-              className={`w-full text-left px-3 py-2 border-b text-sm ${selected?.id === s.id ? 'bg-pink-50' : 'hover:bg-slate-50'}`}
+              className={`w-full text-left px-3 py-2 border-b text-sm list-item-hover ${selected?.id === s.id ? 'list-item-active' : ''}`}
             >
               <div className="font-mono font-medium">{s.saleNumber}</div>
               <div className="text-xs text-slate-500">

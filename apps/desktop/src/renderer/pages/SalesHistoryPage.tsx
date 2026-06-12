@@ -216,7 +216,7 @@ export function SalesHistoryPage() {
   };
 
   return (
-    <div className="h-full overflow-y-auto p-6">
+    <div className="page-shell">
       <div className="flex justify-between items-center mb-6">
         <div>
           <h2 className="text-2xl font-bold">Sales History</h2>
@@ -236,7 +236,7 @@ export function SalesHistoryPage() {
       </div>
 
       <div className="grid grid-cols-3 gap-6">
-        <div className="col-span-2 bg-white rounded-xl border overflow-hidden">
+        <div className="col-span-2 panel overflow-hidden">
           {loading ? (
             <div className="p-12 text-center text-slate-400">Loading sales…</div>
           ) : filtered.length === 0 ? (
@@ -247,7 +247,7 @@ export function SalesHistoryPage() {
             </div>
           ) : (
             <table className="w-full text-sm">
-              <thead className="bg-slate-50">
+              <thead className="table-head">
                 <tr>
                   <th className="p-3 text-left">Sale #</th>
                   <th className="p-3">Status</th>
@@ -260,7 +260,7 @@ export function SalesHistoryPage() {
               </thead>
               <tbody>
                 {filtered.map((s) => (
-                  <tr key={s.id} className={`border-t cursor-pointer ${selected?.id === s.id ? 'bg-pink-50' : 'hover:bg-slate-50'}`} onClick={() => viewDetail(s.id)}>
+                  <tr key={s.id} className={`border-t cursor-pointer row-hover ${selected?.id === s.id ? 'row-active' : ''}`} onClick={() => viewDetail(s.id)}>
                     <td className="p-3 font-mono">{s.saleNumber}</td>
                     <td className="p-3 capitalize">{s.status}</td>
                     <td className="p-3 text-slate-600">{s.customerName ?? '—'}</td>
@@ -304,7 +304,7 @@ export function SalesHistoryPage() {
             )}
 
             {selected.status === 'completed' && (
-              <div className="bg-white rounded-xl border p-4 space-y-3">
+              <div className="panel p-4 space-y-3">
                 <div className="flex justify-between items-center">
                   <label className="text-xs font-medium text-slate-500 uppercase">Edit bill</label>
                   <Button size="sm" variant="secondary" onClick={() => setShowProductSearch(true)}>Add product</Button>
@@ -356,7 +356,7 @@ export function SalesHistoryPage() {
             </div>
           </div>
         ) : (
-          <div className="bg-slate-50 rounded-xl border border-dashed p-6 text-center text-slate-400 text-sm">
+          <div className="bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-dashed p-6 text-center text-slate-400 text-sm">
             Select a sale to view receipt and edit the bill
           </div>
         )}

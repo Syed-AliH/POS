@@ -120,7 +120,7 @@ export function InventoryReportPage() {
   const summary = useMemo(() => report, [report]);
 
   return (
-    <div className="h-full overflow-y-auto p-6">
+    <div className="page-shell">
       <div className="flex justify-between items-start gap-4 mb-6 flex-wrap">
         <div>
           <h2 className="text-2xl font-bold">Inventory Report</h2>
@@ -135,19 +135,19 @@ export function InventoryReportPage() {
 
       {summary && (
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
-          <div className="bg-white rounded-xl border p-4">
+          <div className="panel p-4">
             <p className="text-xs text-slate-500">Products shown</p>
             <p className="text-2xl font-bold">{summary.totalProducts}</p>
           </div>
-          <div className="bg-white rounded-xl border p-4">
+          <div className="panel p-4">
             <p className="text-xs text-slate-500">Total units</p>
             <p className="text-2xl font-bold">{summary.totalUnits}</p>
           </div>
-          <div className="bg-white rounded-xl border p-4">
+          <div className="panel p-4">
             <p className="text-xs text-slate-500">Inventory value</p>
-            <p className="text-2xl font-bold text-pink-700">PKR {summary.totalInventoryValue.toFixed(0)}</p>
+            <p className="text-2xl font-bold text-primary-700">PKR {summary.totalInventoryValue.toFixed(0)}</p>
           </div>
-          <div className="bg-white rounded-xl border p-4">
+          <div className="panel p-4">
             <p className="text-xs text-slate-500">Negative / Zero / Low</p>
             <p className="text-lg font-bold">
               <span className="text-red-600">{summary.negativeCount}</span>
@@ -178,7 +178,7 @@ export function InventoryReportPage() {
         <Button size="sm" onClick={load}>Search</Button>
       </div>
 
-      <div className="bg-white rounded-xl border overflow-hidden">
+      <div className="panel overflow-hidden">
         <div ref={printRef} className="overflow-x-auto">
           <table className="w-full text-sm min-w-[1100px]">
             <thead className="bg-slate-50">

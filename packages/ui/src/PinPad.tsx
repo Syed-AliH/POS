@@ -26,7 +26,7 @@ export function PinPad({ value, onChange, maxLength = 6, onSubmit, disabled }: P
           <div
             key={i}
             className={`w-4 h-4 rounded-full border-2 ${
-              i < value.length ? 'bg-pink-600 border-pink-600' : 'border-slate-300'
+              i < value.length ? 'bg-primary-600 border-primary-600' : 'border-slate-300'
             }`}
           />
         ))}

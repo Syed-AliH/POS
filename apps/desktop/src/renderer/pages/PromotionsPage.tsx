@@ -52,12 +52,12 @@ export function PromotionsPage() {
   };
 
   return (
-    <div className="h-full overflow-y-auto p-6">
-      <h2 className="text-2xl font-bold mb-6">Promotions</h2>
+    <div className="page-shell">
+      <h2 className="page-title mb-6">Promotions</h2>
       {message && <div className="mb-4 p-3 bg-blue-50 rounded-lg text-sm">{message}</div>}
 
       <div className="grid grid-cols-2 gap-6">
-        <div className="bg-white rounded-xl border p-4 space-y-3">
+        <div className="panel p-4 space-y-3">
           <h3 className="font-semibold">{editingId ? 'Edit Promotion' : 'Create Promotion'}</h3>
           <input placeholder="Name *" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full px-3 py-2 border rounded-lg" />
           <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as 'percent' | 'fixed' })} className="w-full px-3 py-2 border rounded-lg">
@@ -75,7 +75,7 @@ export function PromotionsPage() {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl border p-4 space-y-2">
+        <div className="panel p-4 space-y-2">
           <h3 className="font-semibold mb-2">All Promotions</h3>
           {promotions.map((p) => (
             <div key={p.id} className="flex justify-between items-center p-3 border rounded-lg">

@@ -5,6 +5,7 @@ import { getApi } from '@renderer/lib/api';
 import { Modal } from '@renderer/components/Modal';
 import { WorkflowStepper } from '@renderer/components/WorkflowStepper';
 import { toast } from '@renderer/stores/toastStore';
+import { newProductFormDefaults, useProductDefaultsStore } from '@renderer/stores/productDefaultsStore';
 import { formatDateTime } from '@shared/datetime';
 import type { Category, Product, ProductHistory, ProductInput } from '@shared/types';
 
@@ -70,6 +71,8 @@ export function ProductsPage() {
   const [detailProduct, setDetailProduct] = useState<Product | null>(null);
   const [history, setHistory] = useState<ProductHistory | null>(null);
   const [historyTab, setHistoryTab] = useState<HistoryTab>('purchases');
+  const defaultCategoryId = useProductDefaultsStore((s) => s.defaultCategoryId);
+  const setDefaultCategoryId = useProductDefaultsStore((s) => s.setDefaultCategoryId);
 
   const load = async () => {
     const [p, c] = await Promise.all([api.products.list(), api.categories.list()]);
@@ -212,6 +215,21 @@ export function ProductsPage() {
     if (resolved !== form.saleMarkup) setForm({ ...form, saleMarkup: resolved });
   };
 
+  const startNewProduct = () => {
+    cancelEdit();
+    setEditingId('new');
+    setForm({ ...emptyForm(), ...newProductFormDefaults() });
+  };
+
+  const handleSetDefaultCategory = () => {
+    if (!form.categoryId) {
+      toast.error('Select a category first');
+      return;
+    }
+    setDefaultCategoryId(form.categoryId);
+    toast.success(`Default category set to ${categoryName(form.categoryId)}`);
+  };
+
   return (
     <div className="h-full flex flex-col">
       <WorkflowStepper steps={WORKFLOW_STEPS} currentStep={editingId ? 0 : products.length > 0 ? 2 : 0} />
@@ -223,26 +241,37 @@ export function ProductsPage() {
           </div>
           <div className="flex gap-2">
             <Button variant="ghost" onClick={async () => { const r = await api.products.seedDemo(); if (r.success) { toast.success(`Loaded ${r.data?.added} products`); load(); } }}>Load Demo</Button>
-            <Button variant="secondary" onClick={() => { cancelEdit(); setEditingId('new'); setForm(emptyForm()); }}>+ Add Product</Button>
+            <Button variant="secondary" onClick={startNewProduct}>+ Add Product</Button>
           </div>
         </div>
         {message && <div className="mb-4 p-3 bg-blue-50 rounded-lg text-sm">{message}</div>}
 
         {editingId !== null && (
-          <div className="mb-6 p-4 bg-white rounded-xl border border-pink-200 grid grid-cols-3 gap-3">
+          <div className="mb-6 grid grid-cols-3 gap-3 rounded-xl border border-primary-200 bg-white p-4 dark:border-primary-900 dark:bg-slate-900">
             <h3 className="col-span-3 font-semibold">{editingId === 'new' ? 'New Product' : 'Edit Product'}</h3>
             <input placeholder="Product name *" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="col-span-3 px-3 py-2 border rounded-lg" />
-            <select value={form.categoryId ?? ''} onChange={(e) => setForm({ ...form, categoryId: e.target.value || undefined })} className="px-3 py-2 border rounded-lg">
-              <option value="">Category *</option>
-              {categories.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.skuPrefix ?? '—'})</option>)}
-            </select>
+            <div className="col-span-3 flex flex-wrap items-center gap-2">
+              <select value={form.categoryId ?? ''} onChange={(e) => setForm({ ...form, categoryId: e.target.value || undefined })} className="min-w-[180px] flex-1 px-3 py-2 border rounded-lg">
+                <option value="">Category *</option>
+                {categories.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.skuPrefix ?? '—'})</option>)}
+              </select>
+              <Button variant="ghost" size="sm" onClick={handleSetDefaultCategory} disabled={!form.categoryId}>
+                Set default
+              </Button>
+              {defaultCategoryId && (
+                <span className="text-xs text-slate-500">
+                  Saved default: {categoryName(defaultCategoryId)}
+                  {form.categoryId === defaultCategoryId && ' ✓'}
+                </span>
+              )}
+            </div>
             {editingId !== 'new' && (
               <>
-                <input readOnly value={form.sku ?? ''} className="px-3 py-2 border rounded-lg bg-slate-50 text-slate-500" title="SKU (auto-generated)" />
-                <input readOnly value={form.barcode ?? ''} className="px-3 py-2 border rounded-lg bg-slate-50 text-slate-500" title="Barcode (auto-generated)" />
+                <input readOnly value={form.sku ?? ''} className="px-3 py-2 border rounded-lg bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-400" title="SKU (auto-generated)" />
+                <input readOnly value={form.barcode ?? ''} className="px-3 py-2 border rounded-lg bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-400" title="Barcode (auto-generated)" />
               </>
             )}
-            {editingId === 'new' && <p className="col-span-2 text-xs text-slate-400 self-center">SKU & barcode auto-generated on save</p>}
+            {editingId === 'new' && <p className="col-span-3 text-xs text-slate-400">SKU & barcode auto-generated on save</p>}
             <div>
               <label className="text-xs text-slate-500">Cost Price (PKR)</label>
               <input type="number" value={form.costPrice ?? ''} onChange={(e) => setForm({ ...form, costPrice: e.target.value ? parseFloat(e.target.value) : undefined })} className="w-full px-3 py-2 border rounded-lg" placeholder="0.00" />
@@ -306,7 +335,7 @@ export function ProductsPage() {
           <Button size="sm" variant="ghost" onClick={handleAddCategory}>+ Cat</Button>
         </div>
 
-        <div className="bg-white rounded-xl border overflow-hidden">
+        <div className="panel overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-slate-50">
               <tr className="text-left text-slate-500">
@@ -331,7 +360,7 @@ export function ProductsPage() {
                   </td>
                   <td className="p-3"><span className="text-xs px-2 py-0.5 rounded bg-slate-100">{p.status}</span></td>
                   <td className="p-3" onClick={(e) => e.stopPropagation()}>
-                    <button className="text-pink-600 text-sm" onClick={() => startEdit(p)}>Edit</button>
+                    <button className="text-primary-600 text-sm" onClick={() => startEdit(p)}>Edit</button>
                   </td>
                 </tr>
               ))}
@@ -375,7 +404,7 @@ export function ProductsPage() {
               </div>
               <div className="flex gap-2 mb-3">
                 {(['purchases', 'sales', 'returns'] as HistoryTab[]).map((t) => (
-                  <button key={t} type="button" onClick={() => setHistoryTab(t)} className={`px-3 py-1 rounded text-sm capitalize ${historyTab === t ? 'bg-pink-100 text-pink-800' : 'bg-slate-100'}`}>{t}</button>
+                  <button key={t} type="button" onClick={() => setHistoryTab(t)} className={`px-3 py-1 rounded text-sm capitalize ${historyTab === t ? 'bg-primary-100 text-primary-800' : 'bg-slate-100'}`}>{t}</button>
                 ))}
               </div>
               <div className="max-h-48 overflow-y-auto border rounded-lg text-sm">

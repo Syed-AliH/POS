@@ -67,12 +67,12 @@ export function StocktakePage() {
   const total = session?.items.length ?? 0;
 
   return (
-    <div className="h-full overflow-y-auto p-6">
-      <h2 className="text-2xl font-bold mb-6">Stocktake</h2>
+    <div className="page-shell">
+      <h2 className="page-title mb-6">Stocktake</h2>
       {message && <div className="mb-4 p-3 bg-blue-50 rounded-lg text-sm">{message}</div>}
 
       {!session ? (
-        <div className="bg-white rounded-xl border p-6 max-w-md">
+        <div className="panel p-6 max-w-md">
           <p className="text-slate-600 mb-4">Start a full inventory count. All active products will be included.</p>
           <Button onClick={handleStart}>Start Stocktake</Button>
           {history.length > 0 && (
@@ -99,7 +99,7 @@ export function StocktakePage() {
             </div>
           </div>
           <input placeholder="Search products..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full max-w-md px-3 py-2 border rounded-lg mb-4" />
-          <div className="bg-white rounded-xl border max-h-[32rem] overflow-y-auto">
+          <div className="panel max-h-[32rem] overflow-y-auto">
             {items.map((item) => (
               <div key={item.id} className="flex items-center gap-3 p-3 border-b text-sm">
                 <div className="flex-1">

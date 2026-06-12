@@ -3,7 +3,7 @@ import type { ReceiptPreview as ReceiptPreviewData } from '@shared/types';
 
 export function ReceiptPreview({ data, className }: { data: ReceiptPreviewData; className?: string }) {
   return (
-    <div className={`font-mono text-sm bg-white border rounded-lg p-4 max-w-md mx-auto ${className ?? ''}`}>
+    <div className={`font-mono text-sm rounded-lg border border-slate-200 bg-white p-4 max-w-md mx-auto dark:border-slate-700 dark:bg-slate-100 dark:text-slate-900 ${className ?? ''}`}>
       <div className="text-center border-b pb-2 mb-2">
         <div className="font-bold text-base">{data.storeName}</div>
         {data.storeAddress && <div className="text-xs text-slate-500">{data.storeAddress}</div>}

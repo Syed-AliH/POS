@@ -98,7 +98,7 @@ export function focusElement(ref: { current: HTMLElement | null }, flash = true)
   el.focus();
   if (flash && el instanceof HTMLInputElement) {
     el.select();
-    el.classList.add('ring-4', 'ring-pink-400');
-    window.setTimeout(() => el.classList.remove('ring-4', 'ring-pink-400'), 600);
+    el.classList.add('ring-4', 'ring-primary-400');
+    window.setTimeout(() => el.classList.remove('ring-4', 'ring-primary-400'), 600);
   }
 }

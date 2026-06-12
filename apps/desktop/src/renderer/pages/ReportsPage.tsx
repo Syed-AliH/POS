@@ -54,7 +54,7 @@ export function ReportsPage() {
   useEffect(() => { load(); }, [startDate, endDate]);
 
   return (
-    <div className="h-full overflow-y-auto p-6">
+    <div className="page-shell">
       <div className="flex justify-between items-center mb-6">
         <div>
           <h2 className="text-2xl font-bold">Reports</h2>
@@ -67,35 +67,35 @@ export function ReportsPage() {
           <Button variant="secondary" size="sm" onClick={load} disabled={loading}>
             {loading ? 'Loading…' : 'Refresh'}
           </Button>
-          <Link to="/inventory-report" className="text-sm text-pink-700 hover:underline px-2 py-2">Inventory Report →</Link>
+          <Link to="/inventory-report" className="text-sm text-primary-700 hover:underline px-2 py-2">Inventory Report →</Link>
         </div>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
-        <div className="bg-white rounded-xl border p-4">
+        <div className="panel p-4">
           <p className="text-sm text-slate-500">Sales</p>
-          <p className="text-2xl font-bold text-pink-700">PKR {(profit?.revenue ?? summary.totalSales).toFixed(0)}</p>
+          <p className="text-2xl font-bold text-primary-700">PKR {(profit?.revenue ?? summary.totalSales).toFixed(0)}</p>
           <p className="text-xs text-slate-400">{profit?.transactionCount ?? summary.transactionCount} transactions</p>
         </div>
         {profit && (
           <>
-            <div className="bg-white rounded-xl border p-4">
+            <div className="panel p-4">
               <p className="text-sm text-slate-500">Est. Cost</p>
               <p className="text-2xl font-bold">PKR {profit.estimatedCost.toFixed(0)}</p>
             </div>
-            <div className="bg-white rounded-xl border p-4">
+            <div className="panel p-4">
               <p className="text-sm text-slate-500">Gross Profit</p>
               <p className="text-2xl font-bold">PKR {profit.grossProfit.toFixed(0)}</p>
               <p className="text-xs text-slate-400">{profit.marginPercent.toFixed(1)}% margin</p>
             </div>
-            <div className="bg-white rounded-xl border p-4">
+            <div className="panel p-4">
               <p className="text-sm text-slate-500">Returns</p>
               <p className="text-2xl font-bold">PKR {profit.returnsTotal.toFixed(0)}</p>
             </div>
           </>
         )}
         {eod && (
-          <div className="bg-white rounded-xl border p-4">
+          <div className="panel p-4">
             <p className="text-sm text-slate-500">Expenses</p>
             <p className="text-2xl font-bold">PKR {eod.expensesTotal.toFixed(0)}</p>
           </div>
@@ -103,7 +103,7 @@ export function ReportsPage() {
       </div>
 
       {valuation && (
-        <div className="bg-white rounded-xl border p-4 mb-6 space-y-4">
+        <div className="panel p-4 mb-6 space-y-4">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
             <div><span className="text-slate-500">Stock units:</span> <strong className={valuation.totalUnits < 0 ? 'text-red-600' : ''}>{valuation.totalUnits}</strong></div>
             <div><span className="text-slate-500">Cost value:</span> <strong>PKR {valuation.totalCostValue.toFixed(0)}</strong></div>
@@ -134,7 +134,7 @@ export function ReportsPage() {
       )}
 
       <div className="grid grid-cols-2 gap-6">
-        <div className="bg-white rounded-xl border p-4">
+        <div className="panel p-4">
           <h3 className="font-semibold mb-3">Sales by Category</h3>
           {byCategory.map((r) => (
             <div key={r.categoryName} className="flex justify-between text-sm py-1 border-b border-slate-50">
@@ -145,7 +145,7 @@ export function ReportsPage() {
           {!byCategory.length && <p className="text-slate-400 text-sm">No data for this period</p>}
         </div>
 
-        <div className="bg-white rounded-xl border p-4">
+        <div className="panel p-4">
           <h3 className="font-semibold mb-3">Top Products</h3>
           {topProducts.map((r, i) => (
             <div key={r.productId} className="flex justify-between text-sm py-1 border-b border-slate-50">
@@ -156,7 +156,7 @@ export function ReportsPage() {
           {!topProducts.length && <p className="text-slate-400 text-sm">No data for this period</p>}
         </div>
 
-        <div className="bg-white rounded-xl border p-4">
+        <div className="panel p-4">
           <h3 className="font-semibold mb-3">Payment Breakdown</h3>
           {payments.map((r) => (
             <div key={r.paymentMethod} className="flex justify-between text-sm py-1 border-b border-slate-50 capitalize">
@@ -168,7 +168,7 @@ export function ReportsPage() {
         </div>
 
         {eod && (
-          <div className="bg-white rounded-xl border p-4">
+          <div className="panel p-4">
             <h3 className="font-semibold mb-3">Period Summary ({eod.date})</h3>
             <div className="space-y-1 text-sm">
               <div className="flex justify-between"><span>Total sales</span><span>PKR {eod.totalSales.toFixed(0)}</span></div>

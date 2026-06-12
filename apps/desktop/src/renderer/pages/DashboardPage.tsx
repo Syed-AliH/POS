@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Button } from '@mama-babi/ui';
+import { ShoppingCart, Receipt, Wallet, Package } from 'lucide-react';
+import { Button, KpiCard, PageHeader } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
 import { Modal } from '@renderer/components/Modal';
 import { ReceiptPreview } from '@renderer/components/ReceiptPreview';
@@ -69,61 +70,35 @@ export function DashboardPage() {
   };
 
   return (
-    <div className="h-full overflow-y-auto p-6">
-      <div className="flex flex-wrap justify-between items-start gap-4 mb-6">
-        <div>
-          <h2 className="text-2xl font-bold">{storeName} Dashboard</h2>
-          <p className="text-sm text-slate-500 mt-1">Analytics and bills for the selected period</p>
-        </div>
-        <div className="flex gap-2 items-center flex-wrap">
-          <input
-            type="date"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            className="px-3 py-2 border rounded-lg text-sm"
-          />
-          <span className="text-slate-400">to</span>
-          <input
-            type="date"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-            className="px-3 py-2 border rounded-lg text-sm"
-          />
-          <Button variant="secondary" size="sm" onClick={load} disabled={loading}>
-            {loading ? 'Loading…' : 'Refresh'}
-          </Button>
-        </div>
+    <div className="page-shell">
+      <PageHeader
+        title={`${storeName} Dashboard`}
+        description="Analytics and bills for the selected period"
+        actions={(
+          <>
+            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="form-input w-auto" />
+            <span className="text-slate-400">to</span>
+            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="form-input w-auto" />
+            <Button variant="secondary" size="sm" onClick={load} disabled={loading} loading={loading}>
+              Refresh
+            </Button>
+          </>
+        )}
+      />
+
+      <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <KpiCard label="Total Sales" value={`PKR ${(profit?.revenue ?? 0).toFixed(2)}`} hint={rangeLabel} icon={<ShoppingCart className="h-5 w-5" />} />
+        <KpiCard label="Transactions" value={profit?.transactionCount ?? 0} hint="completed bills" icon={<Receipt className="h-5 w-5" />} />
+        <KpiCard label="Gross Profit" value={`PKR ${(profit?.grossProfit ?? 0).toFixed(2)}`} hint={`${(profit?.marginPercent ?? 0).toFixed(1)}% margin`} icon={<Wallet className="h-5 w-5" />} />
+        <KpiCard label="Held Sales" value={heldCount} hint={heldCount > 0 ? 'View in Sales' : undefined} icon={<Package className="h-5 w-5" />} />
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white rounded-xl border border-slate-200 p-6">
-          <p className="text-sm text-slate-500">Total Sales</p>
-          <p className="text-3xl font-bold text-pink-700 mt-1">PKR {(profit?.revenue ?? 0).toFixed(2)}</p>
-          <p className="text-xs text-slate-400 mt-1">{rangeLabel}</p>
-        </div>
-        <div className="bg-white rounded-xl border border-slate-200 p-6">
-          <p className="text-sm text-slate-500">Transactions</p>
-          <p className="text-3xl font-bold mt-1">{profit?.transactionCount ?? 0}</p>
-          <p className="text-xs text-slate-400 mt-1">completed bills</p>
-        </div>
-        <div className="bg-white rounded-xl border border-slate-200 p-6">
-          <p className="text-sm text-slate-500">Gross Profit</p>
-          <p className="text-3xl font-bold mt-1">PKR {(profit?.grossProfit ?? 0).toFixed(2)}</p>
-          <p className="text-xs text-slate-400 mt-1">{(profit?.marginPercent ?? 0).toFixed(1)}% margin</p>
-        </div>
-        <div className="bg-white rounded-xl border border-slate-200 p-6">
-          <p className="text-sm text-slate-500">Held Sales</p>
-          <p className="text-3xl font-bold mt-1">{heldCount}</p>
-          {heldCount > 0 && <Link to="/sales" className="text-sm text-pink-600 mt-1 inline-block">View in Sales →</Link>}
-        </div>
-      </div>
-
-      <div className="bg-white rounded-xl border border-slate-200">
-        <div className="p-4 border-b border-slate-100 flex justify-between items-center">
-          <h3 className="font-semibold">Bills ({rangeLabel})</h3>
+      <div className="data-table-wrap">
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 dark:border-slate-800">
+          <h3 className="font-semibold text-slate-900 dark:text-slate-50">Bills ({rangeLabel})</h3>
           <p className="text-xs text-slate-500">Click a row to view receipt</p>
         </div>
-        <table className="w-full">
+        <table className="data-table">
           <thead className="bg-slate-50">
             <tr className="text-left text-sm text-slate-500">
               <th className="p-3">Sale #</th>
@@ -138,10 +113,10 @@ export function DashboardPage() {
             {sales.map((s) => (
               <tr
                 key={s.id}
-                className="border-t border-slate-100 cursor-pointer hover:bg-pink-50"
+                className="border-t border-slate-100 cursor-pointer hover:bg-primary-50"
                 onClick={() => openBill(s)}
               >
-                <td className="p-3 font-mono text-sm text-pink-700">{s.saleNumber}</td>
+                <td className="p-3 font-mono text-sm text-primary-700">{s.saleNumber}</td>
                 <td className="p-3">{s.cashierName}</td>
                 <td className="p-3 text-slate-600">{s.customerName ?? '—'}</td>
                 <td className="p-3 capitalize">{s.paymentMethod.replace('_', ' ')}</td>

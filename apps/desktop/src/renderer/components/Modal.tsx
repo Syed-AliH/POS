@@ -73,7 +73,7 @@ export function Modal({
         role={priority === 'alert' ? 'alertdialog' : 'dialog'}
         aria-modal="true"
         aria-labelledby="modal-title"
-        className={`bg-white rounded-xl shadow-2xl flex flex-col ${panelSize} ${priority === 'alert' ? 'ring-2 ring-red-200' : ''}`}
+        className={`bg-white dark:bg-slate-900 rounded-xl shadow-2xl flex flex-col ${panelSize} ${priority === 'alert' ? 'ring-2 ring-danger-200' : ''}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-between items-center p-4 border-b shrink-0">

@@ -47,12 +47,12 @@ export function VendorsPage() {
   };
 
   return (
-    <div className="h-full overflow-y-auto p-6">
-      <h2 className="text-2xl font-bold mb-6">Vendors</h2>
+    <div className="page-shell">
+      <h2 className="page-title mb-6">Vendors</h2>
       {message && <div className="mb-4 p-3 bg-blue-50 rounded-lg text-sm">{message}</div>}
 
       <div className="grid grid-cols-2 gap-6">
-        <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+        <div className="panel p-4 space-y-3">
           <h3 className="font-semibold">{editingId ? 'Edit Vendor' : 'Add Vendor'}</h3>
           <input placeholder="Name *" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full px-3 py-2 border rounded-lg" />
           <input placeholder="Contact" value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} className="w-full px-3 py-2 border rounded-lg" />
@@ -67,19 +67,19 @@ export function VendorsPage() {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl border border-slate-200 p-4">
+        <div className="panel p-4">
           <h3 className="font-semibold mb-3">All Vendors ({vendors.length})</h3>
           <div className="space-y-2 max-h-[28rem] overflow-y-auto">
             {vendors.map((v) => (
               <button
                 key={v.id}
                 onClick={() => startEdit(v)}
-                className="w-full text-left p-3 border rounded-lg hover:bg-pink-50"
+                className="w-full text-left p-3 border rounded-lg hover:bg-primary-50"
               >
                 <div className="font-medium">{v.name}</div>
                 <div className="text-sm text-slate-500">
                   {v.contact ?? '—'} · {v.paymentTerms ?? '—'}
-                  {v.outstandingBalance > 0 && <span className="text-pink-700"> · PKR {v.outstandingBalance.toFixed(0)} due</span>}
+                  {v.outstandingBalance > 0 && <span className="text-primary-700"> · PKR {v.outstandingBalance.toFixed(0)} due</span>}
                   {v.preferredPaymentType && <span> · Prefers {v.preferredPaymentType}</span>}
                 </div>
               </button>

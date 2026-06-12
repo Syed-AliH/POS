@@ -59,23 +59,23 @@ export function GiftCardsPage() {
   };
 
   return (
-    <div className="h-full overflow-y-auto p-6">
-      <h2 className="text-2xl font-bold mb-6">Gift Cards</h2>
+    <div className="page-shell">
+      <h2 className="page-title mb-6">Gift Cards</h2>
       {message && <div className="mb-4 p-3 bg-blue-50 rounded-lg text-sm">{message}</div>}
 
       <div className="grid grid-cols-3 gap-6 mb-6">
-        <div className="bg-white rounded-xl border p-4 space-y-3">
+        <div className="panel p-4 space-y-3">
           <h3 className="font-semibold">Issue New Card</h3>
           <input type="number" placeholder="Amount (PKR)" value={issueAmount} onChange={(e) => setIssueAmount(e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
           <Button onClick={handleIssue}>Issue Card</Button>
         </div>
-        <div className="bg-white rounded-xl border p-4 space-y-3">
+        <div className="panel p-4 space-y-3">
           <h3 className="font-semibold">Reload Card</h3>
           <input placeholder="Card code" value={reloadCode} onChange={(e) => setReloadCode(e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
           <input type="number" placeholder="Amount" value={reloadAmount} onChange={(e) => setReloadAmount(e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
           <Button variant="secondary" onClick={handleReload}>Reload</Button>
         </div>
-        <div className="bg-white rounded-xl border p-4 space-y-3">
+        <div className="panel p-4 space-y-3">
           <h3 className="font-semibold">Lookup</h3>
           <input placeholder="Card code" value={lookupCode} onChange={(e) => setLookupCode(e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
           <Button variant="ghost" onClick={handleLookup}>Check Balance</Button>
@@ -85,7 +85,7 @@ export function GiftCardsPage() {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl border">
+      <div className="panel">
         <h3 className="p-4 font-semibold border-b">Recent Cards</h3>
         <table className="w-full text-sm">
           <thead className="bg-slate-50"><tr><th className="p-3 text-left">Code</th><th className="p-3 text-left">Balance</th><th className="p-3 text-left">Status</th><th className="p-3 text-left">Created</th><th className="p-3"></th></tr></thead>

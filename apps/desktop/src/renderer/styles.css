@@ -2,14 +2,206 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  margin: 0;
-  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-  background: #f8fafc;
-  color: #0f172a;
-  overflow: hidden;
+@layer base {
+  :root {
+    --background: 248 250 252;
+    --foreground: 15 23 42;
+    --card: 255 255 255;
+    --border: 226 232 240;
+    --primary: 37 99 235;
+    --primary-foreground: 255 255 255;
+    --muted: 241 245 249;
+    --muted-foreground: 100 116 139;
+  }
+
+  .dark {
+    --background: 15 23 42;
+    --foreground: 248 250 252;
+    --card: 30 41 59;
+    --border: 51 65 85;
+    --primary: 59 130 246;
+    --primary-foreground: 255 255 255;
+    --muted: 30 41 59;
+    --muted-foreground: 148 163 184;
+  }
+
+  html {
+    font-family: 'Poppins', system-ui, -apple-system, sans-serif;
+  }
+
+  body {
+    margin: 0;
+    background-color: rgb(var(--background));
+    color: rgb(var(--foreground));
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  #root {
+    height: 100vh;
+  }
+
+  * {
+    @apply border-slate-200 dark:border-slate-700;
+  }
 }
 
-#root {
-  height: 100vh;
+@layer components {
+  .page-shell {
+    @apply h-full overflow-y-auto bg-surface-muted p-6 dark:bg-slate-950;
+  }
+
+  .panel {
+    @apply rounded-xl border border-slate-200 bg-white shadow-card dark:border-slate-800 dark:bg-slate-900;
+  }
+
+  .panel-muted {
+    @apply rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900/60;
+  }
+
+  .page-title {
+    @apply text-2xl font-bold text-slate-900 dark:text-slate-50;
+  }
+
+  .page-subtitle {
+    @apply text-sm text-slate-500 dark:text-slate-400;
+  }
+
+  .tab-pill {
+    @apply rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium capitalize text-slate-600 transition-colors dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300;
+  }
+
+  .tab-pill-active {
+    @apply bg-primary-100 text-primary-800 dark:bg-primary-950 dark:text-primary-300;
+  }
+
+  .data-table-wrap {
+    @apply overflow-hidden rounded-xl border border-slate-200 bg-white shadow-card dark:border-slate-800 dark:bg-slate-900;
+  }
+
+  .data-table {
+    @apply w-full text-sm;
+  }
+
+  .data-table thead {
+    @apply bg-slate-50 dark:bg-slate-800/80;
+  }
+
+  .data-table th {
+    @apply px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400;
+  }
+
+  .data-table td {
+    @apply px-4 py-3 text-slate-700 dark:text-slate-300;
+  }
+
+  .data-table tbody tr {
+    @apply border-t border-slate-100 transition-colors dark:border-slate-800;
+  }
+
+  .data-table tbody tr:hover {
+    @apply bg-slate-50 dark:bg-slate-800/50;
+  }
+
+  .data-table tbody tr.row-active {
+    @apply bg-primary-50 dark:bg-primary-950/40;
+  }
+
+  .form-input {
+    @apply flex h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100;
+  }
+
+  .form-select {
+    @apply form-input;
+  }
+
+  .form-label {
+    @apply mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300;
+  }
+
+  .section-label {
+    @apply text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400;
+  }
+
+  /* Legacy inputs without form-input (pages, modals, checkout) */
+  .dark input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='range']):not([type='color']),
+  .dark textarea,
+  .dark select {
+    @apply border-slate-700 bg-slate-900 text-slate-100;
+  }
+
+  .dark input::placeholder,
+  .dark textarea::placeholder {
+    @apply text-slate-500;
+  }
+
+  .dark kbd {
+    @apply bg-slate-800 text-slate-200;
+  }
+
+  /* Reusable table/list row styles (prefer over raw hover:bg-slate-50) */
+  .table-head {
+    @apply bg-slate-50 sticky top-0 z-10 dark:bg-slate-800/90;
+  }
+
+  .table-head th,
+  .table-head tr {
+    @apply text-slate-500 dark:text-slate-400;
+  }
+
+  .row-hover {
+    @apply transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/70;
+  }
+
+  .row-active {
+    @apply bg-primary-50 dark:bg-primary-950/50;
+  }
+
+  .list-item-hover {
+    @apply transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/70;
+  }
+
+  .list-item-active {
+    @apply bg-primary-50 dark:bg-primary-950/50;
+  }
+}
+
+@layer utilities {
+  /* Dark mode: light-only hover/selection utilities used across pages */
+  .dark tr.hover\:bg-slate-50:hover,
+  .dark button.hover\:bg-slate-50:hover,
+  .dark a.hover\:bg-slate-50:hover,
+  .dark .hover\:bg-slate-50:hover {
+    background-color: rgb(30 41 59 / 0.7);
+  }
+
+  .dark tr.hover\:bg-primary-50:hover,
+  .dark button.hover\:bg-primary-50:hover,
+  .dark a.hover\:bg-primary-50:hover {
+    background-color: rgb(23 37 84 / 0.5);
+  }
+
+  .dark tr.bg-primary-50,
+  .dark button.bg-primary-50 {
+    background-color: rgb(23 37 84 / 0.5);
+  }
+
+  .dark thead.bg-slate-50 {
+    background-color: rgb(30 41 59 / 0.9);
+  }
+
+  .dark thead.bg-slate-50 th,
+  .dark thead.bg-slate-50 tr {
+    color: rgb(148 163 184);
+  }
+
+  /* Muted text colors meant for light backgrounds */
+  .dark .text-slate-600 {
+    color: rgb(148 163 184);
+  }
+
+  .dark .text-slate-700 {
+    color: rgb(203 213 225);
+  }
 }

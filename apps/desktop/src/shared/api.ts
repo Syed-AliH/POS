@@ -140,6 +140,8 @@ export interface MamaBabiAPI {
   };
   print: {
     receipt: (saleId: string) => Promise<ApiResult<{ printed: boolean }>>;
+    testReceipt: (template: import('@mama-babi/printer').ReceiptTemplateConfig) => Promise<ApiResult<{ printed: boolean }>>;
+    testLabel: (input: { layout: LabelTemplateSummary['layout']; widthMm: number; heightMm: number }) => Promise<ApiResult<{ printed: boolean }>>;
     zReport: (date?: string) => Promise<ApiResult<{ printed: boolean }>>;
   };
   reports: {
@@ -225,7 +227,7 @@ export interface MamaBabiAPI {
   templates: {
     receiptList: () => Promise<ApiResult<ReceiptTemplate[]>>;
     receiptUpdate: (id: string, input: Partial<ReceiptTemplate>) => Promise<ApiResult<ReceiptTemplate>>;
-    labelUpdate: (id: string, input: { name?: string; layout?: LabelTemplateSummary['layout'] }) => Promise<ApiResult<LabelTemplateSummary>>;
+    labelUpdate: (id: string, input: { name?: string; widthMm?: number; heightMm?: number; layout?: LabelTemplateSummary['layout'] }) => Promise<ApiResult<LabelTemplateSummary>>;
   };
 }
 
@@ -312,6 +314,8 @@ export function createApi(): MamaBabiAPI {
     },
     print: {
       receipt: (saleId) => invoke(IPC_CHANNELS.PRINT_RECEIPT, saleId),
+      testReceipt: (template) => invoke(IPC_CHANNELS.PRINT_TEST_RECEIPT, template),
+      testLabel: (input) => invoke(IPC_CHANNELS.PRINT_TEST_LABEL, input),
       zReport: (date) => invoke(IPC_CHANNELS.PRINT_Z_REPORT, date),
     },
     reports: {

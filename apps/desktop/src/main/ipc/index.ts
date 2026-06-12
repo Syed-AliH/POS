@@ -43,7 +43,7 @@ import {
 } from './grn';
 import { handleListPrinters, handleSettingsGet, handleSettingsGetAll, handleSettingsSet } from './settings';
 import { handleLabelPrintBatch, handleLabelTemplates } from './labels';
-import { handlePrintReceipt, handlePrintZReport } from './print';
+import { handlePrintReceipt, handlePrintTestReceipt, handlePrintTestLabel, handlePrintZReport } from './print';
 import {
   handleDailySales,
   handleInventoryReport,
@@ -162,6 +162,8 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.SYNC_QUEUE_LIST, (_e, limit?: number) => handleSyncQueueList(limit));
 
   ipcMain.handle(IPC_CHANNELS.PRINT_RECEIPT, (_e, saleId: string) => handlePrintReceipt(saleId));
+  ipcMain.handle(IPC_CHANNELS.PRINT_TEST_RECEIPT, (_e, template) => handlePrintTestReceipt(template));
+  ipcMain.handle(IPC_CHANNELS.PRINT_TEST_LABEL, (_e, input) => handlePrintTestLabel(input));
   ipcMain.handle(IPC_CHANNELS.PRINT_Z_REPORT, (_e, date?: string) => handlePrintZReport(date));
   ipcMain.handle(IPC_CHANNELS.LABEL_TEMPLATES, () => handleLabelTemplates());
   ipcMain.handle(IPC_CHANNELS.LABEL_PRINT_BATCH, (_e, input) => handleLabelPrintBatch(input));

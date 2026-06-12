@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { FileText, Sticker } from 'lucide-react';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
 import { useAuthStore } from '../stores/authStore';
@@ -17,8 +19,6 @@ import type {
 const api = getApi();
 
 type Tab = 'general' | 'printers' | 'currency' | 'backup' | 'staff' | 'templates' | 'audit' | 'sync';
-
-const FIELD_OPTIONS: Array<'name' | 'price' | 'sku' | 'barcode'> = ['name', 'price', 'sku', 'barcode'];
 
 export function SettingsPage() {
   const { session } = useAuthStore();
@@ -138,16 +138,6 @@ export function SettingsPage() {
     } else setMessage(result.error ?? 'Update failed');
   };
 
-  const saveReceiptTemplate = async (tpl: ReceiptTemplate) => {
-    const result = await api.templates.receiptUpdate(tpl.id, { header: tpl.header, footer: tpl.footer });
-    setMessage(result.success ? 'Receipt template saved' : result.error ?? 'Save failed');
-  };
-
-  const saveLabelTemplate = async (tpl: LabelTemplateSummary) => {
-    const result = await api.templates.labelUpdate(tpl.id, { layout: tpl.layout });
-    setMessage(result.success ? 'Label template saved' : result.error ?? 'Save failed');
-  };
-
   const formatSize = (bytes: number) =>
     bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 
@@ -155,9 +145,9 @@ export function SettingsPage() {
   if (isSuperAdmin) tabs.splice(4, 0, 'staff');
 
   return (
-    <div className="h-full overflow-y-auto p-6">
-      <h2 className="text-2xl font-bold mb-6">Settings</h2>
-      {message && <div className="mb-4 p-3 bg-blue-50 rounded-lg text-sm">{message}</div>}
+    <div className="page-shell">
+      <h2 className="page-title mb-6">Settings</h2>
+      {message && <div className="mb-4 rounded-lg bg-blue-50 p-3 text-sm dark:bg-primary-950 dark:text-primary-200">{message}</div>}
 
       <div className="flex flex-wrap gap-2 mb-6">
         {tabs.map((t) => (
@@ -165,7 +155,7 @@ export function SettingsPage() {
             key={t}
             onClick={() => setTab(t)}
             className={`px-4 py-2 rounded-lg text-sm font-medium capitalize ${
-              tab === t ? 'bg-pink-100 text-pink-800' : 'bg-white border border-slate-200 text-slate-600'
+              tab === t ? 'tab-pill-active' : 'tab-pill'
             }`}
           >
             {t}
@@ -174,7 +164,7 @@ export function SettingsPage() {
       </div>
 
       {tab === 'general' && (
-        <div className="bg-white rounded-xl border p-6 max-w-lg space-y-4">
+        <div className="panel p-6 max-w-lg space-y-4">
           <input placeholder="Store name" value={settings.store_name ?? ''} onChange={(e) => updateField('store_name', e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
           <input placeholder="Address" value={settings.store_address ?? ''} onChange={(e) => updateField('store_address', e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
           <input placeholder="Phone" value={settings.store_phone ?? ''} onChange={(e) => updateField('store_phone', e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
@@ -200,7 +190,7 @@ export function SettingsPage() {
       )}
 
       {tab === 'printers' && (
-        <div className="bg-white rounded-xl border p-6 max-w-lg space-y-4">
+        <div className="panel p-6 max-w-lg space-y-4">
           <select value={settings.receipt_printer ?? ''} onChange={(e) => updateField('receipt_printer', e.target.value)} className="w-full px-3 py-2 border rounded-lg">
             <option value="">Receipt: Preview mode</option>
             {printers.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
@@ -214,7 +204,7 @@ export function SettingsPage() {
       )}
 
       {tab === 'currency' && (
-        <div className="bg-white rounded-xl border p-6 max-w-lg space-y-4">
+        <div className="panel p-6 max-w-lg space-y-4">
           <p className="text-sm text-slate-500">Display secondary currency equivalent at checkout (base currency unchanged).</p>
           <input placeholder="Secondary currency code" value={settings.secondary_currency ?? 'USD'} onChange={(e) => updateField('secondary_currency', e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
           <input type="number" step="0.0001" placeholder="Exchange rate (1 PKR = ?)" value={settings.exchange_rate ?? ''} onChange={(e) => updateField('exchange_rate', e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
@@ -223,7 +213,7 @@ export function SettingsPage() {
       )}
 
       {tab === 'backup' && (
-        <div className="bg-white rounded-xl border p-6 max-w-2xl">
+        <div className="panel p-6 max-w-2xl">
           <div className="flex justify-between mb-4">
             <p className="text-sm text-slate-500">Local SQLite backups</p>
             {isSuperAdmin && <Button variant="secondary" onClick={handleBackup}>Create Backup</Button>}
@@ -239,7 +229,7 @@ export function SettingsPage() {
 
       {tab === 'staff' && isSuperAdmin && (
         <div className="grid grid-cols-2 gap-6">
-          <div className="bg-white rounded-xl border p-4 space-y-3">
+          <div className="panel p-4 space-y-3">
             <h3 className="font-semibold">Add Staff</h3>
             <input placeholder="Name" value={newStaff.name} onChange={(e) => setNewStaff({ ...newStaff, name: e.target.value })} className="w-full px-3 py-2 border rounded-lg" />
             <select value={newStaff.role} onChange={(e) => setNewStaff({ ...newStaff, role: e.target.value as UserRole })} className="w-full px-3 py-2 border rounded-lg">
@@ -251,7 +241,7 @@ export function SettingsPage() {
             <input type="password" placeholder="Password (6+ chars)" value={newStaff.password} onChange={(e) => setNewStaff({ ...newStaff, password: e.target.value })} className="w-full px-3 py-2 border rounded-lg" />
             <Button onClick={handleCreateStaff}>Create</Button>
           </div>
-          <div className="bg-white rounded-xl border p-4 space-y-3">
+          <div className="panel p-4 space-y-3">
             {editingStaffId && (
               <div className="p-3 border rounded-lg space-y-2 bg-slate-50">
                 <h4 className="font-medium text-sm">Edit Staff</h4>
@@ -271,7 +261,7 @@ export function SettingsPage() {
             )}
             {staff.map((u) => (
               <div key={u.id} className="flex justify-between items-center py-2 border-b text-sm">
-                <button onClick={() => startEditStaff(u)} className="text-left hover:text-pink-600">
+                <button onClick={() => startEditStaff(u)} className="text-left hover:text-primary-600">
                   {u.name} <span className="text-slate-400">({u.username ?? '—'} · {u.role})</span>
                 </button>
                 <button onClick={() => toggleStaffActive(u)} className={`text-xs px-2 py-1 rounded ${u.isActive ? 'bg-green-100' : 'bg-slate-100'}`}>
@@ -284,45 +274,49 @@ export function SettingsPage() {
       )}
 
       {tab === 'templates' && (
-        <div className="space-y-6 max-w-2xl">
-          {receiptTemplates.map((tpl) => (
-            <div key={tpl.id} className="bg-white rounded-xl border p-4 space-y-3">
-              <h3 className="font-semibold">Receipt: {tpl.name}</h3>
-              <input placeholder="Footer message" value={tpl.footer.message ?? ''} onChange={(e) => setReceiptTemplates((prev) => prev.map((t) => t.id === tpl.id ? { ...t, footer: { ...t.footer, message: e.target.value } } : t))} className="w-full px-3 py-2 border rounded-lg" />
-              <input placeholder="Return policy" value={tpl.footer.returnPolicy ?? ''} onChange={(e) => setReceiptTemplates((prev) => prev.map((t) => t.id === tpl.id ? { ...t, footer: { ...t.footer, returnPolicy: e.target.value } } : t))} className="w-full px-3 py-2 border rounded-lg" />
-              <Button size="sm" onClick={() => saveReceiptTemplate(tpl)}>Save Receipt</Button>
+        <div className="grid md:grid-cols-2 gap-6 max-w-3xl">
+          <Link
+            to="/receipt-designer"
+            className="group panel p-6 transition-all hover:border-primary-300 hover:shadow-md dark:hover:border-primary-700"
+          >
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary-50 text-primary-600 mb-4 group-hover:bg-primary-100">
+              <FileText className="h-6 w-6" />
             </div>
-          ))}
-          {labelTemplates.map((tpl) => (
-            <div key={tpl.id} className="bg-white rounded-xl border p-4 space-y-3">
-              <h3 className="font-semibold">Label: {tpl.name}</h3>
-              <div className="flex flex-wrap gap-3">
-                {FIELD_OPTIONS.map((f) => (
-                  <label key={f} className="flex items-center gap-1 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={tpl.layout.fields.includes(f)}
-                      onChange={(e) => {
-                        const fields = e.target.checked ? [...tpl.layout.fields, f] : tpl.layout.fields.filter((x) => x !== f);
-                        setLabelTemplates((prev) => prev.map((t) => t.id === tpl.id ? { ...t, layout: { ...t.layout, fields } } : t));
-                      }}
-                    />
-                    {f}
-                  </label>
-                ))}
-                <label className="flex items-center gap-1 text-sm">
-                  <input type="checkbox" checked={tpl.layout.showBarcode} onChange={(e) => setLabelTemplates((prev) => prev.map((t) => t.id === tpl.id ? { ...t, layout: { ...t.layout, showBarcode: e.target.checked } } : t))} />
-                  barcode image
-                </label>
+            <h3 className="font-semibold text-lg mb-1">Receipt Designer</h3>
+            <p className="text-sm text-slate-500 mb-4">
+              Customize store header, footer, sections, and thermal paper width with live preview.
+            </p>
+            {receiptTemplates.map((tpl) => (
+              <div key={tpl.id} className="text-xs text-slate-400 border-t pt-2 mt-2">
+                {tpl.name} · {tpl.widthMm}mm {tpl.isDefault && '· Default'}
               </div>
-              <Button size="sm" onClick={() => saveLabelTemplate(tpl)}>Save Label</Button>
+            ))}
+            <span className="text-sm font-medium text-primary-600">Open designer →</span>
+          </Link>
+
+          <Link
+            to="/label-designer"
+            className="group panel p-6 transition-all hover:border-primary-300 hover:shadow-md dark:hover:border-primary-700"
+          >
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary-50 text-primary-600 mb-4 group-hover:bg-primary-100">
+              <Sticker className="h-6 w-6" />
             </div>
-          ))}
+            <h3 className="font-semibold text-lg mb-1">Label Designer</h3>
+            <p className="text-sm text-slate-500 mb-4">
+              Position product name, price, barcode, and custom text on thermal labels.
+            </p>
+            {labelTemplates.map((tpl) => (
+              <div key={tpl.id} className="text-xs text-slate-400 border-t pt-2 mt-2">
+                {tpl.name} · {tpl.widthMm}×{tpl.heightMm}mm {tpl.isDefault && '· Default'}
+              </div>
+            ))}
+            <span className="text-sm font-medium text-primary-600">Open designer →</span>
+          </Link>
         </div>
       )}
 
       {tab === 'audit' && (
-        <div className="bg-white rounded-xl border max-h-[32rem] overflow-y-auto">
+        <div className="panel max-h-[32rem] overflow-y-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 sticky top-0"><tr><th className="p-2 text-left">Time</th><th className="p-2 text-left">User</th><th className="p-2 text-left">Module</th><th className="p-2 text-left">Action</th></tr></thead>
             <tbody>
@@ -340,7 +334,7 @@ export function SettingsPage() {
       )}
 
       {tab === 'sync' && (
-        <div className="bg-white rounded-xl border p-6 max-w-2xl">
+        <div className="panel p-6 max-w-2xl">
           <p className="text-sm mb-4">Cloud sync: <strong>{syncStatus.enabled ? 'Enabled' : 'Disabled (local-first)'}</strong> · Pending: {syncStatus.pending}</p>
           <p className="text-xs text-slate-400 mb-4">Supabase sync engine is stubbed. Queue entries will populate when cloud sync is enabled.</p>
           {syncQueue.length > 0 ? syncQueue.map((q) => (

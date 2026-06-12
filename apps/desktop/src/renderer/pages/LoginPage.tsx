@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ShoppingCart } from 'lucide-react';
+import { Button, Input } from '@mama-babi/ui';
 import { useAuthStore } from '../stores/authStore';
 
 export function LoginPage() {
@@ -19,49 +21,41 @@ export function LoginPage() {
   };
 
   return (
-    <div className="h-screen flex items-center justify-center bg-gradient-to-br from-pink-50 to-slate-100">
-      <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-pink-700">Mama Babi</h1>
-          <p className="text-slate-500 mt-1">Point of Sale System</p>
+    <div className="flex h-screen items-center justify-center bg-surface-muted px-4 dark:bg-slate-950">
+      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 shadow-card dark:border-slate-800 dark:bg-slate-900">
+        <div className="mb-8 text-center">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-primary-50 text-primary-600 dark:bg-primary-950">
+            <ShoppingCart className="h-7 w-7" />
+          </div>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">Mama Babi POS</h1>
+          <p className="mt-1 text-sm text-slate-500">Enterprise point of sale</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-600 mb-1">Username</label>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              autoComplete="username"
-              disabled={loading}
-              className="w-full px-4 py-3 border rounded-lg text-lg"
-              placeholder="Enter username"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-600 mb-1">Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              disabled={loading}
-              className="w-full px-4 py-3 border rounded-lg text-lg"
-              placeholder="Enter password"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={loading || !username.trim() || !password}
-            className="w-full min-h-[52px] rounded-lg text-lg font-semibold bg-pink-600 hover:bg-pink-700 text-white disabled:opacity-50"
-          >
-            {loading ? 'Logging in...' : 'Login'}
-          </button>
+          <Input
+            label="Username"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            autoComplete="username"
+            disabled={loading}
+            placeholder="Enter username"
+          />
+          <Input
+            label="Password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            disabled={loading}
+            placeholder="Enter password"
+          />
+          <Button type="submit" className="w-full" size="lg" loading={loading} disabled={!username.trim() || !password}>
+            {loading ? 'Signing in…' : 'Sign in'}
+          </Button>
         </form>
 
-        {loginError && <p className="text-red-600 text-center mt-4 text-sm">{loginError}</p>}
-        <p className="text-xs text-slate-400 text-center mt-6">
+        {loginError && <p className="mt-4 text-center text-sm text-danger-600">{loginError}</p>}
+        <p className="mt-6 text-center text-xs text-slate-400">
           First login: admin / admin123 (change password in Settings)
         </p>
       </div>
