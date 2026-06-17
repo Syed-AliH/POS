@@ -264,27 +264,54 @@ export function estimateBarcodeWidthPx(value: string, barWidth: number): number 
   return Math.ceil(estimateBarcodeModuleCount(value) * barWidth);
 }
 
+/** Minimum quiet zone in modules (each side) for reliable EAN/CODE scanning at 203 DPI. */
+export const BARCODE_QUIET_ZONE_MODULES = 11;
+
+export function barcodeQuietZonePx(barWidth: number): number {
+  return Math.ceil(BARCODE_QUIET_ZONE_MODULES * Math.max(1, barWidth));
+}
+
+/** Legacy designer default — values at or below this use auto-fill unless changed via slider. */
+export const BARCODE_BAR_WIDTH_AUTO_SENTINEL = 1.05;
+
+export function isBarcodeBarWidthAuto(barcodeBarWidth?: number): boolean {
+  return barcodeBarWidth == null || barcodeBarWidth <= BARCODE_BAR_WIDTH_AUTO_SENTINEL;
+}
+
+export function barcodeModuleMinWidth(format: string): number {
+  return format === 'EAN13' || format === 'EAN8' || format === 'UPC' ? 2 : 1;
+}
+
+/** Minimum module width in the designer slider (manual mode — can go below scan recommendation). */
+export const BARCODE_DESIGNER_MIN_BAR_WIDTH = 0.5;
+
+export function barcodeDesignerMinBarWidth(): number {
+  return BARCODE_DESIGNER_MIN_BAR_WIDTH;
+}
+
 /**
- * Uniform module width for a symbology — fills the slot at 203 DPI.
- * CODE128/CODE39 allow barWidth=1 to fit wider codes. EAN/UPC minimum is 2 dots.
- * Result is always capped so modules × barWidth ≤ maxWidthPx (no slot overflow).
- * Legacy designer values below 1.75 (e.g. 1.1) are treated as auto-fill.
+ * Uniform module width for a symbology at 203 DPI.
+ * When autoFill is true, fills the slot. Otherwise uses preferredBarWidth from the designer slider.
  */
 export function resolveUniformBarcodeBarWidth(
   format: string,
   maxWidthPx: number,
   preferredBarWidth: number,
   value?: string,
+  autoFill = false,
 ): number {
   const modules = Math.max(1, barcodeModuleCountForFormat(format, value));
-  // EAN/UPC need at least 2 dots per bar for scanner accuracy; CODE128 can use 1
-  const minBarWidth = format === 'EAN13' || format === 'EAN8' || format === 'UPC' ? 2 : 1;
-  const filled = maxWidthPx / modules;
-  // Always scale to fill the slot; preferred width is a ceiling when manually set high
-  const capped =
-    preferredBarWidth >= 1.75 ? Math.min(preferredBarWidth, filled) : filled;
-  const snapped = Math.min(filled, Math.round(Math.max(minBarWidth, capped) * 2) / 2);
-  return Math.max(minBarWidth, snapped);
+  const scanMinBarWidth = barcodeModuleMinWidth(format);
+  const maxBarWidth = maxWidthPx / modules;
+
+  if (autoFill) {
+    const snapped = Math.min(maxBarWidth, Math.round(Math.max(scanMinBarWidth, maxBarWidth) * 2) / 2);
+    return Math.max(scanMinBarWidth, snapped);
+  }
+
+  const floor = barcodeDesignerMinBarWidth();
+  const capped = Math.min(Math.max(preferredBarWidth, floor), maxBarWidth);
+  return Math.round(capped * 10) / 10;
 }
 
 /**

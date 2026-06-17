@@ -61,7 +61,7 @@ export function renderBarcodeSvgMarkup(
           height,
           displayValue: false,
           textMargin: 0,
-          margin: 4,
+          margin: 0,
           flat: true,
           lineColor: '#000000',
           background: '#ffffff',

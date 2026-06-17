@@ -56,7 +56,9 @@ export function normalizeLabelRollConfig(raw?: Partial<LabelRollConfig> | null):
     marginRightMm: Math.max(0, raw.marginRightMm ?? DEFAULT_LABEL_ROLL_CONFIG.marginRightMm),
     marginTopMm: Math.max(0, raw.marginTopMm ?? DEFAULT_LABEL_ROLL_CONFIG.marginTopMm),
     marginBottomMm: Math.max(0, raw.marginBottomMm ?? DEFAULT_LABEL_ROLL_CONFIG.marginBottomMm),
-    customScalePercent: Math.max(10, Math.min(200, raw.customScalePercent ?? 100)),
+    // Always print at 100% — no saved scale stretch on labels.
+    scaleMode: '100',
+    customScalePercent: 100,
     offsetXMm: raw.offsetXMm ?? 0,
     offsetYMm: raw.offsetYMm ?? 0,
   };

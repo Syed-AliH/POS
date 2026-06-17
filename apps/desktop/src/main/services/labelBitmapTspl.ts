@@ -3,7 +3,7 @@ import { captureLabelBatchImage, nativeImageToTsplBitmap } from './labelLabelCap
 import type { LabelSlotContent } from './labelHtmlDocument';
 import type { LabelRollLayout } from './labelRollLayout';
 
-export const LABEL_BITMAP_ENGINE_VERSION = '2026-06-17-bitmap-combined-rows-v24';
+export const LABEL_BITMAP_ENGINE_VERSION = '2026-06-17-per-slot-capture-v32';
 
 function assertSlotsArray(slots: unknown): asserts slots is LabelSlotContent[] {
   if (!Array.isArray(slots)) {

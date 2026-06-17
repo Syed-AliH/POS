@@ -28,6 +28,8 @@ import {
   labelPercentToMm,
   LABEL_PRINT_PX_PER_MM,
   resolveBarcodeHeightPx,
+  resolveBarcodePrintMetrics,
+  isBarcodeBarWidthAuto,
   resolveLabelFontFamily,
   SAMPLE_LABEL_PRODUCT,
   type LabelElement,
@@ -147,6 +149,24 @@ export function LabelDesignerPage() {
     return Math.max(3, Math.round((draft.heightMm * (1 - selectedEl.y / 100) - 0.5) * 10) / 10);
   }, [selectedEl, draft?.heightMm]);
 
+  const selectedBarcodeMetrics = useMemo(() => {
+    if (!selectedEl || selectedEl.type !== 'barcode' || !draft) return null;
+    return resolveBarcodePrintMetrics(
+      selectedEl,
+      draft.widthMm,
+      draft.heightMm,
+      SAMPLE_LABEL_PRODUCT.barcode,
+    );
+  }, [selectedEl, draft?.widthMm, draft?.heightMm]);
+
+  const selectedBarcodeBarWidthAuto = selectedEl?.type === 'barcode' && isBarcodeBarWidthAuto(selectedEl.barcodeBarWidth);
+
+  const selectedBarcodeBarWidthSlider = useMemo(() => {
+    if (!selectedBarcodeMetrics) return 2;
+    if (selectedBarcodeBarWidthAuto) return selectedBarcodeMetrics.barWidth;
+    return selectedEl?.barcodeBarWidth ?? selectedBarcodeMetrics.barWidth;
+  }, [selectedBarcodeMetrics, selectedBarcodeBarWidthAuto, selectedEl?.barcodeBarWidth]);
+
   const updateLayout = (patch: Partial<LabelTemplateSummary['layout']>) => {
     setDraft((prev) => prev ? { ...prev, layout: { ...prev.layout, ...patch } } : prev);
   };
@@ -265,7 +285,6 @@ export function LabelDesignerPage() {
       align: 'left',
       fontFamily: 'segoe',
       fontWeight: type === 'price' || type === 'storeName' ? 'bold' : 'normal',
-      barcodeBarWidth: type === 'barcode' ? 1.1 : undefined,
       barcodeHeightMm:
         type === 'barcode'
           ? Math.min(10, Math.round(((draft?.heightMm ?? 25.4) * 0.28) * 10) / 10)
@@ -636,22 +655,58 @@ export function LabelDesignerPage() {
                   </div>
                 )}
                 {selectedEl.type === 'barcode' ? (
-                  <div>
-                    <label className="text-xs text-slate-500">
-                      Height ({selectedBarcodeHeightMm.toFixed(1)} mm)
-                    </label>
-                    <input
-                      type="range"
-                      min={3}
-                      max={Math.max(3.5, selectedBarcodeMaxHeightMm)}
-                      step={0.5}
-                      value={selectedBarcodeHeightMm}
-                      onChange={(e) =>
-                        updateElement(selectedEl.id, { barcodeHeightMm: Number(e.target.value) })
-                      }
-                      className="block w-32 mt-1"
-                    />
-                  </div>
+                  <>
+                    <div>
+                      <label className="text-xs text-slate-500">
+                        Height ({selectedBarcodeHeightMm.toFixed(1)} mm)
+                      </label>
+                      <input
+                        type="range"
+                        min={3}
+                        max={Math.max(3.5, selectedBarcodeMaxHeightMm)}
+                        step={0.5}
+                        value={selectedBarcodeHeightMm}
+                        onChange={(e) =>
+                          updateElement(selectedEl.id, { barcodeHeightMm: Number(e.target.value) })
+                        }
+                        className="block w-32 mt-1"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-500">
+                        Bar width (
+                        {selectedBarcodeBarWidthAuto
+                          ? `auto ${selectedBarcodeBarWidthSlider.toFixed(1)}`
+                          : selectedBarcodeBarWidthSlider.toFixed(1)}
+                        )
+                      </label>
+                      <input
+                        type="range"
+                        min={selectedBarcodeMetrics?.minBarWidth ?? 0.5}
+                        max={Math.max(
+                          (selectedBarcodeMetrics?.minBarWidth ?? 0.5) + 0.1,
+                          Math.round((selectedBarcodeMetrics?.maxBarWidth ?? 3) * 10) / 10,
+                        )}
+                        step={0.1}
+                        value={selectedBarcodeBarWidthSlider}
+                        onChange={(e) =>
+                          updateElement(selectedEl.id, { barcodeBarWidth: Number(e.target.value) })
+                        }
+                        className="block w-32 mt-1"
+                      />
+                      {!selectedBarcodeBarWidthAuto && (
+                        <button
+                          type="button"
+                          className="text-xs text-primary-600 hover:underline mt-1"
+                          onClick={() =>
+                            updateElement(selectedEl.id, { barcodeBarWidth: undefined })
+                          }
+                        >
+                          Reset to auto width
+                        </button>
+                      )}
+                    </div>
+                  </>
                 ) : (
                   <div>
                     <label className="text-xs text-slate-500">Font size</label>
@@ -745,24 +800,6 @@ export function LabelDesignerPage() {
                       </div>
                     )}
                   </>
-                )}
-                {selectedEl.type === 'barcode' && (
-                  <div>
-                    <label className="text-xs text-slate-500">
-                      Barcode width ({selectedEl.barcodeBarWidth?.toFixed(2) ?? '1.10'})
-                    </label>
-                    <input
-                      type="range"
-                      min={0.6}
-                      max={2.5}
-                      step={0.05}
-                      value={selectedEl.barcodeBarWidth ?? 1.1}
-                      onChange={(e) =>
-                        updateElement(selectedEl.id, { barcodeBarWidth: Number(e.target.value) })
-                      }
-                      className="block w-32 mt-1"
-                    />
-                  </div>
                 )}
                 <div className="flex gap-1">
                   {(['left', 'center', 'right'] as const).map((align) => (

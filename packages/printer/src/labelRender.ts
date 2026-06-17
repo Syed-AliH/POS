@@ -8,6 +8,9 @@ import {
   resolveLabelFontFamily,
   resolveUniformBarcodeBarWidth,
   barcodeModuleCountForFormat,
+  barcodeModuleMinWidth,
+  barcodeDesignerMinBarWidth,
+  isBarcodeBarWidthAuto,
 } from './labelFonts';
 
 /** 203 DPI thermal print density — matches Gainscha dot pitch. */
@@ -374,6 +377,7 @@ export function labelBarcodeLayoutStyle(
         maxWidthPx,
         resolveBarcodeBarWidth(el, labelWidthMm),
         normalized,
+        isBarcodeBarWidthAuto(el.barcodeBarWidth),
       );
     const modules = barcodeModuleCountForFormat(format, normalized);
     style.width = `${Math.min(maxWidthPx, Math.ceil(modules * barWidth))}px`;
@@ -382,6 +386,25 @@ export function labelBarcodeLayoutStyle(
   }
 
   return style;
+}
+
+/** Top-left position of a barcode SVG within a label slot (matches CSS anchor + align). */
+export function calcBarcodeSlotPositionPx(
+  el: Pick<LabelElement, 'x' | 'y' | 'align'>,
+  labelWidthMm: number,
+  labelHeightMm: number,
+  svgWidthPx: number,
+  _svgHeightPx: number,
+): { leftPx: number; topPx: number } {
+  const labelWidthPx = Math.round(labelWidthMm * LABEL_PRINT_PX_PER_MM);
+  const labelHeightPx = Math.round(labelHeightMm * LABEL_PRINT_PX_PER_MM);
+  const anchorX = (el.x / 100) * labelWidthPx;
+  const anchorY = (el.y / 100) * labelHeightPx;
+  const align = el.align ?? 'left';
+  let leftPx = anchorX;
+  if (align === 'center') leftPx = anchorX - svgWidthPx / 2;
+  else if (align === 'right') leftPx = anchorX - svgWidthPx;
+  return { leftPx: Math.round(leftPx), topPx: Math.round(anchorY) };
 }
 
 export function resolveBarcodePrintMetrics(
@@ -401,13 +424,23 @@ export function resolveBarcodePrintMetrics(
   const format = resolveBarcodePrintFormat(barcodeValue);
   const maxWidthPx = labelElementMaxWidthPx(el, labelWidthMm);
   const height = resolveBarcodeHeightPx(el, labelHeightMm);
+  const autoFill = isBarcodeBarWidthAuto(el.barcodeBarWidth);
   const preferred = resolveBarcodeBarWidth(el, labelWidthMm);
-  const barWidth = resolveUniformBarcodeBarWidth(format, maxWidthPx, preferred, normalizedValue);
+  const barWidth = resolveUniformBarcodeBarWidth(
+    format,
+    maxWidthPx,
+    preferred,
+    normalizedValue,
+    autoFill,
+  );
   const modules = barcodeModuleCountForFormat(format, normalizedValue);
+  const maxBarWidth = maxWidthPx / modules;
   return {
     height,
     barWidth,
     maxWidthPx,
+    minBarWidth: barcodeDesignerMinBarWidth(),
+    maxBarWidth,
     svgWidthPx: Math.ceil(modules * barWidth),
     normalizedValue,
     format,
@@ -560,6 +593,7 @@ export function buildLabelSlotInnerHtml(
   widthMm: number,
   heightMm: number,
   renderBarcodeSvg?: (value: string, height: number, barWidth: number) => string,
+  options?: { omitBarcodes?: boolean },
 ): string {
   const showGraphic = layout.showBarcodeGraphic ?? layout.showBarcode ?? false;
   const elements = layout.elements?.filter((e) => e.visible) ?? [];
@@ -567,7 +601,7 @@ export function buildLabelSlotInnerHtml(
 
   for (const el of elements) {
     if (el.type === 'barcode') {
-      if (!showGraphic) continue;
+      if (!showGraphic || options?.omitBarcodes) continue;
       const value = resolveLabelFieldText(el.type, product, layout, currency, el);
       if (!value.trim()) continue;
       const metrics = resolveBarcodePrintMetrics(el, widthMm, heightMm, value);
@@ -581,7 +615,7 @@ export function buildLabelSlotInnerHtml(
         );
       } else {
         parts.push(
-          `<div class="label-barcode" style="${css}" data-product-sku="${escapeHtml(product.sku)}" data-barcode-format="${escapeHtml(metrics.format)}" data-barcode-value="${escapeHtml(metrics.normalizedValue)}" data-barcode-height="${metrics.height}" data-barcode-width="${metrics.barWidth}" data-barcode-max-width="${metrics.maxWidthPx}"><svg class="barcode-svg" width="${metrics.svgWidthPx}" height="${metrics.height}"></svg></div>`,
+          `<div class="label-barcode" style="${css}" data-barcode-pending="1" data-product-sku="${escapeHtml(product.sku)}" data-barcode-format="${escapeHtml(metrics.format)}" data-barcode-value="${escapeHtml(metrics.normalizedValue)}" data-barcode-height="${metrics.height}" data-barcode-width="${metrics.barWidth}" data-barcode-margin="0"><svg class="barcode-svg" width="${metrics.svgWidthPx}" height="${metrics.height}"></svg></div>`,
         );
       }
       continue;

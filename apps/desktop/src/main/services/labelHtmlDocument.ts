@@ -10,6 +10,7 @@ import {
   type LabelProduct,
 } from '@mama-babi/printer';
 import type { LabelRollLayout } from './labelRollLayout';
+import { renderBarcodeSvgMarkup } from './labelBarcodeSvg';
 
 const require = createRequire(import.meta.url);
 const JSBARCODE_REQUIRE_PATH = require.resolve('jsbarcode');
@@ -42,7 +43,7 @@ export function buildBarcodeInjectScript(): string {
       if (fmt === 'EAN13' || fmt === 'EAN8' || fmt === 'UPC') return String(v).replace(/\\D/g, '');
       return String(v).trim();
     }
-    function renderInto(wrap, svg, value, format, barWidth, height) {
+    function renderInto(wrap, svg, value, format, barWidth, height, margin) {
       while (svg.firstChild) svg.removeChild(svg.firstChild);
       JsBarcode(svg, value, {
         format: format,
@@ -50,18 +51,18 @@ export function buildBarcodeInjectScript(): string {
         height: height,
         displayValue: false,
         textMargin: 0,
-        margin: 4,
+        margin: margin,
         flat: true,
         lineColor: '#000000',
         background: '#ffffff',
       });
     }
-    document.querySelectorAll('[data-barcode-value]').forEach(function(wrap) {
+    document.querySelectorAll('[data-barcode-pending]').forEach(function(wrap) {
       const svg = wrap.querySelector('svg');
       const value = wrap.getAttribute('data-barcode-value') || '';
       const height = parseInt(wrap.getAttribute('data-barcode-height') || '40', 10);
-      let width = parseFloat(wrap.getAttribute('data-barcode-width') || '1.1');
-      const maxW = parseFloat(wrap.getAttribute('data-barcode-max-width') || '0');
+      const width = parseFloat(wrap.getAttribute('data-barcode-width') || '1.1');
+      const margin = parseInt(wrap.getAttribute('data-barcode-margin') || '10', 10);
       const formatAttr = wrap.getAttribute('data-barcode-format') || '';
       if (!svg || !value.trim()) return;
       const primary = formatAttr || detectFormat(value);
@@ -70,15 +71,8 @@ export function buildBarcodeInjectScript(): string {
         try {
           const fmt = candidates[i];
           const encoded = normalize(value, fmt);
-          renderInto(wrap, svg, encoded, fmt, width, height);
-          if (maxW > 0) {
-            const bbox = svg.getBBox();
-            const drawnW = bbox.width + 8;
-            if (drawnW > 0 && drawnW < maxW * 0.92) {
-              width = Math.max(0.5, width * (maxW / drawnW));
-              renderInto(wrap, svg, encoded, fmt, width, height);
-            }
-          }
+          renderInto(wrap, svg, encoded, fmt, width, height, margin);
+          wrap.removeAttribute('data-barcode-pending');
           wrap.setAttribute('data-barcode-rendered', value);
           break;
         } catch (e) {}
@@ -89,7 +83,11 @@ export function buildBarcodeInjectScript(): string {
 }
 
 /** Multi-slot HTML — each label clipped to labelWidthMm × labelHeightMm at computed X/Y. */
-export function buildLabelHtmlDocument(slots: LabelSlotContent[], roll: LabelRollLayout): string {
+export function buildLabelHtmlDocument(
+  slots: LabelSlotContent[],
+  roll: LabelRollLayout,
+  options?: { omitBarcodes?: boolean },
+): string {
   if (!Array.isArray(slots)) {
     throw new TypeError(`buildLabelHtmlDocument expected slots array, got ${typeof slots}`);
   }
@@ -110,6 +108,8 @@ export function buildLabelHtmlDocument(slots: LabelSlotContent[], roll: LabelRol
         slot.currency,
         slot.widthMm,
         slot.heightMm,
+        options?.omitBarcodes ? undefined : renderBarcodeSvgMarkup,
+        options,
       );
       return `<div class="label-slot" style="left:${pos.leftPx}px;top:${pos.topPx}px;width:${pos.labelWidthPx}px;height:${pos.labelHeightPx}px"><div class="label-clip">${inner}</div></div>`;
     })
@@ -191,6 +191,7 @@ export function buildSingleLabelHtmlDocument(
     slot.currency,
     slot.widthMm,
     slot.heightMm,
+    renderBarcodeSvgMarkup,
   );
   const pageTransform = rotate180 ? 'transform:rotate(180deg);transform-origin:center center;' : '';
   const customFonts = collectCustomLabelFonts(slot.layout.elements ?? []);

@@ -2,66 +2,13 @@ import { BrowserWindow, nativeImage, screen, type NativeImage } from 'electron';
 import { calcLabelSlotPositionPx } from '@mama-babi/printer';
 import {
   buildBarcodeInjectScript,
-  buildLabelHtmlDocument,
   buildSingleLabelHtmlDocument,
   type LabelSlotContent,
 } from './labelHtmlDocument';
 import type { LabelRollLayout } from './labelRollLayout';
+import { blitRgba, downsampleRgbaToPrintSize } from './labelRgba';
 
-/** Nearest-neighbor downsample — preserves crisp 1-bit barcodes (no anti-aliasing). */
-export function nearestDownsampleRgba(
-  src: Buffer,
-  srcW: number,
-  srcH: number,
-  dstW: number,
-  dstH: number,
-): Buffer {
-  const dst = Buffer.alloc(dstW * dstH * 4, 255);
-  for (let dy = 0; dy < dstH; dy++) {
-    const sy = Math.min(srcH - 1, Math.floor(((dy + 0.5) * srcH) / dstH));
-    for (let dx = 0; dx < dstW; dx++) {
-      const sx = Math.min(srcW - 1, Math.floor(((dx + 0.5) * srcW) / dstW));
-      const si = (sy * srcW + sx) * 4;
-      const di = (dy * dstW + dx) * 4;
-      dst[di] = src[si] ?? 255;
-      dst[di + 1] = src[si + 1] ?? 255;
-      dst[di + 2] = src[si + 2] ?? 255;
-      dst[di + 3] = src[si + 3] ?? 255;
-    }
-  }
-  return dst;
-}
-
-export function blitRgba(
-  dest: Buffer,
-  destW: number,
-  destH: number,
-  src: Buffer,
-  srcW: number,
-  srcH: number,
-  atX: number,
-  atY: number,
-): void {
-  for (let y = 0; y < srcH; y++) {
-    const dy = atY + y;
-    if (dy < 0 || dy >= destH) continue;
-    for (let x = 0; x < srcW; x++) {
-      const dx = atX + x;
-      if (dx < 0 || dx >= destW) continue;
-      const si = (y * srcW + x) * 4;
-      const di = (dy * destW + dx) * 4;
-      dest[di] = src[si] ?? 255;
-      dest[di + 1] = src[si + 1] ?? 255;
-      dest[di + 2] = src[si + 2] ?? 255;
-      dest[di + 3] = src[si + 3] ?? 255;
-    }
-  }
-}
-
-function captureScaleFactor(win: BrowserWindow): number {
-  const display = screen.getDisplayMatching(win.getBounds());
-  return display.scaleFactor > 0 ? display.scaleFactor : 1;
-}
+export { nearestDownsampleRgba, boxDownsampleRgba, downsampleRgbaToPrintSize, blitRgba, blitDarkRgba } from './labelRgba';
 
 function rgbaFromNativeImage(
   image: NativeImage,
@@ -71,7 +18,7 @@ function rgbaFromNativeImage(
   const captured = image.getSize();
   let rgba = image.getBitmap();
   if (captured.width !== expectedW || captured.height !== expectedH) {
-    rgba = nearestDownsampleRgba(rgba, captured.width, captured.height, expectedW, expectedH);
+    rgba = downsampleRgbaToPrintSize(rgba, captured.width, captured.height, expectedW, expectedH);
   }
   return rgba;
 }
@@ -96,22 +43,29 @@ async function captureLabelHtmlToRgba(
   widthPx: number,
   heightPx: number,
 ): Promise<Buffer> {
+  const displayScale = screen.getPrimaryDisplay().scaleFactor || 1;
+  // Compensate Windows/macOS display scaling: shrink the window in DIP and zoom
+  // content back up so capturePage returns exact print pixels (624×203 at 203 DPI).
+  const winWidth = displayScale !== 1 ? Math.round(widthPx / displayScale) : widthPx;
+  const winHeight = displayScale !== 1 ? Math.round(heightPx / displayScale) : heightPx;
+  const zoomFactor = displayScale !== 1 ? displayScale : 1;
+
   const win = new BrowserWindow({
-    width: widthPx,
-    height: heightPx,
+    width: winWidth,
+    height: winHeight,
     show: false,
     useContentSize: true,
     backgroundColor: '#ffffff',
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
-      zoomFactor: 1,
+      zoomFactor,
     },
   });
 
   try {
-    win.setContentSize(widthPx, heightPx);
-    win.webContents.setZoomFactor(1);
+    win.setContentSize(winWidth, winHeight);
+    win.webContents.setZoomFactor(zoomFactor);
     win.webContents.setVisualZoomLevelLimits(1, 1);
 
     await withTimeout(
@@ -120,7 +74,7 @@ async function captureLabelHtmlToRgba(
       'HTML load',
     );
 
-    if (layoutHtml.includes('data-barcode-value')) {
+    if (layoutHtml.includes('data-barcode-pending')) {
       await withTimeout(
         win.webContents.executeJavaScript(buildBarcodeInjectScript(), true),
         8000,
@@ -134,6 +88,7 @@ async function captureLabelHtmlToRgba(
             sku: w.getAttribute('data-product-sku') || '',
             value: w.getAttribute('data-barcode-value') || '',
             format: w.getAttribute('data-barcode-format') || '',
+            pending: w.hasAttribute('data-barcode-pending'),
             rendered: w.getAttribute('data-barcode-rendered') || '',
           };
         })`,
@@ -153,25 +108,23 @@ async function captureLabelHtmlToRgba(
 
     await new Promise((r) => setTimeout(r, 200));
 
-    // capturePage rect is in DIP (logical) units — use CSS pixel dimensions directly so
-    // the full HTML page is captured regardless of the display's device-pixel-ratio.
-    // At scale > 1, this returns a larger physical image; rgbaFromNativeImage downsamples it.
-    const image = await win.webContents.capturePage({
-      x: 0,
-      y: 0,
-      width: widthPx,
-      height: heightPx,
-    });
+    const image = await win.webContents.capturePage(
+      { x: 0, y: 0, width: winWidth, height: winHeight },
+      { scaleFactor: 1 },
+    );
 
     const captured = image.getSize();
-    const scale = captureScaleFactor(win);
     console.log('[print:label:capture] page captured', {
       expected: { width: widthPx, height: heightPx },
       captured,
-      displayScale: scale,
+      displayScale,
+      zoomFactor,
+      winSize: { width: winWidth, height: winHeight },
     });
-    if (captured.width < widthPx || captured.height < heightPx) {
-      console.warn('[print:label:capture] captured smaller than expected — content may be clipped');
+    if (captured.width !== widthPx || captured.height !== heightPx) {
+      console.warn(
+        '[print:label:capture] size mismatch — output will be resampled to print dimensions.',
+      );
     }
 
     return rgbaFromNativeImage(image, widthPx, heightPx);
@@ -181,41 +134,18 @@ async function captureLabelHtmlToRgba(
 }
 
 /**
- * Capture an entire label batch in one browser page — one HTML doc, one inject, one bitmap.
+ * Capture a label row — one browser page per die-cut label, composited at exact slot X/Y.
+ * Avoids 2-up full-page capture misaligning the second column on HiDPI Windows.
  */
 export async function captureLabelBatchImage(
   slots: LabelSlotContent[],
   roll: LabelRollLayout,
   pageSizePx: { width: number; height: number },
 ): Promise<NativeImage> {
-  if (slots.length === 0) {
-    throw new Error('captureLabelBatchImage: no label slots to render.');
-  }
-
-  const html = buildLabelHtmlDocument(slots, roll);
-  const rgba = await captureLabelHtmlToRgba(html, pageSizePx.width, pageSizePx.height);
-
-  console.log('[print:label:capture] batch composite', {
-    pageWidthPx: pageSizePx.width,
-    pageHeightPx: pageSizePx.height,
-    rowCount: roll.rowCount,
-    slots: slots.map((s) => ({
-      slotIndex: s.slotIndex,
-      sku: s.product.sku,
-      barcode: s.product.barcode,
-    })),
-  });
-
-  return nativeImage.createFromBuffer(rgba, {
-    width: pageSizePx.width,
-    height: pageSizePx.height,
-    scaleFactor: 1,
-  });
+  return captureLabelRowImage(slots, roll, pageSizePx);
 }
 
-/**
- * @deprecated Use captureLabelBatchImage — kept for single-row experiments.
- */
+/** Capture each slot separately and composite onto the row bitmap. */
 export async function captureLabelRowImage(
   slots: LabelSlotContent[] | LabelSlotContent,
   roll: LabelRollLayout,
@@ -271,9 +201,9 @@ export function rgbaToTsplBitmap(
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = (y * width + x) * 4;
-      const r = rgba[i] ?? 255;
+      const b = rgba[i] ?? 255;
       const g = rgba[i + 1] ?? 255;
-      const b = rgba[i + 2] ?? 255;
+      const r = rgba[i + 2] ?? 255;
       const a = rgba[i + 3] ?? 255;
       const lum = a < 128 ? 255 : 0.299 * r + 0.587 * g + 0.114 * b;
       if (lum < 128) {
