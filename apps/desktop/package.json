@@ -20,6 +20,7 @@
     "@mama-babi/reports": "workspace:*",
     "@mama-babi/sync-engine": "workspace:*",
     "@mama-babi/ui": "workspace:*",
+    "@xmldom/xmldom": "^0.9.10",
     "bcryptjs": "^3.0.2",
     "better-sqlite3": "^11.8.1",
     "class-variance-authority": "^0.7.1",

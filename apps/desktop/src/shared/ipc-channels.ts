@@ -43,7 +43,10 @@ export const IPC_CHANNELS = {
   PRINT_TEST_LABEL: 'print:test-label',
   PRINT_Z_REPORT: 'print:z-report',
   LABEL_TEMPLATES: 'label:templates',
+  LABEL_TEMPLATE_GET: 'label:template-get',
   LABEL_PRINT_BATCH: 'label:print-batch',
+  LABEL_FEED: 'label:feed',
+  LABEL_CALIBRATE: 'label:calibrate',
   REPORT_DAILY_SALES: 'report:daily-sales',
   REPORT_EOD: 'report:eod',
   REPORT_SALES_BY_CATEGORY: 'report:sales-by-category',
@@ -139,6 +142,9 @@ export const IPC_CHANNELS = {
   RECEIPT_TEMPLATES: 'template:receipt-list',
   RECEIPT_TEMPLATE_UPDATE: 'template:receipt-update',
   LABEL_TEMPLATE_UPDATE: 'template:label-update',
+  LABEL_TEMPLATE_CREATE: 'template:label-create',
+  LABEL_TEMPLATE_DELETE: 'template:label-delete',
+  LABEL_TEMPLATE_SET_DEFAULT: 'template:label-set-default',
 } as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];

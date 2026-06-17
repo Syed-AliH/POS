@@ -42,8 +42,15 @@ import {
   handleGrnVoid,
 } from './grn';
 import { handleListPrinters, handleSettingsGet, handleSettingsGetAll, handleSettingsSet } from './settings';
-import { handleLabelPrintBatch, handleLabelTemplates } from './labels';
-import { handlePrintReceipt, handlePrintTestReceipt, handlePrintTestLabel, handlePrintZReport } from './print';
+import { handleLabelPrintBatch, handleLabelTemplateGet, handleLabelTemplates } from './labels';
+import {
+  handleLabelCalibrate,
+  handleLabelFeed,
+  handlePrintReceipt,
+  handlePrintTestLabel,
+  handlePrintTestReceipt,
+  handlePrintZReport,
+} from './print';
 import {
   handleDailySales,
   handleInventoryReport,
@@ -86,6 +93,9 @@ import {
 } from './stocktake';
 import { handleStaffCreate, handleStaffList, handleStaffUpdate } from './users';
 import {
+  handleLabelTemplateCreate,
+  handleLabelTemplateDelete,
+  handleLabelTemplateSetDefault,
   handleLabelTemplateUpdate,
   handleReceiptTemplateUpdate,
   handleReceiptTemplates,
@@ -164,8 +174,11 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.PRINT_RECEIPT, (_e, saleId: string) => handlePrintReceipt(saleId));
   ipcMain.handle(IPC_CHANNELS.PRINT_TEST_RECEIPT, (_e, template) => handlePrintTestReceipt(template));
   ipcMain.handle(IPC_CHANNELS.PRINT_TEST_LABEL, (_e, input) => handlePrintTestLabel(input));
+  ipcMain.handle(IPC_CHANNELS.LABEL_FEED, (_e, input) => handleLabelFeed(input));
+  ipcMain.handle(IPC_CHANNELS.LABEL_CALIBRATE, (_e, input) => handleLabelCalibrate(input));
   ipcMain.handle(IPC_CHANNELS.PRINT_Z_REPORT, (_e, date?: string) => handlePrintZReport(date));
   ipcMain.handle(IPC_CHANNELS.LABEL_TEMPLATES, () => handleLabelTemplates());
+  ipcMain.handle(IPC_CHANNELS.LABEL_TEMPLATE_GET, (_e, id: string) => handleLabelTemplateGet(id));
   ipcMain.handle(IPC_CHANNELS.LABEL_PRINT_BATCH, (_e, input) => handleLabelPrintBatch(input));
   ipcMain.handle(IPC_CHANNELS.REPORT_DAILY_SALES, (_e, params) => handleDailySales(params));
   ipcMain.handle(IPC_CHANNELS.REPORT_EOD, (_e, params) => handleEodReport(params));
@@ -262,4 +275,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.RECEIPT_TEMPLATES, () => handleReceiptTemplates());
   ipcMain.handle(IPC_CHANNELS.RECEIPT_TEMPLATE_UPDATE, (_e, id: string, input) => handleReceiptTemplateUpdate(id, input));
   ipcMain.handle(IPC_CHANNELS.LABEL_TEMPLATE_UPDATE, (_e, id: string, input) => handleLabelTemplateUpdate(id, input));
+  ipcMain.handle(IPC_CHANNELS.LABEL_TEMPLATE_CREATE, (_e, input) => handleLabelTemplateCreate(input));
+  ipcMain.handle(IPC_CHANNELS.LABEL_TEMPLATE_DELETE, (_e, id: string) => handleLabelTemplateDelete(id));
+  ipcMain.handle(IPC_CHANNELS.LABEL_TEMPLATE_SET_DEFAULT, (_e, id: string) => handleLabelTemplateSetDefault(id));
 }

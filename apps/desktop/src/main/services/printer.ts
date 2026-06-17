@@ -25,7 +25,6 @@ export async function printReceiptToDevice(
   templateOverride?: ReceiptTemplateConfig,
 ): Promise<{ printed: boolean; fallback?: string }> {
   const settings = getAllSettings();
-  const printerName = settings.receipt_printer;
   const template = templateOverride ?? (() => {
     const tpl = getDefaultReceiptTemplate();
     return tpl ? receiptTemplateToConfig(tpl) : undefined;
@@ -37,17 +36,17 @@ export async function printReceiptToDevice(
   try {
     const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
     if (!win) throw new Error('No window available for printing');
+    // Receipts always use print preview — never silent/hardware receipt printer.
     await PosPrinter.print(data, {
-      preview: !printerName,
+      preview: true,
       width: `${widthMm}mm`,
       margin: '0 0 0 0',
       copies: 1,
-      printerName: printerName || undefined,
       timeOutPerLine: 400,
-      silent: !!printerName,
+      silent: false,
       pageSize: `${widthMm}mm`,
     });
-    return { printed: true };
+    return { printed: false };
   } catch (err) {
     console.log('[print:fallback]\n', text);
     console.warn('[print:error]', err);

@@ -1,13 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
+import { LabelPrintPreviewModal } from '@renderer/components/designer/LabelRollPreview';
 import { Modal } from '@renderer/components/Modal';
 import { ProductSearchModal } from '@renderer/components/ProductSearchModal';
+import {
+  expandGrnLabelProducts,
+  normalizeLabelTemplate,
+  pickLabelTemplateId,
+  resolveLabelLayoutForPreview,
+} from '@renderer/lib/labelTemplateUtils';
 import { parseMarkupInput, resolveMarkupToPrice } from '@renderer/lib/markup';
 import { getActiveRoute, registerPageShortcuts } from '@renderer/lib/shortcuts';
 import { toast } from '@renderer/stores/toastStore';
+import { useLabelDefaultsStore } from '@renderer/stores/labelDefaultsStore';
 import { formatDateOnly, formatDateTime } from '@shared/datetime';
-import type { GrnPaymentType, GrnSummary, Product, Vendor } from '@shared/types';
+import type { GrnPaymentType, GrnSummary, LabelTemplateSummary, Product, Vendor } from '@shared/types';
 
 type GrnDraftLine = {
   productId: string;
@@ -141,12 +149,16 @@ export function GrnPage() {
   const [finalizing, setFinalizing] = useState(false);
   const [printLabelsOpen, setPrintLabelsOpen] = useState(false);
   const [labelTemplateId, setLabelTemplateId] = useState('');
+  const [labelTemplates, setLabelTemplates] = useState<LabelTemplateSummary[]>([]);
+  const [labelPrinting, setLabelPrinting] = useState(false);
+  const [storeName, setStoreName] = useState('Store');
   const [showProductSearch, setShowProductSearch] = useState(false);
   const [lineSortKey, setLineSortKey] = useState<LineSortKey>('product');
   const [lineSortDir, setLineSortDir] = useState<'asc' | 'desc'>('asc');
   const [editLineSortKey, setEditLineSortKey] = useState<LineSortKey>('product');
   const [editLineSortDir, setEditLineSortDir] = useState<'asc' | 'desc'>('asc');
   const recordDetailRef = useRef<HTMLDivElement>(null);
+  const setLastTemplateId = useLabelDefaultsStore((s) => s.setLastTemplateId);
 
   const linesTotal = useMemo(() => lines.reduce((s, l) => s + l.qty * l.unitCost, 0), [lines]);
   const lineTotals = useMemo(() => summarizeDraftLines(lines), [lines]);
@@ -210,17 +222,26 @@ export function GrnPage() {
   };
 
   const loadBase = async () => {
-    const [v, p, t] = await Promise.all([
+    const [v, p, t, s] = await Promise.all([
       api.vendors.list(),
       api.products.list({ status: 'active', limit: 500 }),
       api.labels.templates(),
+      api.settings.getAll(),
     ]);
     if (v.success) {
       setVendors(v.data ?? []);
       if (v.data?.[0] && !vendorId) setVendorId(v.data[0].id);
     }
     if (p.success) setProducts(p.data ?? []);
-    if (t.success && t.data?.[0]) setLabelTemplateId(t.data[0].id);
+    const settingsStoreName = s.success ? s.data?.store_name : undefined;
+    if (settingsStoreName) setStoreName(settingsStoreName);
+    if (t.success && t.data?.length) {
+      const list = t.data.map((tpl) => normalizeLabelTemplate(tpl, settingsStoreName));
+      setLabelTemplates(list);
+      setLabelTemplateId((current) =>
+        current && list.some((x) => x.id === current) ? current : pickLabelTemplateId(list),
+      );
+    }
   };
 
   const loadRecords = async () => {
@@ -564,14 +585,26 @@ export function GrnPage() {
 
   const handlePrintLabels = async () => {
     if (!selectedGrn || !labelTemplateId) return;
+    setLabelPrinting(true);
+    setLastTemplateId(labelTemplateId);
     const result = await api.labels.printBatch({
       templateId: labelTemplateId,
       items: selectedGrn.items.map((i) => ({ productId: i.productId, copies: i.qty })),
     });
+    setLabelPrinting(false);
     if (result.success) toast.success(`Printed ${result.data?.labelCount ?? 0} labels`);
     else toast.error(result.error ?? 'Print failed');
     setPrintLabelsOpen(false);
   };
+
+  const activeLabelTemplate = labelTemplates.find((t) => t.id === labelTemplateId);
+  const grnLabelCount = selectedGrn?.items.reduce((sum, i) => sum + i.qty, 0) ?? 0;
+  const grnPreviewLayout = activeLabelTemplate
+    ? resolveLabelLayoutForPreview(activeLabelTemplate, storeName)
+    : null;
+  const grnPreviewProducts = selectedGrn
+    ? expandGrnLabelProducts(selectedGrn.items, products)
+    : [];
 
   const filteredProducts = products.filter((p) =>
     !productSearch || p.name.toLowerCase().includes(productSearch.toLowerCase()) || p.sku.toLowerCase().includes(productSearch.toLowerCase()),
@@ -1065,11 +1098,61 @@ export function GrnPage() {
         onSelect={addEditLine}
       />
 
-      <Modal open={printLabelsOpen} title="Print Labels?" onClose={() => setPrintLabelsOpen(false)}
-        footer={<><Button variant="ghost" onClick={() => setPrintLabelsOpen(false)}>Skip</Button><Button onClick={handlePrintLabels}>Print Labels</Button></>}
+      <Modal
+        open={printLabelsOpen && !activeLabelTemplate}
+        title="Print Labels?"
+        onClose={() => setPrintLabelsOpen(false)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setPrintLabelsOpen(false)}>Skip</Button>
+          </>
+        }
       >
-        <p>GRN finalized. Print barcode labels for received items?</p>
+        <p>No label template found. Create one in Label Designer first.</p>
       </Modal>
+
+      {activeLabelTemplate && grnPreviewLayout && selectedGrn && (
+        <LabelPrintPreviewModal
+          open={printLabelsOpen}
+          onClose={() => setPrintLabelsOpen(false)}
+          onConfirm={handlePrintLabels}
+          templateName={activeLabelTemplate.name}
+          widthMm={activeLabelTemplate.widthMm}
+          heightMm={activeLabelTemplate.heightMm}
+          rollConfig={activeLabelTemplate.rollConfig}
+          layout={grnPreviewLayout}
+          labelCount={grnLabelCount}
+          printing={labelPrinting}
+          products={grnPreviewProducts}
+          description={`GRN ${selectedGrn.grnNumber} · ${grnLabelCount} label${grnLabelCount !== 1 ? 's' : ''} for received items`}
+          templateSelector={
+            labelTemplates.length > 1 ? (
+              <div>
+                <h4 className="text-sm font-semibold mb-2">Template</h4>
+                <div className="space-y-2 max-h-32 overflow-y-auto">
+                  {labelTemplates.map((t) => (
+                    <label key={t.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                      <input
+                        type="radio"
+                        name="grn-label-template"
+                        checked={labelTemplateId === t.id}
+                        onChange={() => {
+                          setLabelTemplateId(t.id);
+                          setLastTemplateId(t.id);
+                        }}
+                      />
+                      <span>{t.name}</span>
+                      <span className="text-slate-400">
+                        ({t.widthMm}×{t.heightMm}mm · {t.rollConfig?.columns ?? 1}-up)
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ) : undefined
+          }
+        />
+      )}
     </div>
   );
 }

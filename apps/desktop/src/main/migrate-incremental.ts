@@ -105,6 +105,7 @@ const ALTER_STATEMENTS = [
   'ALTER TABLE grn_headers ADD COLUMN payment_type TEXT NOT NULL DEFAULT \'cash\'',
   'ALTER TABLE vendors ADD COLUMN preferred_payment_type TEXT DEFAULT \'cash\'',
   'ALTER TABLE vendors ADD COLUMN outstanding_balance REAL NOT NULL DEFAULT 0',
+  'ALTER TABLE label_templates ADD COLUMN roll_config_json TEXT',
 ];
 
 export function runIncrementalMigrations(sqlite: Database.Database): void {

@@ -286,6 +286,8 @@ export const SAMPLE_LABEL_PRODUCT: LabelProduct = {
 
 export type LabelFieldType = 'name' | 'price' | 'sku' | 'barcode' | 'storeName' | 'customText';
 
+import type { LabelFontId } from './labelFonts';
+
 export interface LabelElement {
   id: string;
   type: LabelFieldType;
@@ -296,6 +298,15 @@ export interface LabelElement {
   fontWeight?: 'normal' | 'bold';
   align?: 'left' | 'center' | 'right';
   customText?: string;
+  barcodeBarWidth?: number;
+  /** Barcode height in mm; bar width scales automatically from height. */
+  barcodeHeightMm?: number;
+  fontFamily?: LabelFontId;
+  /** Display name for uploaded custom font. */
+  customFontFamily?: string;
+  /** Base64 data URL of uploaded font file (.ttf, etc.). */
+  customFontDataUrl?: string;
+  customFontFormat?: 'truetype' | 'opentype' | 'woff' | 'woff2';
 }
 
 export interface LabelLayout {
@@ -310,10 +321,11 @@ export interface LabelLayout {
 export interface LabelPrintLine {
   type: 'text' | 'barCode';
   value: string;
-  style?: { fontSize?: string; fontWeight?: string; textAlign?: string };
+  style?: Record<string, string>;
   height?: number;
   width?: number;
   displayValue?: boolean;
+  position?: 'left' | 'center' | 'right';
 }
 
 export function defaultLabelElements(): LabelElement[] {
@@ -322,64 +334,141 @@ export function defaultLabelElements(): LabelElement[] {
     { id: 'name', type: 'name', visible: true, x: 5, y: 22, fontSize: 10, align: 'left', fontWeight: 'bold' },
     { id: 'price', type: 'price', visible: true, x: 5, y: 42, fontSize: 12, align: 'left', fontWeight: 'bold' },
     { id: 'sku', type: 'sku', visible: true, x: 5, y: 58, fontSize: 8, align: 'left' },
-    { id: 'barcode', type: 'barcode', visible: true, x: 50, y: 78, fontSize: 8, align: 'center' },
+    { id: 'barcode', type: 'barcode', visible: true, x: 5, y: 78, fontSize: 8, align: 'left' },
   ];
 }
 
-function resolveLabelText(
-  type: LabelFieldType,
+import {
+  labelBarcodeBarWidth,
+  labelBarcodeHeightPx,
+  labelBarcodePrintHeightPx,
+  labelElementStyle,
+  resolveLabelFieldText,
+} from './labelRender';
+
+export {
+  LABEL_DESIGN_PX_PER_MM,
+  LABEL_FONT_FAMILY,
+  LABEL_MONO_FAMILY,
+  LABEL_PRINT_PX_PER_MM,
+  LABEL_CANVAS_PREVIEW_SCALE,
+  buildLabelSlotInnerHtml,
+  labelBarcodeBarWidth,
+  labelBarcodeHeightPx,
+  labelBarcodePrintHeightPx,
+  labelCanvasSizePx,
+  labelElementAlignTransform,
+  labelElementStyle,
+  labelFontSizePx,
+  labelElementPrintStyle,
+  labelPreviewBarcodeHeightPx,
+  labelPreviewFontSizePx,
+  labelStyleToCss,
+  labelTsplFontHeightDots,
+  labelTsplFontKey,
+  labelTsplPreviewFontSizePx,
+  clampLabelPositionPercent,
+  labelMmToPercent,
+  labelPercentToMm,
+  labelElementLeftEdgeMm,
+  labelElementMaxWidthPx,
+  labelLeftEdgeMmToAnchorPercent,
+  labelPreviewMaxWidthPx,
+  resolveBarcodeBarWidth,
+  labelTsplXMul,
+  resolveLabelFieldText,
+  truncateLabelElementText,
+  truncateTextForLabelWidth,
+  truncateTextForTsplSlot,
+  estimateTsplTextWidthDots,
+  labelBarcodeLayoutStyle,
+  labelTextPrintStyle,
+  resolveBarcodePrintMetrics,
+  resolveBarcodeHeightPx,
+} from './labelRender';
+
+export {
+  LABEL_FONT_OPTIONS,
+  buildLabelPrintFontFaceCss,
+  collectCustomLabelFonts,
+  collectCustomLabelFontNames,
+  barcodeModuleCountForFormat,
+  code128ModuleCount,
+  detectBarcodeFormat,
+  ean13CheckDigit,
+  estimateBarcodeModuleCount,
+  estimateBarcodeWidthPx,
+  fitBarcodeBarWidth,
+  normalizeBarcodeForPrint,
+  resolveBarcodePrintFormat,
+  isValidEan13CheckDigit,
+  resolveLabelFontFamily,
+  resolveUniformBarcodeBarWidth,
+  resolveBarcodeBarWidthFromHeight,
+  BARCODE_HEIGHT_TO_MODULE_RATIO,
+  type LabelFontId,
+  type LabelCustomFont,
+  type LabelCustomFontFormat,
+} from './labelFonts';
+
+function buildPositionedLabelPrintData(
   product: LabelProduct,
   layout: LabelLayout,
   currency: string,
-  element?: LabelElement,
-): string {
-  switch (type) {
-    case 'name': return product.name.slice(0, 32);
-    case 'price': return `${currency} ${product.price.toFixed(2)}`;
-    case 'sku': return product.sku;
-    case 'barcode': return product.barcode;
-    case 'storeName': return (layout.storeName ?? 'Store').slice(0, 24);
-    case 'customText': return element?.customText ?? '';
-    default: return '';
+  widthMm: number,
+): LabelPrintLine[] {
+  const lines: LabelPrintLine[] = [];
+  const showGraphic = layout.showBarcodeGraphic ?? layout.showBarcode ?? false;
+  const elements = layout.elements?.filter((e) => e.visible) ?? [];
+
+  for (const el of elements) {
+    const baseStyle = Object.fromEntries(
+      Object.entries(labelElementStyle(el, 'print')).map(([k, v]) => [k, String(v)]),
+    );
+
+    if (el.type === 'barcode' && showGraphic && product.barcode) {
+      lines.push({
+        type: 'barCode',
+        value: product.barcode,
+        height: labelBarcodeHeightPx(el.fontSize),
+        width: labelBarcodeBarWidth(widthMm),
+        displayValue: false,
+        position: el.align ?? 'left',
+        style: {
+          ...baseStyle,
+          display: 'flex',
+          justifyContent: el.align === 'center' ? 'center' : el.align === 'right' ? 'flex-end' : 'flex-start',
+        },
+      });
+      continue;
+    }
+
+    const value = resolveLabelFieldText(el.type, product, layout, currency, el);
+    if (!value) continue;
+
+    lines.push({
+      type: 'text',
+      value,
+      style: baseStyle,
+    });
   }
+
+  return lines;
 }
 
 export function buildLabelPrintData(
   product: LabelProduct,
   layout: LabelLayout,
   currency = 'PKR',
+  widthMm = 50,
+  _heightMm = 30,
 ): LabelPrintLine[] {
-  const lines: LabelPrintLine[] = [];
-  const showGraphic = layout.showBarcodeGraphic ?? layout.showBarcode ?? false;
-
   if (layout.elements?.length) {
-    const sorted = [...layout.elements].filter((e) => e.visible).sort((a, b) => a.y - b.y);
-    for (const el of sorted) {
-      if (el.type === 'barcode' && showGraphic && product.barcode) {
-        lines.push({
-          type: 'barCode',
-          value: product.barcode,
-          height: 36,
-          width: 2,
-          displayValue: false,
-        });
-        continue;
-      }
-      const value = resolveLabelText(el.type, product, layout, currency, el);
-      if (!value) continue;
-      lines.push({
-        type: 'text',
-        value,
-        style: {
-          fontSize: `${el.fontSize}px`,
-          fontWeight: el.fontWeight === 'bold' ? '700' : '400',
-          textAlign: el.align ?? 'left',
-        },
-      });
-    }
-    return lines;
+    return buildPositionedLabelPrintData(product, layout, currency, widthMm);
   }
 
+  const lines: LabelPrintLine[] = [];
+  const showGraphic = layout.showBarcodeGraphic ?? layout.showBarcode ?? false;
   const fontSize = layout.fontSize ?? '12px';
   const fields = layout.fields ?? ['name', 'price', 'sku'];
   for (const field of fields) {
@@ -428,6 +517,14 @@ export function normalizeLabelLayout(raw: LabelLayout, storeName?: string): Labe
   };
 }
 
+/** Single source of truth for preview + batch print layout resolution. */
+export function resolveLabelLayoutForPrint(
+  raw: LabelLayout,
+  storeNameFromSettings?: string,
+): LabelLayout {
+  return normalizeLabelLayout(raw, raw.storeName ?? storeNameFromSettings ?? 'Store');
+}
+
 export function parseReceiptTemplateConfig(
   headerJson: ReceiptTemplateHeader & { widthMm?: 58 | 80; sections?: Partial<ReceiptTemplateSections> },
   footerJson: ReceiptTemplateFooter,
@@ -458,8 +555,11 @@ export const RECEIPT_SECTION_LABELS: Record<keyof ReceiptTemplateSections, strin
 };
 
 export const LABEL_SIZE_PRESETS = [
+  { label: '38.1 × 25.4 mm (MamaBabi)', widthMm: 38.1, heightMm: 25.4 },
+  { label: '38 × 28 mm', widthMm: 38, heightMm: 28 },
   { label: '40 × 30 mm', widthMm: 40, heightMm: 30 },
   { label: '50 × 25 mm', widthMm: 50, heightMm: 25 },
+  { label: '50 × 30 mm', widthMm: 50, heightMm: 30 },
   { label: '60 × 40 mm', widthMm: 60, heightMm: 40 },
 ] as const;
 
@@ -471,3 +571,24 @@ export const LABEL_FIELD_META: Record<LabelFieldType, { label: string; icon: str
   barcode: { label: 'Barcode', icon: 'barcode' },
   customText: { label: 'Custom Text', icon: 'text' },
 };
+
+export {
+  DEFAULT_LABEL_ROLL_CONFIG,
+  MAMABABI_38_1x25_4_2UP_ROLL,
+  buildPreviewSlots,
+  calcLabelSlotPosition,
+  calcLabelSlotPositionPx,
+  calcPrintableHeight,
+  calcPrintablePageSizePx,
+  calcPrintableWidth,
+  calcRollWidthMm,
+  normalizeLabelRollConfig,
+  resolveLabelDimensions,
+  resolvePrintScalePercent,
+  type LabelOrientation,
+  type LabelSlotPositionPx,
+  type LabelPaperType,
+  type LabelRollConfig,
+  type LabelScaleMode,
+  type LabelSlotPosition,
+} from './labelRollConfig';

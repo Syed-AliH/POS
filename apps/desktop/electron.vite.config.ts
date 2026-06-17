@@ -1,10 +1,28 @@
+import { cpSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import react from '@vitejs/plugin-react';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ['@mama-babi/db-schema', '@mama-babi/barcode', '@mama-babi/printer', '@mama-babi/reports', '@mama-babi/sync-engine'] })],
+    plugins: [
+      externalizeDepsPlugin({ exclude: ['@mama-babi/db-schema', '@mama-babi/barcode', '@mama-babi/printer', '@mama-babi/reports', '@mama-babi/sync-engine'] }),
+      {
+        name: 'copy-label-print-assets',
+        closeBundle() {
+          const src = resolve('src/main/print');
+          const dest = resolve('out/main/print');
+          if (!existsSync(src)) return;
+          mkdirSync(dest, { recursive: true });
+          cpSync(src, dest, { recursive: true });
+        },
+      },
+    ],
+    build: {
+      watch: {
+        include: ['src/main/**', '../../packages/printer/src/**'],
+      },
+    },
     resolve: {
       alias: {
         '@shared': resolve('src/shared'),

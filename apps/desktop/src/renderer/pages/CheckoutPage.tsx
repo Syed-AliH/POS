@@ -347,6 +347,36 @@ export function CheckoutPage() {
     return () => window.removeEventListener('keydown', handleBarcode);
   }, [barcodeBuffer, lookupBarcode, showHeld, successSale]);
 
+  const submitProductSearch = useCallback(async () => {
+    const q = search.trim();
+    if (!q) return;
+
+    const barcodeResult = await api.products.barcodeLookup(q);
+    if (barcodeResult.success && barcodeResult.data) {
+      await addProductSafe(barcodeResult.data);
+      return;
+    }
+
+    let results = searchResults;
+    if (!results.length && q.length >= 2) {
+      const result = await api.products.search(q);
+      if (result.success) results = result.data ?? [];
+    }
+
+    if (results.length === 1) {
+      await addProductSafe(results[0]);
+      return;
+    }
+    if (results.length > 1) {
+      await addProductSafe(results[searchIndex]);
+      return;
+    }
+
+    if (/^[0-9A-Za-z-]+$/.test(q) && q.length >= 4) {
+      toast.error(`No product for barcode: ${q}`);
+    }
+  }, [search, searchResults, searchIndex, addProductSafe]);
+
   const handleSearch = async (q: string) => {
     setSearch(q);
     setSearchIndex(0);
@@ -356,16 +386,15 @@ export function CheckoutPage() {
   };
 
   const handleSearchKeyDown = (e: React.KeyboardEvent) => {
-    if (!searchResults.length) return;
-    if (e.key === 'ArrowDown') {
+    if (e.key === 'ArrowDown' && searchResults.length) {
       e.preventDefault();
       setSearchIndex((i) => Math.min(i + 1, searchResults.length - 1));
-    } else if (e.key === 'ArrowUp') {
+    } else if (e.key === 'ArrowUp' && searchResults.length) {
       e.preventDefault();
       setSearchIndex((i) => Math.max(i - 1, 0));
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      addProductSafe(searchResults[searchIndex]);
+      void submitProductSearch();
     }
   };
 

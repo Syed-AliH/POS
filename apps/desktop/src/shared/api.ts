@@ -132,7 +132,18 @@ export interface MamaBabiAPI {
   };
   labels: {
     templates: () => Promise<ApiResult<LabelTemplateSummary[]>>;
+    getTemplate: (id: string) => Promise<ApiResult<LabelTemplateSummary>>;
     printBatch: (input: PrintLabelsInput) => Promise<ApiResult<{ printed: boolean; labelCount: number }>>;
+    feed: (input?: {
+      rollConfig?: Partial<LabelTemplateSummary['rollConfig']>;
+      widthMm?: number;
+      heightMm?: number;
+    }) => Promise<ApiResult<{ ok: boolean }>>;
+    calibrate: (input?: {
+      rollConfig?: Partial<LabelTemplateSummary['rollConfig']>;
+      widthMm?: number;
+      heightMm?: number;
+    }) => Promise<ApiResult<{ ok: boolean }>>;
   };
   sync: {
     status: () => Promise<ApiResult<{ enabled: boolean; pending: number; lastSync: string | null }>>;
@@ -141,7 +152,7 @@ export interface MamaBabiAPI {
   print: {
     receipt: (saleId: string) => Promise<ApiResult<{ printed: boolean }>>;
     testReceipt: (template: import('@mama-babi/printer').ReceiptTemplateConfig) => Promise<ApiResult<{ printed: boolean }>>;
-    testLabel: (input: { layout: LabelTemplateSummary['layout']; widthMm: number; heightMm: number }) => Promise<ApiResult<{ printed: boolean }>>;
+    testLabel: (input: { templateId: string }) => Promise<ApiResult<{ printed: boolean; templateName?: string }>>;
     zReport: (date?: string) => Promise<ApiResult<{ printed: boolean }>>;
   };
   reports: {
@@ -227,7 +238,26 @@ export interface MamaBabiAPI {
   templates: {
     receiptList: () => Promise<ApiResult<ReceiptTemplate[]>>;
     receiptUpdate: (id: string, input: Partial<ReceiptTemplate>) => Promise<ApiResult<ReceiptTemplate>>;
-    labelUpdate: (id: string, input: { name?: string; widthMm?: number; heightMm?: number; layout?: LabelTemplateSummary['layout'] }) => Promise<ApiResult<LabelTemplateSummary>>;
+    labelUpdate: (
+      id: string,
+      input: {
+        name?: string;
+        widthMm?: number;
+        heightMm?: number;
+        layout?: LabelTemplateSummary['layout'];
+        rollConfig?: Partial<LabelTemplateSummary['rollConfig']>;
+      },
+    ) => Promise<ApiResult<LabelTemplateSummary>>;
+    labelCreate: (input: {
+      name: string;
+      widthMm: number;
+      heightMm: number;
+      layout?: LabelTemplateSummary['layout'];
+      rollConfig?: Partial<LabelTemplateSummary['rollConfig']>;
+      isDefault?: boolean;
+    }) => Promise<ApiResult<LabelTemplateSummary>>;
+    labelDelete: (id: string) => Promise<ApiResult<void>>;
+    labelSetDefault: (id: string) => Promise<ApiResult<LabelTemplateSummary>>;
   };
 }
 
@@ -306,7 +336,10 @@ export function createApi(): MamaBabiAPI {
     },
     labels: {
       templates: () => invoke(IPC_CHANNELS.LABEL_TEMPLATES),
+      getTemplate: (id) => invoke(IPC_CHANNELS.LABEL_TEMPLATE_GET, id),
       printBatch: (input) => invoke(IPC_CHANNELS.LABEL_PRINT_BATCH, input),
+      feed: (input) => invoke(IPC_CHANNELS.LABEL_FEED, input),
+      calibrate: (input) => invoke(IPC_CHANNELS.LABEL_CALIBRATE, input),
     },
     sync: {
       status: () => invoke(IPC_CHANNELS.SYNC_STATUS),
@@ -402,6 +435,9 @@ export function createApi(): MamaBabiAPI {
       receiptList: () => invoke(IPC_CHANNELS.RECEIPT_TEMPLATES),
       receiptUpdate: (id, input) => invoke(IPC_CHANNELS.RECEIPT_TEMPLATE_UPDATE, id, input),
       labelUpdate: (id, input) => invoke(IPC_CHANNELS.LABEL_TEMPLATE_UPDATE, id, input),
+      labelCreate: (input) => invoke(IPC_CHANNELS.LABEL_TEMPLATE_CREATE, input),
+      labelDelete: (id) => invoke(IPC_CHANNELS.LABEL_TEMPLATE_DELETE, id),
+      labelSetDefault: (id) => invoke(IPC_CHANNELS.LABEL_TEMPLATE_SET_DEFAULT, id),
     },
   };
 }

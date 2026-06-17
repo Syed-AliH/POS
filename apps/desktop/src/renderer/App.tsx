@@ -28,6 +28,7 @@ const InventoryReportPage = lazy(() => import('./pages/InventoryReportPage').the
 const SupplierPaymentsPage = lazy(() => import('./pages/SupplierPaymentsPage').then((m) => ({ default: m.SupplierPaymentsPage })));
 const ReceiptDesignerPage = lazy(() => import('./pages/ReceiptDesignerPage').then((m) => ({ default: m.ReceiptDesignerPage })));
 const LabelDesignerPage = lazy(() => import('./pages/LabelDesignerPage').then((m) => ({ default: m.LabelDesignerPage })));
+const LabelTemplateConfigPage = lazy(() => import('./pages/LabelTemplateConfigPage').then((m) => ({ default: m.LabelTemplateConfigPage })));
 
 function PageLoader() {
   return <Spinner className="h-screen" label="Loading…" />;
@@ -91,6 +92,7 @@ export function App() {
             <Route path="promotions" element={<ProtectedRoute roles={['manager', 'super_admin']}><PromotionsPage /></ProtectedRoute>} />
             <Route path="labels" element={<ProtectedRoute roles={['manager', 'super_admin']}><LabelsPage /></ProtectedRoute>} />
             <Route path="label-designer" element={<ProtectedRoute roles={['manager', 'super_admin']}><LabelDesignerPage /></ProtectedRoute>} />
+            <Route path="label-template-config" element={<ProtectedRoute roles={['manager', 'super_admin']}><LabelTemplateConfigPage /></ProtectedRoute>} />
             <Route path="receipt-designer" element={<ProtectedRoute roles={['manager', 'super_admin']}><ReceiptDesignerPage /></ProtectedRoute>} />
             <Route path="reports" element={<ProtectedRoute roles={['manager', 'super_admin']}><ReportsPage /></ProtectedRoute>} />
             <Route path="inventory-report" element={<ProtectedRoute roles={['manager', 'super_admin']}><InventoryReportPage /></ProtectedRoute>} />

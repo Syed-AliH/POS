@@ -1,14 +1,14 @@
-import type { ApiResult, SaleSummary } from '@shared/types';
+import type { ApiResult, LabelTemplateSummary, SaleSummary } from '@shared/types';
 import type { ReceiptSale, ReceiptTemplateConfig } from '@mama-babi/printer';
 import { requireSession, requireRole } from '../session';
 import { printReceiptToDevice, printTestReceipt, formatZReport } from '../services/printer';
-import { printTestLabel } from '../services/labelPrinter';
+import { printTestLabelFromTemplate } from '../services/labelPrintTemplate';
+import { sendLabelPrinterCommand } from '../services/labelPrinterCommands';
 import { buildSaleSummary } from './sales';
 import { handleEodReport } from './cash';
 import { eq } from 'drizzle-orm';
 import { sales } from '@mama-babi/db-schema';
 import { getDb } from '../db';
-import type { LabelTemplateSummary } from '@shared/types';
 
 function toReceiptSale(summary: SaleSummary): ReceiptSale {
   return {
@@ -59,16 +59,53 @@ export async function handlePrintTestReceipt(
 }
 
 export async function handlePrintTestLabel(input: {
-  layout: LabelTemplateSummary['layout'];
-  widthMm: number;
-  heightMm: number;
-}): Promise<ApiResult<{ printed: boolean }>> {
+  templateId: string;
+}): Promise<ApiResult<{ printed: boolean; templateName?: string }>> {
   try {
     requireRole('super_admin', 'manager');
-    const result = await printTestLabel(input.layout, input.widthMm, input.heightMm);
+    if (!input.templateId) return { success: false, error: 'Template ID required' };
+    const result = await printTestLabelFromTemplate(input.templateId);
     return { success: true, data: result };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Test print failed' };
+  }
+}
+
+export async function handleLabelFeed(input?: {
+  rollConfig?: Partial<LabelTemplateSummary['rollConfig']>;
+  widthMm?: number;
+  heightMm?: number;
+}): Promise<ApiResult<{ ok: boolean }>> {
+  try {
+    requireRole('super_admin', 'manager');
+    await sendLabelPrinterCommand(
+      'FORMFEED',
+      input?.rollConfig,
+      input?.widthMm,
+      input?.heightMm,
+    );
+    return { success: true, data: { ok: true } };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Feed failed' };
+  }
+}
+
+export async function handleLabelCalibrate(input?: {
+  rollConfig?: Partial<LabelTemplateSummary['rollConfig']>;
+  widthMm?: number;
+  heightMm?: number;
+}): Promise<ApiResult<{ ok: boolean }>> {
+  try {
+    requireRole('super_admin', 'manager');
+    await sendLabelPrinterCommand(
+      'GAPDETECT',
+      input?.rollConfig,
+      input?.widthMm,
+      input?.heightMm,
+    );
+    return { success: true, data: { ok: true } };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Calibration failed' };
   }
 }
 

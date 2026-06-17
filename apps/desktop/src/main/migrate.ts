@@ -154,6 +154,7 @@ CREATE TABLE IF NOT EXISTS label_templates (
   width_mm REAL NOT NULL,
   height_mm REAL NOT NULL,
   layout_json TEXT NOT NULL,
+  roll_config_json TEXT,
   is_default INTEGER NOT NULL DEFAULT 0,
   device_id TEXT NOT NULL DEFAULT 'local',
   branch_id TEXT NOT NULL DEFAULT 'main',

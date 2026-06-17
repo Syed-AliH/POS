@@ -1,6 +1,4 @@
-import { BrowserWindow } from 'electron';
-import type { ApiResult, PrinterInfo, SettingsUpdateInput } from '@shared/types';
-import { requireRole, requireSession } from '../session';
+import type { ApiResult, PrinterInfo, SettingsUpdateInput } from '@shared/types';import { requireRole, requireSession } from '../session';
 import { getAllSettings, getSetting, setSetting } from '../services/settings';
 import { logAudit } from '../services/audit';
 
@@ -13,6 +11,7 @@ const EDITABLE_SETTINGS = new Set([
   'default_tax_rate',
   'receipt_printer',
   'label_printer',
+  'label_print_offset_mm',
   'auto_print_receipt',
   'return_policy_days',
   'secondary_currency',
@@ -56,10 +55,15 @@ export function handleSettingsSet(input: SettingsUpdateInput): ApiResult<Record<
 export async function handleListPrinters(): Promise<ApiResult<PrinterInfo[]>> {
   try {
     requireRole('super_admin', 'manager');
-    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-    if (!win) return { success: true, data: [] };
+    const { listSystemPrinters, resolveLabelPrinterName } = await import('../services/printerDevices');
+    const printers = await listSystemPrinters();
 
-    const printers = await win.webContents.getPrintersAsync();
+    // Auto-pick Gainscha for labels when not configured yet
+    if (!getSetting('label_printer') && printers.length) {
+      const gainscha = await resolveLabelPrinterName(null);
+      if (gainscha) setSetting('label_printer', gainscha);
+    }
+
     return {
       success: true,
       data: printers.map((p) => ({ name: p.name, isDefault: p.isDefault })),

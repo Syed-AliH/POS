@@ -53,7 +53,11 @@ export function SettingsPage() {
       api.labels.templates(),
     ]);
     if (s.success) setSettings(s.data ?? {});
-    if (p.success) setPrinters(p.data ?? []);
+    if (p.success) {
+      setPrinters(p.data ?? []);
+      const refreshed = await api.settings.getAll();
+      if (refreshed.success) setSettings(refreshed.data ?? {});
+    }
     if (b.success) setBackups(b.data ?? []);
     if (st.success) setStaff(st.data ?? []);
     if (au.success) setAuditLogs(au.data ?? []);
@@ -77,8 +81,9 @@ export function SettingsPage() {
         currency: settings.currency ?? 'PKR',
         tax_inclusive: settings.tax_inclusive ?? 'true',
         default_tax_rate: settings.default_tax_rate ?? '17',
-        receipt_printer: settings.receipt_printer ?? '',
+        receipt_printer: '',
         label_printer: settings.label_printer ?? '',
+        label_print_offset_mm: settings.label_print_offset_mm ?? '0',
         auto_print_receipt: settings.auto_print_receipt ?? 'true',
         return_policy_days: settings.return_policy_days ?? '7',
         secondary_currency: settings.secondary_currency ?? 'USD',
@@ -191,14 +196,25 @@ export function SettingsPage() {
 
       {tab === 'printers' && (
         <div className="panel p-6 max-w-lg space-y-4">
-          <select value={settings.receipt_printer ?? ''} onChange={(e) => updateField('receipt_printer', e.target.value)} className="w-full px-3 py-2 border rounded-lg">
-            <option value="">Receipt: Preview mode</option>
+          <p className="text-sm text-slate-500 rounded-lg bg-slate-50 dark:bg-slate-800 px-3 py-2">
+            Receipts always open in <strong>print preview</strong> (no hardware receipt printer). Labels print silently to the Gainscha label printer below.
+          </p>
+          <select value={settings.receipt_printer ?? ''} onChange={(e) => updateField('receipt_printer', e.target.value)} className="w-full px-3 py-2 border rounded-lg opacity-60" disabled title="Receipt printing uses preview only">
+            <option value="">Receipt: Preview mode (default)</option>
             {printers.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
           </select>
           <select value={settings.label_printer ?? ''} onChange={(e) => updateField('label_printer', e.target.value)} className="w-full px-3 py-2 border rounded-lg">
-            <option value="">Label: Same as receipt</option>
-            {printers.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
+            <option value="">Label: Auto-detect Gainscha</option>
+            {printers.map((p) => <option key={p.name} value={p.name}>{p.name}{p.name.toLowerCase().includes('gainscha') ? ' (recommended)' : ''}</option>)}
           </select>
+          <div className="rounded-lg bg-slate-50 dark:bg-slate-800 px-3 py-3 text-sm text-slate-600 dark:text-slate-300">
+            <p className="mb-2">
+              Multi-column rolls (e.g. 38×28 2UP) are configured per template — columns, gaps, margins, and alignment offsets.
+            </p>
+            <Link to="/label-template-config" className="font-medium text-primary-600 hover:underline">
+              Open Label Template & Printer Config →
+            </Link>
+          </div>
           <Button onClick={() => handleSave()} disabled={saving}>Save Printers</Button>
         </div>
       )}
@@ -274,7 +290,7 @@ export function SettingsPage() {
       )}
 
       {tab === 'templates' && (
-        <div className="grid md:grid-cols-2 gap-6 max-w-3xl">
+        <div className="grid md:grid-cols-3 gap-6 max-w-5xl">
           <Link
             to="/receipt-designer"
             className="group panel p-6 transition-all hover:border-primary-300 hover:shadow-md dark:hover:border-primary-700"
@@ -311,6 +327,25 @@ export function SettingsPage() {
               </div>
             ))}
             <span className="text-sm font-medium text-primary-600">Open designer →</span>
+          </Link>
+
+          <Link
+            to="/label-template-config"
+            className="group panel p-6 transition-all hover:border-primary-300 hover:shadow-md dark:hover:border-primary-700"
+          >
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary-50 text-primary-600 mb-4 group-hover:bg-primary-100">
+              <Sticker className="h-6 w-6" />
+            </div>
+            <h3 className="font-semibold text-lg mb-1">Label Roll Config</h3>
+            <p className="text-sm text-slate-500 mb-4">
+              Columns, gaps, margins, DPI, scale, and calibration for 2UP thermal rolls.
+            </p>
+            {labelTemplates.filter((t) => t.isDefault).map((tpl) => (
+              <div key={tpl.id} className="text-xs text-slate-400 border-t pt-2 mt-2">
+                Default: {tpl.name} · {tpl.rollConfig?.columns ?? 1}-up · gap {tpl.rollConfig?.horizontalGapMm ?? 0} mm
+              </div>
+            ))}
+            <span className="text-sm font-medium text-primary-600">Configure roll →</span>
           </Link>
         </div>
       )}

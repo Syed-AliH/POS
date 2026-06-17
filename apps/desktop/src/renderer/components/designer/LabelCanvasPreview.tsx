@@ -1,7 +1,17 @@
 import { useCallback, useRef, useState } from 'react';
 import {
+  LABEL_CANVAS_PREVIEW_SCALE,
   LABEL_FIELD_META,
+  clampLabelPositionPercent,
+  labelBarcodeLayoutStyle,
+  labelPreviewFontSizePx,
+  labelPreviewMaxWidthPx,
   mmToPx,
+  normalizeBarcodeForPrint,
+  resolveBarcodePrintMetrics,
+  resolveLabelFieldText,
+  resolveLabelFontFamily,
+  truncateLabelElementText,
   type LabelElement,
   type LabelFieldType,
   type LabelLayout,
@@ -9,23 +19,7 @@ import {
 } from '@mama-babi/printer';
 import { cn } from '@mama-babi/ui';
 import { BarcodeGraphic } from './BarcodeGraphic';
-
-function resolveText(
-  el: LabelElement,
-  product: LabelProduct,
-  layout: LabelLayout,
-  currency: string,
-): string {
-  switch (el.type) {
-    case 'name': return product.name;
-    case 'price': return `${currency} ${product.price.toFixed(2)}`;
-    case 'sku': return product.sku;
-    case 'barcode': return product.barcode;
-    case 'storeName': return layout.storeName ?? 'Store';
-    case 'customText': return el.customText ?? 'Custom text';
-    default: return '';
-  }
-}
+import { LabelCustomFontStyle } from './LabelCustomFontStyle';
 
 export function LabelCanvasPreview({
   layout,
@@ -33,12 +27,13 @@ export function LabelCanvasPreview({
   widthMm,
   heightMm,
   currency = 'PKR',
-  scale = 4,
+  scale = LABEL_CANVAS_PREVIEW_SCALE,
   selectedId,
   onSelect,
   onMove,
   interactive = false,
   className,
+  showSizeLabel = true,
 }: {
   layout: LabelLayout;
   product: LabelProduct;
@@ -51,6 +46,7 @@ export function LabelCanvasPreview({
   onMove?: (id: string, x: number, y: number) => void;
   interactive?: boolean;
   className?: string;
+  showSizeLabel?: boolean;
 }) {
   const canvasW = mmToPx(widthMm, scale);
   const canvasH = mmToPx(heightMm, scale);
@@ -74,8 +70,8 @@ export function LabelCanvasPreview({
     const dy = ((e.clientY - dragRef.current.startY) / canvasH) * 100;
     onMove(
       dragRef.current.id,
-      Math.min(95, Math.max(0, dragRef.current.origX + dx)),
-      Math.min(95, Math.max(0, dragRef.current.origY + dy)),
+      clampLabelPositionPercent(dragRef.current.origX + dx),
+      clampLabelPositionPercent(dragRef.current.origY + dy),
     );
   }, [canvasW, canvasH, onMove]);
 
@@ -84,8 +80,11 @@ export function LabelCanvasPreview({
     setDragging(null);
   }, []);
 
+  const previewScale = scale / 8;
+
   return (
     <div className={cn('inline-block', className)}>
+      <LabelCustomFontStyle elements={elements} />
       <div
         className="relative overflow-hidden rounded border-2 border-slate-300 bg-white shadow-md"
         style={{ width: canvasW, height: canvasH }}
@@ -95,9 +94,73 @@ export function LabelCanvasPreview({
       >
         {elements.filter((e) => e.visible).map((el) => {
           const isBarcodeGraphic = el.type === 'barcode' && showGraphic;
-          const text = resolveText(el, product, layout, currency);
+          const rawText = resolveLabelFieldText(el.type, product, layout, currency, el);
           const selected = selectedId === el.id;
           const align = el.align ?? 'left';
+          const fontFamily = resolveLabelFontFamily(el);
+          const text =
+            isBarcodeGraphic || el.type === 'barcode'
+              ? rawText
+              : truncateLabelElementText(rawText, el, widthMm);
+
+          if (isBarcodeGraphic) {
+            const barcode = normalizeBarcodeForPrint(product.barcode);
+            const metrics = resolveBarcodePrintMetrics(el, widthMm, heightMm, barcode);
+            const printStyle = labelBarcodeLayoutStyle(
+              el,
+              widthMm,
+              metrics.normalizedValue,
+              metrics.height,
+              metrics.barWidth,
+            );
+            const scaledStyle = Object.fromEntries(
+              Object.entries(printStyle).map(([k, v]) => {
+                if (k === 'fontSize' || (typeof v === 'string' && v.endsWith('px'))) {
+                  const px = parseFloat(String(v));
+                  if (!Number.isNaN(px)) return [k, `${px * previewScale}px`];
+                }
+                return [k, v];
+              }),
+            );
+            const maxWidthPx = labelPreviewMaxWidthPx(el, widthMm, scale);
+            const barcodeHeight = Math.round(metrics.height * previewScale);
+            const svgWidthPx = Math.round(metrics.svgWidthPx * previewScale);
+
+            return (
+              <div
+                key={el.id}
+                role={interactive ? 'button' : undefined}
+                onPointerDown={(e) => handlePointerDown(e, el)}
+                onClick={() => onSelect?.(el.id)}
+                className={cn(
+                  interactive && 'cursor-grab active:cursor-grabbing',
+                  selected && interactive && 'ring-2 ring-primary-400 rounded-sm',
+                  dragging === el.id && 'opacity-80',
+                )}
+                style={{
+                  ...scaledStyle,
+                  width: svgWidthPx,
+                  maxWidth: maxWidthPx,
+                  maxHeight: `${Math.round((heightMm * scale) - (el.y / 100) * heightMm * scale - 2)}px`,
+                } as React.CSSProperties}
+              >
+                <BarcodeGraphic
+                  value={barcode}
+                  height={barcodeHeight}
+                  displayValue={false}
+                  barWidth={metrics.barWidth}
+                  margin={0}
+                />
+              </div>
+            );
+          }
+
+          if (el.type === 'barcode') {
+            return null;
+          }
+
+          const fontSizePx = labelPreviewFontSizePx(el.fontSize, scale);
+          const maxWidthPx = labelPreviewMaxWidthPx(el, widthMm, scale);
           const transform =
             align === 'center' ? 'translateX(-50%)' : align === 'right' ? 'translateX(-100%)' : undefined;
 
@@ -109,7 +172,7 @@ export function LabelCanvasPreview({
               onPointerDown={(e) => handlePointerDown(e, el)}
               onClick={() => onSelect?.(el.id)}
               className={cn(
-                'absolute max-w-[90%] leading-tight',
+                'absolute overflow-hidden leading-tight',
                 interactive && 'cursor-grab active:cursor-grabbing',
                 selected && interactive && 'ring-2 ring-primary-400 rounded-sm',
                 dragging === el.id && 'opacity-80',
@@ -118,24 +181,19 @@ export function LabelCanvasPreview({
                 left: `${el.x}%`,
                 top: `${el.y}%`,
                 transform,
-                fontSize: el.fontSize * (scale / 3.5),
+                fontSize: `${fontSizePx}px`,
                 fontWeight: el.fontWeight === 'bold' ? 700 : 400,
                 textAlign: align,
+                fontFamily,
+                maxWidth: maxWidthPx,
+                width: maxWidthPx,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'clip',
+                boxSizing: 'border-box',
               }}
             >
-              {isBarcodeGraphic ? (
-                <BarcodeGraphic
-                  value={product.barcode}
-                  height={Math.round(Math.max(32, el.fontSize * 3.2))}
-                  displayValue={false}
-                  maxWidth={canvasW * 0.88}
-                  barWidth={widthMm <= 40 ? 1.1 : 1.35}
-                />
-              ) : el.type === 'barcode' ? (
-                <span className="font-mono text-[0.85em]">{text}</span>
-              ) : (
-                <span className="block truncate">{text}</span>
-              )}
+              <span className="block truncate">{text}</span>
             </div>
           );
         })}
@@ -144,7 +202,9 @@ export function LabelCanvasPreview({
           <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(0,0,0,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(0,0,0,0.03)_1px,transparent_1px)] bg-[size:10%_10%]" />
         )}
       </div>
-      <p className="mt-1 text-center text-[10px] text-slate-400">{widthMm} × {heightMm} mm</p>
+      {showSizeLabel && (
+        <p className="mt-1 text-center text-[10px] text-slate-400">{widthMm} × {heightMm} mm</p>
+      )}
     </div>
   );
 }
@@ -172,7 +232,7 @@ export function LabelBatchPreview({
           widthMm={widthMm}
           heightMm={heightMm}
           currency={currency}
-          scale={3}
+          scale={LABEL_CANVAS_PREVIEW_SCALE}
         />
       ))}
     </div>

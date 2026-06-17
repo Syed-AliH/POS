@@ -523,6 +523,7 @@ export interface LabelTemplateSummary {
   widthMm: number;
   heightMm: number;
   layout: import('@mama-babi/printer').LabelLayout;
+  rollConfig: import('@mama-babi/printer').LabelRollConfig;
   isDefault: boolean;
 }
 

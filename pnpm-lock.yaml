@@ -28,6 +28,9 @@ importers:
       '@mama-babi/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      '@xmldom/xmldom':
+        specifier: ^0.9.10
+        version: 0.9.10
       bcryptjs:
         specifier: ^3.0.2
         version: 3.0.3

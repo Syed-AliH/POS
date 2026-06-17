@@ -1,39 +1,97 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@mama-babi/ui';
+import { LABEL_CANVAS_PREVIEW_SCALE } from '@mama-babi/printer';
 import { getApi } from '@renderer/lib/api';
 import { LabelCanvasPreview } from '@renderer/components/designer/LabelCanvasPreview';
-import { normalizeLabelLayout } from '@mama-babi/printer';
+import { LabelPrintPreviewModal } from '@renderer/components/designer/LabelRollPreview';
+import {
+  expandLabelPrintProducts,
+  normalizeLabelTemplate,
+  pickLabelTemplateId,
+  productToLabelProduct,
+  resolveLabelLayoutForPreview,
+} from '@renderer/lib/labelTemplateUtils';
+import { useLabelDefaultsStore } from '@renderer/stores/labelDefaultsStore';
+import { useLabelTemplatesStore } from '@renderer/stores/labelTemplatesStore';
 import type { LabelTemplateSummary, Product } from '@shared/types';
 
 const api = getApi();
 
 export function LabelsPage() {
   const [templates, setTemplates] = useState<LabelTemplateSummary[]>([]);
+  const [activeTemplate, setActiveTemplate] = useState<LabelTemplateSummary | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [selected, setSelected] = useState<Record<string, number>>({});
   const [search, setSearch] = useState('');
   const [message, setMessage] = useState('');
   const [printing, setPrinting] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [currency, setCurrency] = useState('PKR');
+  const [storeName, setStoreName] = useState('Store');
+  const lastTemplateId = useLabelDefaultsStore((s) => s.lastTemplateId);
+  const setLastTemplateId = useLabelDefaultsStore((s) => s.setLastTemplateId);
+  const templateRevision = useLabelTemplatesStore((s) => s.revision);
 
-  const load = async () => {
-    const [t, p, s] = await Promise.all([
-      api.labels.templates(),
-      api.products.list(),
-      api.settings.getAll(),
-    ]);
-    if (t.success) {
-      setTemplates(t.data ?? []);
-      const defaultTpl = t.data?.find((x) => x.isDefault) ?? t.data?.[0];
-      if (defaultTpl) setSelectedTemplateId(defaultTpl.id);
-    }
-    if (p.success) setProducts(p.data ?? []);
+  const applyTemplate = useCallback((template: LabelTemplateSummary | null) => {
+    setActiveTemplate(template);
+  }, []);
+
+  const refreshTemplates = useCallback(async (): Promise<LabelTemplateSummary[]> => {
+    const [t, s] = await Promise.all([api.labels.templates(), api.settings.getAll()]);
+    const settingsStoreName = s.success ? s.data?.store_name : undefined;
+    if (settingsStoreName) setStoreName(settingsStoreName);
     if (s.success && s.data?.currency) setCurrency(s.data.currency);
-  };
 
-  useEffect(() => { load(); }, []);
+    const list = t.success
+      ? (t.data ?? []).map((tpl) => normalizeLabelTemplate(tpl, settingsStoreName))
+      : [];
+
+    if (list.length) {
+      setTemplates(list);
+      const preferredId = pickLabelTemplateId(list, lastTemplateId);
+      setSelectedTemplateId(preferredId);
+      applyTemplate(list.find((x) => x.id === preferredId) ?? null);
+    }
+    return list;
+  }, [lastTemplateId, applyTemplate]);
+
+  /** Fetch one template fresh from DB (before print). Does not touch the shared store. */
+  const fetchTemplateById = useCallback(async (id: string) => {
+    if (!id) return null;
+    const [res, s] = await Promise.all([api.labels.getTemplate(id), api.settings.getAll()]);
+    const settingsStoreName = s.success ? s.data?.store_name : undefined;
+    if (settingsStoreName) setStoreName(settingsStoreName);
+    if (!res.success || !res.data) return null;
+    return normalizeLabelTemplate(res.data, settingsStoreName);
+  }, []);
+
+  const load = useCallback(async () => {
+    const p = await api.products.list();
+    await refreshTemplates();
+    if (p.success) setProducts(p.data ?? []);
+  }, [refreshTemplates]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  // Reload when Label Designer saves (revision bumps there only).
+  const prevRevisionRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (prevRevisionRef.current === null) {
+      prevRevisionRef.current = templateRevision;
+      return;
+    }
+    if (templateRevision === prevRevisionRef.current) return;
+    prevRevisionRef.current = templateRevision;
+    void refreshTemplates();
+  }, [templateRevision, refreshTemplates]);
+
+  useEffect(() => {
+    const onFocus = () => { void refreshTemplates(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [refreshTemplates]);
 
   const filtered = search
     ? products.filter(
@@ -60,24 +118,49 @@ export function LabelsPage() {
   const selectedCount = Object.keys(selected).length;
   const totalLabels = Object.values(selected).reduce((sum, n) => sum + n, 0);
 
-  const handlePrint = async () => {
+  const runPrint = async () => {
     if (!selectedTemplateId || !selectedCount) return;
     setPrinting(true);
+    setLastTemplateId(selectedTemplateId);
+
+    const template = await fetchTemplateById(selectedTemplateId);
+    if (!template) {
+      setMessage('Label template not found. Open Label Designer, save your design, then try again.');
+      setPrinting(false);
+      return;
+    }
+    applyTemplate(template);
+
     const result = await api.labels.printBatch({
       templateId: selectedTemplateId,
       items: Object.entries(selected).map(([productId, copies]) => ({ productId, copies })),
     });
     if (result.success) {
-      const mode = result.data?.printed ? 'sent to printer' : 'opened preview (no printer configured)';
-      setMessage(`Printed ${result.data?.labelCount} labels — ${mode}`);
+      setMessage(
+        `Printed ${result.data?.labelCount} label${result.data?.labelCount !== 1 ? 's' : ''} using "${template.name}"`,
+      );
+      setPreviewOpen(false);
     } else {
       setMessage(result.error ?? 'Print failed');
     }
     setPrinting(false);
   };
 
-  const activeTemplate = templates.find((t) => t.id === selectedTemplateId);
+  const handlePrintClick = async () => {
+    if (!selectedTemplateId || !selectedCount) return;
+    const fresh = await fetchTemplateById(selectedTemplateId);
+    if (fresh) applyTemplate(fresh);
+    setPreviewOpen(true);
+  };
+
   const previewProduct = products.find((p) => selected[p.id]);
+  const previewLayout = activeTemplate
+    ? resolveLabelLayoutForPreview(activeTemplate, storeName)
+    : null;
+  const rollPreviewProducts = expandLabelPrintProducts(
+    products,
+    Object.entries(selected).map(([productId, copies]) => ({ productId, copies })),
+  );
 
   return (
     <div className="page-shell h-full overflow-y-auto">
@@ -86,9 +169,14 @@ export function LabelsPage() {
           <h2 className="text-2xl font-bold">Label Batch Print</h2>
           <p className="text-sm text-slate-500 mt-1">Select products and print barcode labels using saved templates.</p>
         </div>
-        <Link to="/label-designer">
-          <Button variant="outline" size="sm">Edit templates in Label Designer</Button>
-        </Link>
+        <div className="flex gap-2">
+          <Link to="/label-template-config">
+            <Button variant="outline" size="sm">Roll & printer config</Button>
+          </Link>
+          <Link to="/label-designer">
+            <Button variant="outline" size="sm">Label Designer</Button>
+          </Link>
+        </div>
       </div>
 
       {message && <div className="mb-4 p-3 bg-primary-50 rounded-lg text-sm">{message}</div>}
@@ -139,7 +227,15 @@ export function LabelsPage() {
 
         <div className="space-y-4">
           <div className="panel p-4 dark:border-slate-700 dark:bg-slate-900">
-            <h3 className="font-semibold mb-3">Template</h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold">Template</h3>
+              <Button variant="ghost" size="sm" onClick={() => void refreshTemplates()}>
+                Refresh
+              </Button>
+            </div>
+            <p className="text-xs text-slate-500 mb-3">
+              Preview loads the exact layout saved in Label Designer for the selected template.
+            </p>
             <div className="space-y-2">
               {templates.map((t) => (
                 <label key={t.id} className="flex items-center gap-2 text-sm cursor-pointer">
@@ -147,46 +243,71 @@ export function LabelsPage() {
                     type="radio"
                     name="template"
                     checked={selectedTemplateId === t.id}
-                    onChange={() => setSelectedTemplateId(t.id)}
+                    onChange={() => {
+                      setSelectedTemplateId(t.id);
+                      setLastTemplateId(t.id);
+                      void fetchTemplateById(t.id).then((tpl) => tpl && applyTemplate(tpl));
+                    }}
                   />
-                  <span>{t.name}</span>
-                  <span className="text-slate-400">({t.widthMm}×{t.heightMm}mm)</span>
+                  <span>
+                    {t.name}
+                    {t.id === lastTemplateId && (
+                      <span className="ml-1 text-xs text-primary-600">(last edited)</span>
+                    )}
+                    {t.isDefault && (
+                      <span className="ml-1 text-xs text-slate-400">★</span>
+                    )}
+                  </span>
+                  <span className="text-slate-400">
+                    ({t.widthMm}×{t.heightMm}mm · {t.rollConfig?.columns ?? 1}-up)
+                  </span>
                 </label>
               ))}
             </div>
           </div>
 
-          {activeTemplate && previewProduct && (
+          {activeTemplate && previewProduct && previewLayout && (
             <div className="panel p-4 flex flex-col items-center dark:border-slate-700 dark:bg-slate-900">
-              <h3 className="font-semibold mb-3 text-sm self-start">Preview</h3>
+              <h3 className="font-semibold mb-3 text-sm self-start">Single label preview</h3>
               <LabelCanvasPreview
-                layout={normalizeLabelLayout(activeTemplate.layout, activeTemplate.layout.storeName)}
-                product={{
-                  name: previewProduct.name,
-                  sku: previewProduct.sku,
-                  barcode: previewProduct.barcode,
-                  price: previewProduct.salePrice ?? previewProduct.retailPrice,
-                }}
+                layout={previewLayout}
+                product={productToLabelProduct(previewProduct)}
                 widthMm={activeTemplate.widthMm}
                 heightMm={activeTemplate.heightMm}
                 currency={currency}
-                scale={4}
+                scale={LABEL_CANVAS_PREVIEW_SCALE}
               />
             </div>
           )}
 
           <Button
             className="w-full"
-            onClick={handlePrint}
+            onClick={handlePrintClick}
             disabled={printing || !selectedCount || !selectedTemplateId}
           >
             {printing ? 'Printing...' : `Print ${totalLabels} Label${totalLabels !== 1 ? 's' : ''}`}
           </Button>
           <p className="text-xs text-slate-400 text-center">
-            Configure label printer in Settings. Without one, a print preview opens.
+            Print preview shows roll placement before sending to the Gainscha printer.
           </p>
         </div>
       </div>
+
+      {activeTemplate && previewLayout && (
+        <LabelPrintPreviewModal
+          open={previewOpen}
+          onClose={() => setPreviewOpen(false)}
+          onConfirm={runPrint}
+          templateName={activeTemplate.name}
+          widthMm={activeTemplate.widthMm}
+          heightMm={activeTemplate.heightMm}
+          rollConfig={activeTemplate.rollConfig}
+          layout={previewLayout}
+          labelCount={totalLabels}
+          printing={printing}
+          products={rollPreviewProducts}
+        />
+      )}
     </div>
   );
 }

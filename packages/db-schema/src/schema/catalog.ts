@@ -108,6 +108,7 @@ export const labelTemplates = sqliteTable('label_templates', {
   widthMm: real('width_mm').notNull(),
   heightMm: real('height_mm').notNull(),
   layoutJson: text('layout_json').notNull(),
+  rollConfigJson: text('roll_config_json'),
   isDefault: integer('is_default', { mode: 'boolean' }).notNull().default(false),
   ...syncColumns,
   ...timestamps,

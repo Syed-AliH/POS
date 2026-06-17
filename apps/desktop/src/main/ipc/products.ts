@@ -96,12 +96,29 @@ export function handleBarcodeLookup(barcode: string): ApiResult<Product | null> 
   try {
     requireSession();
     const db = getDb();
-    const row = db
+    const trimmed = barcode.trim();
+    if (!trimmed) return { success: true, data: null };
+
+    const activeProduct = and(
+      eq(products.isDeleted, false),
+      eq(products.status, 'active'),
+    );
+
+    const byBarcode = db
       .select()
       .from(products)
-      .where(and(eq(products.barcode, barcode.trim()), eq(products.isDeleted, false), eq(products.status, 'active')))
+      .where(and(eq(products.barcode, trimmed), activeProduct))
       .get();
-    return { success: true, data: row ? mapProduct(row) : null };
+    if (byBarcode) return { success: true, data: mapProduct(byBarcode) };
+
+    const bySku = db
+      .select()
+      .from(products)
+      .where(and(eq(products.sku, trimmed), activeProduct))
+      .get();
+    if (bySku) return { success: true, data: mapProduct(bySku) };
+
+    return { success: true, data: null };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Lookup failed' };
   }

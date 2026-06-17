@@ -23,15 +23,15 @@ export function BarcodeGraphic({
   height = 44,
   displayValue = true,
   className,
-  maxWidth,
   barWidth = 1.35,
+  margin = 0,
 }: {
   value: string;
   height?: number;
   displayValue?: boolean;
   className?: string;
-  maxWidth?: number;
   barWidth?: number;
+  margin?: number;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -51,7 +51,8 @@ export function BarcodeGraphic({
           width: barWidth,
           height,
           displayValue,
-          margin: 6,
+          margin: 4,
+          flat: true,
           fontSize: 11,
           font: 'ui-monospace, monospace',
           textMargin: 2,
@@ -59,12 +60,13 @@ export function BarcodeGraphic({
           background: '#ffffff',
           lineColor: '#000000',
         });
+        svg.setAttribute('shape-rendering', 'crispEdges');
         return;
       } catch {
         svg.replaceChildren();
       }
     }
-  }, [value, height, displayValue, barWidth]);
+  }, [value, height, displayValue, barWidth, margin]);
 
   if (!value.trim()) return null;
 
@@ -73,8 +75,8 @@ export function BarcodeGraphic({
       ref={svgRef}
       role="img"
       aria-label={`Barcode ${value}`}
-      className={cn('block max-w-full', className)}
-      style={{ maxWidth: maxWidth ?? '100%', height: 'auto' }}
+      className={cn('block', className)}
+      style={{ maxWidth: 'none', width: 'auto', height: 'auto' }}
     />
   );
 }
