@@ -23,6 +23,7 @@ export interface ReceiptTemplateSections {
   showSubtotal: boolean;
   showDiscount: boolean;
   showTax: boolean;
+  showTotal: boolean;
   showPayment: boolean;
   showThankYou: boolean;
   showReturnPolicy: boolean;
@@ -47,6 +48,123 @@ export interface ReceiptTemplateHeader {
   customLine?: string;
   showLogo?: boolean;
   showAddress?: boolean;
+  /** Custom labels for receipt rows (e.g. change "Receipt:" to "Invoice #"). */
+  labels?: ReceiptTemplateLabels;
+  /** Body / totals font sizes in preview pixels. */
+  style?: ReceiptTemplateStyle;
+  /** Sample sale text for designer preview and test print (real sales use checkout data). */
+  sampleSale?: Partial<ReceiptSale>;
+}
+
+/** User-editable row labels on printed receipts. */
+export interface ReceiptTemplateLabels {
+  receiptNumber?: string;
+  date?: string;
+  cashier?: string;
+  subtotal?: string;
+  discount?: string;
+  tax?: string;
+  total?: string;
+  payment?: string;
+  tendered?: string;
+  change?: string;
+}
+
+export const DEFAULT_RECEIPT_LABELS: Required<ReceiptTemplateLabels> = {
+  receiptNumber: 'Receipt:',
+  date: 'Date:',
+  cashier: 'Cashier:',
+  subtotal: 'Subtotal:',
+  discount: 'Discount:',
+  tax: 'Tax:',
+  total: 'TOTAL:',
+  payment: 'Payment:',
+  tendered: 'Tendered:',
+  change: 'Change:',
+};
+
+export interface ReceiptTemplateStyle {
+  bodyFontSize?: number;
+  smallFontSize?: number;
+  totalFontSize?: number;
+  footerFontSize?: number;
+  bodyFontFamily?: ReceiptStoreFontKey;
+  itemFontFamily?: ReceiptStoreFontKey;
+  metaFontFamily?: ReceiptStoreFontKey;
+  footerFontFamily?: ReceiptStoreFontKey;
+  customFontName?: string;
+  customFontDataUrl?: string;
+  customFontFormat?: 'truetype' | 'opentype' | 'woff' | 'woff2';
+  showHeaderDivider?: boolean;
+  showMetaDivider?: boolean;
+  showBeforeTotalsDivider?: boolean;
+  showBeforePaymentDivider?: boolean;
+  showFooterDivider?: boolean;
+  dividerChar?: string;
+  dashChar?: string;
+}
+
+export const DEFAULT_RECEIPT_STYLE: Required<
+  Omit<ReceiptTemplateStyle, 'customFontName' | 'customFontDataUrl' | 'customFontFormat'>
+> & Pick<ReceiptTemplateStyle, 'customFontName' | 'customFontDataUrl' | 'customFontFormat'> = {
+  bodyFontSize: 11,
+  smallFontSize: 10,
+  totalFontSize: 12,
+  footerFontSize: 9,
+  bodyFontFamily: 'mono',
+  itemFontFamily: 'sans',
+  metaFontFamily: 'mono',
+  footerFontFamily: 'mono',
+  showHeaderDivider: true,
+  showMetaDivider: true,
+  showBeforeTotalsDivider: true,
+  showBeforePaymentDivider: true,
+  showFooterDivider: true,
+  dividerChar: '═',
+  dashChar: '─',
+};
+
+export function resolveReceiptLabels(header?: ReceiptTemplateHeader): Required<ReceiptTemplateLabels> {
+  return { ...DEFAULT_RECEIPT_LABELS, ...header?.labels };
+}
+
+export function resolveReceiptStyle(header?: ReceiptTemplateHeader): Required<
+  Omit<ReceiptTemplateStyle, 'customFontName' | 'customFontDataUrl' | 'customFontFormat'>
+> & Pick<ReceiptTemplateStyle, 'customFontName' | 'customFontDataUrl' | 'customFontFormat'> {
+  return { ...DEFAULT_RECEIPT_STYLE, ...header?.style };
+}
+
+export type ReceiptFontZone = 'body' | 'item' | 'meta' | 'footer';
+
+export function resolveReceiptZoneFontFamily(
+  style: ReturnType<typeof resolveReceiptStyle>,
+  zone: ReceiptFontZone,
+): string {
+  const key =
+    zone === 'body' ? style.bodyFontFamily
+    : zone === 'item' ? style.itemFontFamily
+    : zone === 'meta' ? style.metaFontFamily
+    : style.footerFontFamily;
+  if (key === 'custom' && style.customFontName) {
+    const safe = style.customFontName.replace(/'/g, '');
+    return `'${safe}', ui-monospace, monospace`;
+  }
+  if (key === 'custom') return RECEIPT_STORE_FONTS.mono.family;
+  return RECEIPT_STORE_FONTS[key ?? 'mono'].family;
+}
+
+/** Merge template sample sale with defaults — for preview and test print only. */
+export function resolveReceiptSampleSale(
+  template?: ReceiptTemplateConfig,
+  base: ReceiptSale = SAMPLE_RECEIPT_SALE,
+): ReceiptSale {
+  const sample = template?.header?.sampleSale;
+  if (!sample) return { ...base };
+  return {
+    ...base,
+    ...sample,
+    items: sample.items ?? base.items,
+  };
 }
 
 export const RECEIPT_STORE_FONTS = {
@@ -148,6 +266,7 @@ export const DEFAULT_RECEIPT_SECTIONS: ReceiptTemplateSections = {
   showSubtotal: true,
   showDiscount: true,
   showTax: true,
+  showTotal: true,
   showPayment: true,
   showThankYou: true,
   showReturnPolicy: true,
@@ -555,6 +674,7 @@ export const RECEIPT_SECTION_LABELS: Record<keyof ReceiptTemplateSections, strin
   showSubtotal: 'Subtotal',
   showDiscount: 'Discount',
   showTax: 'Tax',
+  showTotal: 'Total',
   showPayment: 'Payment Details',
   showThankYou: 'Thank You Message',
   showReturnPolicy: 'Return Policy',
@@ -600,3 +720,15 @@ export {
   type LabelScaleMode,
   type LabelSlotPosition,
 } from './labelRollConfig';
+
+export {
+  buildReceiptPrintHtml,
+  buildReceiptPrintFontFaceCss,
+  receiptPreviewWidthPx,
+  receiptPrintWidthPx,
+  receiptScaledDotsSize,
+  resolveReceiptPaperWidthMm,
+  RECEIPT_PRINT_PX_PER_MM,
+  RECEIPT_PRINT_MARGIN_MM,
+  RECEIPT_PRINTABLE_MM,
+} from './receiptRender';

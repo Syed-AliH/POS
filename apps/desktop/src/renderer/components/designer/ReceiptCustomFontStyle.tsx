@@ -1,22 +1,37 @@
+import { resolveReceiptStyle } from '@mama-babi/printer';
 import type { ReceiptTemplateHeader } from '@mama-babi/printer';
 
+function fontFaceCss(name: string, dataUrl: string, format: string): string {
+  const safeName = name.replace(/'/g, '');
+  return `
+    @font-face {
+      font-family: '${safeName}';
+      src: url('${dataUrl}') format('${format}');
+      font-weight: normal;
+      font-style: normal;
+      font-display: swap;
+    }
+  `;
+}
+
 export function ReceiptCustomFontStyle({ header }: { header: ReceiptTemplateHeader }) {
-  if (header.storeNameFontFamily !== 'custom' || !header.storeNameCustomFontDataUrl || !header.storeNameCustomFontName) {
-    return null;
+  const parts: string[] = [];
+  if (header.storeNameFontFamily === 'custom' && header.storeNameCustomFontDataUrl && header.storeNameCustomFontName) {
+    parts.push(fontFaceCss(
+      header.storeNameCustomFontName,
+      header.storeNameCustomFontDataUrl,
+      header.storeNameCustomFontFormat ?? 'truetype',
+    ));
   }
-
-  const safeName = header.storeNameCustomFontName.replace(/'/g, '');
-  const format = header.storeNameCustomFontFormat ?? 'truetype';
-
-  return (
-    <style>{`
-      @font-face {
-        font-family: '${safeName}';
-        src: url('${header.storeNameCustomFontDataUrl}') format('${format}');
-        font-weight: normal;
-        font-style: normal;
-        font-display: swap;
-      }
-    `}</style>
-  );
+  const style = resolveReceiptStyle(header);
+  const usesBodyCustom =
+    style.bodyFontFamily === 'custom' ||
+    style.itemFontFamily === 'custom' ||
+    style.metaFontFamily === 'custom' ||
+    style.footerFontFamily === 'custom';
+  if (usesBodyCustom && style.customFontDataUrl && style.customFontName) {
+    parts.push(fontFaceCss(style.customFontName, style.customFontDataUrl, style.customFontFormat ?? 'truetype'));
+  }
+  if (!parts.length) return null;
+  return <style>{parts.join('')}</style>;
 }

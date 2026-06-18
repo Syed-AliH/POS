@@ -583,6 +583,39 @@ export function GrnPage() {
     } else toast.error(result.error ?? 'Void failed');
   };
 
+  const grnForLabels = (base: GrnSummary): GrnSummary => {
+    if (editingRecord?.id === base.id && canEditRecord && editLines.length > 0) {
+      const existingByProduct = new Map(base.items.map((i) => [i.productId, i]));
+      return {
+        ...base,
+        items: editLines.map((l, idx) => {
+          const existing = existingByProduct.get(l.productId);
+          return {
+            id: existing?.id ?? `draft-${idx}`,
+            productId: l.productId,
+            productName: l.productName,
+            productSku: l.productSku,
+            qty: l.qty,
+            unitCost: l.unitCost,
+            unitRetail: l.unitRetail,
+            lineTotal: l.qty * l.unitCost,
+          };
+        }),
+      };
+    }
+    return base;
+  };
+
+  const openPrintLabelsForGrn = (grn: GrnSummary) => {
+    const labelGrn = grnForLabels(grn);
+    if (!labelGrn.items.length) {
+      toast.warning('No items on this GRN to print');
+      return;
+    }
+    setSelectedGrn(labelGrn);
+    setPrintLabelsOpen(true);
+  };
+
   const handlePrintLabels = async () => {
     if (!selectedGrn || !labelTemplateId) return;
     setLabelPrinting(true);
@@ -902,7 +935,19 @@ export function GrnPage() {
                     ) : null}
                   </p>
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => setEditingRecord(null)}>Close</Button>
+                <div className="flex gap-2 shrink-0">
+                  {(editingRecord.status === 'draft' || editingRecord.status === 'finalized') && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => openPrintLabelsForGrn(editingRecord)}
+                      disabled={!(canEditRecord ? editLines.length : editingRecord.items.length)}
+                    >
+                      Print Labels
+                    </Button>
+                  )}
+                  <Button variant="ghost" size="sm" onClick={() => setEditingRecord(null)}>Close</Button>
+                </div>
               </div>
 
               {canEditRecord ? (
@@ -1061,7 +1106,7 @@ export function GrnPage() {
               </div>
 
               {canEditRecord && (
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button onClick={handleUpdateRecord} disabled={updatingRecord || !editLines.length}>
                     {updatingRecord ? 'Updating…' : 'Update GRN'}
                   </Button>
@@ -1079,6 +1124,13 @@ export function GrnPage() {
                       Void GRN
                     </Button>
                   )}
+                </div>
+              )}
+              {!canEditRecord && editingRecord.items.length > 0 && (
+                <div className="flex gap-2">
+                  <Button variant="secondary" onClick={() => openPrintLabelsForGrn(editingRecord)}>
+                    Print Labels
+                  </Button>
                 </div>
               )}
             </div>

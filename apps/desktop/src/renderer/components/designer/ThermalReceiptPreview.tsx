@@ -2,7 +2,13 @@ import type { ReactNode } from 'react';
 import { formatDateTime } from '@shared/datetime';
 import {
   resolveStoreNameFontFamily,
+  receiptPreviewWidthPx,
+  resolveReceiptLabels,
+  resolveReceiptStyle,
+  resolveReceiptZoneFontFamily,
+  resolveReceiptSampleSale,
   SAMPLE_RECEIPT_SALE,
+  DEFAULT_RECEIPT_SECTIONS,
   type ReceiptSale,
   type ReceiptTemplateConfig,
   type ReceiptTemplateSections,
@@ -39,7 +45,11 @@ type SectionKey =
   | 'thankYou'
   | 'returnPolicy'
   | 'taxInfo'
-  | 'qrCode';
+  | 'qrCode'
+  | 'bodyStyle'
+  | 'dividers'
+  | 'customHeaderLine'
+  | 'customFooterLine';
 
 export function ThermalReceiptPreview({
   template,
@@ -58,13 +68,22 @@ export function ThermalReceiptPreview({
   designMode?: boolean;
   className?: string;
 }) {
-  const { widthMm, sections, header, footer } = template;
+  const { widthMm, header, footer } = template;
+  const sections = { ...DEFAULT_RECEIPT_SECTIONS, ...template.sections };
   const charWidth = charsForWidth(widthMm);
-  const pxWidth = widthMm === 58 ? 220 : 302;
+  const pxWidth = receiptPreviewWidthPx(widthMm);
+  const labels = resolveReceiptLabels(header);
+  const bodyStyle = resolveReceiptStyle(header);
+  const bodyFontFamily = resolveReceiptZoneFontFamily(bodyStyle, 'body');
+  const itemFontFamily = resolveReceiptZoneFontFamily(bodyStyle, 'item');
+  const metaFontFamily = resolveReceiptZoneFontFamily(bodyStyle, 'meta');
+  const footerFontFamily = resolveReceiptZoneFontFamily(bodyStyle, 'footer');
+  const displaySale = resolveReceiptSampleSale(templateToConfig(template), sale);
 
   const fmt = (n: number) => `${currency} ${n.toFixed(2)}`;
-  const divider = '═'.repeat(Math.min(charWidth, 24));
-  const dash = '─'.repeat(Math.min(charWidth, 24));
+  const dividerRepeat = Math.min(charWidth, 24);
+  const divider = bodyStyle.dividerChar.repeat(dividerRepeat);
+  const dash = bodyStyle.dashChar.repeat(dividerRepeat);
 
   const storeNameText = header.storeName?.trim();
   const storeNameStyle = {
@@ -106,29 +125,38 @@ export function ThermalReceiptPreview({
     (sections.showAddress && (header.address?.trim() || (designMode && activeSection === 'showAddress'))) ||
     (sections.showPhone && header.phone?.trim()) ||
     (sections.showEmail && header.email?.trim()) ||
-    (sections.showHeaderText && (header.headerText?.trim() || (designMode && activeSection === 'headerText')));
+    (sections.showHeaderText && (header.headerText?.trim() || (designMode && activeSection === 'headerText'))) ||
+    (header.customLine?.trim() || (designMode && activeSection === 'customHeaderLine'));
 
   const hasFooterContent =
     (sections.showThankYou && (footer.thankYouMessage?.trim() || footer.message?.trim() || (designMode && activeSection === 'thankYou'))) ||
     (sections.showReturnPolicy && (footer.returnPolicy?.trim() || (designMode && activeSection === 'returnPolicy'))) ||
-    (sections.showQrCode && (designMode && activeSection === 'qrCode'));
+    (sections.showQrCode && (designMode && activeSection === 'qrCode')) ||
+    (footer.customLine?.trim() || (designMode && activeSection === 'customFooterLine'));
 
   const hasMeta = sections.showSaleNumber || sections.showDate || sections.showCashier;
-  const hasItems = sections.showItems && sale.items.length > 0;
-  const hasTotals = sections.showSubtotal || sections.showDiscount || sections.showTax || true;
+  const hasItems = sections.showItems && displaySale.items.length > 0;
+  const hasTotals =
+    sections.showSubtotal || sections.showDiscount || sections.showTax || sections.showTotal;
   const hasPayment = sections.showPayment;
 
   return (
     <div className={cn('flex flex-col items-center', className)}>
       <ReceiptCustomFontStyle header={header} />
       <div
-        className="relative bg-[#faf8f5] text-slate-900 shadow-lg border border-slate-200 font-mono text-[11px] leading-relaxed select-none overflow-hidden"
-        style={{ width: pxWidth, padding: '16px 12px' }}
+        className="relative bg-white text-slate-900 shadow-lg border border-slate-200 select-none overflow-hidden"
+        style={{
+          width: pxWidth,
+          padding: '4px 12px',
+          fontSize: bodyStyle.bodyFontSize,
+          fontFamily: bodyFontFamily,
+          lineHeight: 1.625,
+        }}
       >
         <div className="pointer-events-none absolute inset-x-0 top-0 h-3 bg-gradient-to-b from-slate-300/40 to-transparent" />
 
         {sections.showLogo && block('showLogo', (
-          <div className="text-center py-2">
+          <div className="text-center py-1">
             {header.logoDataUrl ? (
               <img src={header.logoDataUrl} alt="Logo" className="mx-auto max-h-14 max-w-[85%] object-contain" />
             ) : designMode && activeSection === 'showLogo' ? (
@@ -168,28 +196,36 @@ export function ThermalReceiptPreview({
           <div className="text-center text-[10px] text-slate-400 italic py-1">Header message</div>
         ))}
 
-        {hasHeaderContent && (
+        {header.customLine?.trim() && block('customHeaderLine', (
+          <div className="text-center text-slate-600 whitespace-pre-wrap py-1" style={{ fontSize: bodyStyle.smallFontSize }}>{header.customLine}</div>
+        ))}
+
+        {designMode && activeSection === 'customHeaderLine' && !header.customLine?.trim() && block('customHeaderLine', (
+          <div className="text-center text-[10px] text-slate-400 italic py-1">Custom header line</div>
+        ))}
+
+        {hasHeaderContent && bodyStyle.showHeaderDivider && bodyStyle.dividerChar && block('dividers', (
           <div className="text-center text-slate-400 py-1">{divider}</div>
-        )}
+        ))}
 
-        {hasMeta && (
-          <>
-            {sections.showSaleNumber && <div>Receipt: {sale.saleNumber}</div>}
-            {sections.showDate && <div>Date: {formatDateTime(sale.createdAt)}</div>}
-            {sections.showCashier && <div>Cashier: {sale.cashierName}</div>}
-          </>
-        )}
+        {hasMeta && block('showSaleNumber', (
+          <div style={{ fontFamily: metaFontFamily }}>
+            {sections.showSaleNumber && <div>{labels.receiptNumber} {displaySale.displaySaleNumber}</div>}
+            {sections.showDate && <div>{labels.date} {formatDateTime(displaySale.createdAt)}</div>}
+            {sections.showCashier && <div>{labels.cashier} {displaySale.cashierName}</div>}
+          </div>
+        ), !sections.showSaleNumber && !sections.showDate && !sections.showCashier)}
 
-        {hasMeta && (hasItems || hasTotals) && (
+        {hasMeta && (hasItems || hasTotals) && bodyStyle.showMetaDivider && bodyStyle.dashChar && block('dividers', (
           <div className="text-slate-300 py-1">{dash}</div>
-        )}
+        ))}
 
         {hasItems && block('showItems', (
           <div className="space-y-2 py-1">
-            {sale.items.map((item, i) => (
+            {displaySale.items.map((item, i) => (
               <div key={i}>
-                <div className="break-words">{item.productName}</div>
-                <div className="flex justify-between text-[10px] gap-2">
+                <div className="break-words" style={{ fontFamily: itemFontFamily }}>{item.productName}</div>
+                <div className="flex justify-between gap-2" style={{ fontSize: bodyStyle.smallFontSize }}>
                   <span className="shrink-0">{item.quantity} × {fmt(item.unitPrice)}</span>
                   <span className="shrink-0">{fmt(item.lineTotal)}</span>
                 </div>
@@ -198,38 +234,56 @@ export function ThermalReceiptPreview({
           </div>
         ))}
 
-        {hasItems && hasTotals && (
+        {hasItems && hasTotals && bodyStyle.showBeforeTotalsDivider && bodyStyle.dashChar && block('dividers', (
           <div className="text-slate-300 py-1">{dash}</div>
-        )}
+        ))}
 
-        {hasTotals && (
+        {hasTotals && block('showSubtotal', (
           <>
             {sections.showSubtotal && (
-              <div className="flex justify-between gap-2"><span>Subtotal:</span><span className="shrink-0">{fmt(sale.subtotal)}</span></div>
+              <div className="flex justify-between gap-2">
+                <span>{labels.subtotal}</span>
+                <span className="shrink-0">{fmt(displaySale.subtotal)}</span>
+              </div>
             )}
-            {sections.showDiscount && sale.discountAmount > 0 && (
-              <div className="flex justify-between gap-2"><span>Discount:</span><span className="shrink-0">-{fmt(sale.discountAmount)}</span></div>
+            {sections.showDiscount && displaySale.discountAmount > 0 && (
+              <div className="flex justify-between gap-2">
+                <span>{labels.discount}</span>
+                <span className="shrink-0">-{fmt(displaySale.discountAmount)}</span>
+              </div>
             )}
             {sections.showTax && (
-              <div className="flex justify-between gap-2"><span>Tax:</span><span className="shrink-0">{fmt(sale.taxAmount)}</span></div>
+              <div className="flex justify-between gap-2">
+                <span>{labels.tax}</span>
+                <span className="shrink-0">{fmt(displaySale.taxAmount)}</span>
+              </div>
             )}
-            <div className="flex justify-between font-bold text-xs py-0.5 gap-2">
-              <span>TOTAL:</span><span className="shrink-0">{fmt(sale.totalAmount)}</span>
-            </div>
+            {sections.showTotal && (
+              <div className="flex justify-between font-bold py-0.5 gap-2" style={{ fontSize: bodyStyle.totalFontSize }}>
+                <span>{labels.total}</span>
+                <span className="shrink-0">{fmt(displaySale.totalAmount)}</span>
+              </div>
+            )}
           </>
-        )}
+        ))}
 
-        {hasTotals && hasPayment && (
+        {hasTotals && hasPayment && bodyStyle.showBeforePaymentDivider && bodyStyle.dashChar && block('dividers', (
           <div className="text-slate-300 py-1">{dash}</div>
-        )}
+        ))}
 
         {hasPayment && block('showPayment', (
           <div className="space-y-0.5">
-            <div>Payment: {sale.paymentMethod.toUpperCase()}</div>
-            {sale.amountTendered != null && (
+            <div>{labels.payment} {displaySale.paymentMethod.toUpperCase()}</div>
+            {displaySale.amountTendered != null && (
               <>
-                <div className="flex justify-between gap-2"><span>Tendered:</span><span className="shrink-0">{fmt(sale.amountTendered)}</span></div>
-                <div className="flex justify-between gap-2"><span>Change:</span><span className="shrink-0">{fmt(sale.changeGiven ?? 0)}</span></div>
+                <div className="flex justify-between gap-2">
+                  <span>{labels.tendered}</span>
+                  <span className="shrink-0">{fmt(displaySale.amountTendered)}</span>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span>{labels.change}</span>
+                  <span className="shrink-0">{fmt(displaySale.changeGiven ?? 0)}</span>
+                </div>
               </>
             )}
           </div>
@@ -243,12 +297,12 @@ export function ThermalReceiptPreview({
           <div className="text-[10px] text-slate-400 italic py-2">Tax registration info</div>
         ))}
 
-        {(hasFooterContent || (sections.showTaxInfo && footer.taxInfo?.trim())) && (
+        {(hasFooterContent || (sections.showTaxInfo && footer.taxInfo?.trim())) && bodyStyle.showFooterDivider && bodyStyle.dividerChar && block('dividers', (
           <div className="text-center text-slate-400 py-1">{divider}</div>
-        )}
+        ))}
 
         {sections.showThankYou && (footer.thankYouMessage?.trim() || footer.message?.trim()) && block('thankYou', (
-          <div className="text-center text-[10px] py-2">{footer.thankYouMessage || footer.message}</div>
+          <div className="text-center py-1" style={{ fontSize: bodyStyle.smallFontSize, fontFamily: footerFontFamily }}>{footer.thankYouMessage || footer.message}</div>
         ))}
 
         {sections.showThankYou && !(footer.thankYouMessage?.trim() || footer.message?.trim()) && designMode && activeSection === 'thankYou' && block('thankYou', (
@@ -263,19 +317,26 @@ export function ThermalReceiptPreview({
           <div className="text-center text-[9px] text-slate-400 italic py-1">Return policy</div>
         ))}
 
+        {footer.customLine?.trim() && block('customFooterLine', (
+          <div className="text-center text-slate-500 py-1 whitespace-pre-wrap" style={{ fontSize: bodyStyle.footerFontSize, fontFamily: footerFontFamily }}>{footer.customLine}</div>
+        ))}
+
+        {designMode && activeSection === 'customFooterLine' && !footer.customLine?.trim() && block('customFooterLine', (
+          <div className="text-center text-[9px] text-slate-400 italic py-1">Custom footer line</div>
+        ))}
+
         {sections.showQrCode && block('qrCode', (
-          <div className="py-3 text-center">
+          <div className="py-1 text-center">
             <QrPlaceholder size={widthMm === 58 ? 56 : 72} />
-            {(footer.qrCodeContent?.trim() || sale.saleNumber) && (
-              <div className="text-[9px] text-slate-500 mt-1 break-all">{footer.qrCodeContent?.trim() || sale.saleNumber}</div>
+            {(footer.qrCodeContent?.trim() || displaySale.displaySaleNumber) && (
+              <div className="text-[9px] text-slate-500 mt-1 break-all">{footer.qrCodeContent?.trim() || displaySale.displaySaleNumber}</div>
             )}
           </div>
         ))}
 
-        {(hasFooterContent || sections.showQrCode) && (
-          <div className="text-center text-slate-400 pt-2">{divider}</div>
-        )}
-        <div className="h-2" />
+        {(hasFooterContent || sections.showQrCode) && bodyStyle.showFooterDivider && bodyStyle.dividerChar && block('dividers', (
+          <div className="text-center text-slate-400 pt-1">{divider}</div>
+        ))}
       </div>
       <p className="mt-3 text-xs text-slate-400 shrink-0">{widthMm}mm thermal paper · {charWidth} chars/line</p>
     </div>

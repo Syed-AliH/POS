@@ -24,6 +24,27 @@ function findByHint(printers: SystemPrinter[], hint: string): string | undefined
   return printers.find((p) => p.name.toLowerCase().includes(h))?.name;
 }
 
+/** Gainscha / label printers speak TSPL — not ESC/POS receipts. */
+export function isLikelyLabelPrinterName(name: string): boolean {
+  const n = name.toLowerCase();
+  return (
+    n.includes('gainscha') ||
+    n.includes('tspl') ||
+    n.includes('label') ||
+    /\bgs-\d/i.test(name)
+  );
+}
+
+/** Receipt printer: configured name only. Empty = print preview (no hardware). */
+export async function resolveReceiptPrinterName(
+  configuredName?: string | null,
+): Promise<string | undefined> {
+  const trimmed = configuredName?.trim();
+  if (!trimmed) return undefined;
+  const printers = await listSystemPrinters();
+  return findByName(printers, trimmed) ?? findByHint(printers, trimmed);
+}
+
 /** Label printer: configured name, else auto-detect Gainscha. Never falls back to receipt printer. */
 export async function resolveLabelPrinterName(configuredName?: string | null): Promise<string | undefined> {
   const printers = await listSystemPrinters();

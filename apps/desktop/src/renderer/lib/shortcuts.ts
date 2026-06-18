@@ -69,6 +69,14 @@ function handleKeyDown(e: KeyboardEvent): void {
       e.preventDefault();
       e.stopPropagation();
     }
+    return;
+  }
+
+  if (e.ctrlKey && !e.altKey && !e.metaKey && key.length === 1) {
+    if (dispatchShortcut(`Ctrl+${key.toUpperCase()}`)) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
   }
 }
 

@@ -10,7 +10,6 @@ import { ReceiptSearchModal } from '@renderer/components/ReceiptSearchModal';
 import { WorkflowStepper } from '@renderer/components/WorkflowStepper';
 import { toast } from '@renderer/stores/toastStore';
 import { useAuthStore } from '@renderer/stores/authStore';
-import { formatDateTime } from '@shared/datetime';
 import type { Customer, Product, SaleSummary } from '@shared/types';
 import { useCartStore } from '../stores/cartStore';
 
@@ -64,7 +63,6 @@ export function CheckoutPage() {
   const [heldSales, setHeldSales] = useState<SaleSummary[]>([]);
   const [showHeld, setShowHeld] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
-  const [successSale, setSuccessSale] = useState<SaleSummary | null>(null);
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [customerResults, setCustomerResults] = useState<Customer[]>([]);
@@ -85,14 +83,14 @@ export function CheckoutPage() {
   const searchRef = useRef<HTMLInputElement>(null);
   const customerRef = useRef<HTMLInputElement>(null);
   const tenderRef = useRef<HTMLInputElement>(null);
-  const handleChargeRef = useRef<() => void>(() => undefined);
+  const handleChargeRef = useRef<(options?: { forcePrint?: boolean }) => void>(() => undefined);
 
   const loyaltyDiscount = loyaltyPointsRedeemed * redemptionRate;
   const total = getTotal(taxInclusive) - loyaltyDiscount;
   const change = paymentMethod === 'cash' ? Math.max(0, parseFloat(amountTendered || '0') - total) : 0;
   const secondaryTotal = exchangeRate > 0 && secondaryCurrency ? total * exchangeRate : null;
 
-  const workflowStep = successSale ? 3 : items.length === 0 ? 0 : paymentMethod === 'cash' && !amountTendered && items.length > 0 ? 1 : 2;
+  const workflowStep = items.length === 0 ? 0 : paymentMethod === 'cash' && !amountTendered && items.length > 0 ? 1 : 2;
 
   const refreshStockMap = useCallback(async (): Promise<Record<string, number>> => {
     const r = await api.products.list();
@@ -174,8 +172,6 @@ export function CheckoutPage() {
 
     if (sellingIntoNegative) {
       setStockWarning({ productName: product.name, stock: onHand });
-    } else {
-      toast.success(`Added: ${product.name} — Available: ${available - 1}`);
     }
     setSearch('');
     setSearchResults([]);
@@ -246,7 +242,7 @@ export function CheckoutPage() {
     toast.success(`Resumed ${sale.heldKey}`);
   };
 
-  const handleCharge = async () => {
+  const handleCharge = async (options?: { forcePrint?: boolean }) => {
     if (!items.length || processing) return;
     setProcessing(true);
 
@@ -280,10 +276,10 @@ export function CheckoutPage() {
     if (result.success && result.data) {
       const sale = result.data;
       const autoPrint = await api.settings.get('auto_print_receipt');
-      if (autoPrint.success && autoPrint.data !== 'false') {
+      const shouldPrint = options?.forcePrint || (autoPrint.success && autoPrint.data !== 'false');
+      if (shouldPrint) {
         await api.print.receipt(sale.id);
       }
-      setSuccessSale(sale);
       clear();
       setCustomerPhone('');
       setCustomerName('');
@@ -291,6 +287,7 @@ export function CheckoutPage() {
       setAmountTendered('');
       setGiftCardCode('');
       setGiftCardBalance(null);
+      focusElement(searchRef, true);
       api.products.list().then((r) => {
         if (r.success) {
           const map: Record<string, number> = {};
@@ -316,21 +313,21 @@ export function CheckoutPage() {
       F2: () => handleHold(),
       F3: () => loadHeldSales(),
       F4: () => handleChargeRef.current(),
+      'Ctrl+S': () => handleChargeRef.current({ forcePrint: true }),
       F5: () => focusElement(customerRef, true),
       F6: () => { if (paymentMethod === 'cash') focusElement(tenderRef, true); },
       Escape: () => {
-        if (successSale) setSuccessSale(null);
-        else if (showHeld) setShowHeld(false);
+        if (showHeld) setShowHeld(false);
         else if (items.length) setShowClearConfirm(true);
       },
     });
-  }, [handleHold, loadHeldSales, showHeld, paymentMethod, items.length, successSale]);
+  }, [handleHold, loadHeldSales, showHeld, paymentMethod, items.length]);
 
   useEffect(() => {
     const handleBarcode = (e: KeyboardEvent) => {
       if (getActiveRoute() !== '/checkout') return;
       if ([searchRef, customerRef, tenderRef].some((r) => r.current === document.activeElement)) return;
-      if (showHeld || successSale) return;
+      if (showHeld) return;
       if (/^F\d{1,2}$/i.test(e.key) || e.key === 'Escape' || e.altKey) return;
       if (e.key === 'Enter' && barcodeBuffer.length >= 4) {
         lookupBarcode(barcodeBuffer);
@@ -345,7 +342,7 @@ export function CheckoutPage() {
     };
     window.addEventListener('keydown', handleBarcode);
     return () => window.removeEventListener('keydown', handleBarcode);
-  }, [barcodeBuffer, lookupBarcode, showHeld, successSale]);
+  }, [barcodeBuffer, lookupBarcode, showHeld]);
 
   const submitProductSearch = useCallback(async () => {
     const q = search.trim();
@@ -488,7 +485,7 @@ export function CheckoutPage() {
                 <ol className="max-w-xs space-y-2 text-left text-sm text-slate-500 dark:text-slate-400">
                   <li><strong>1.</strong> Press <kbd className="px-1.5 py-0.5 bg-slate-100 rounded text-xs">F1</kbd> and type a product name</li>
                   <li><strong>2.</strong> Or scan a barcode (scanner auto-adds)</li>
-                  <li><strong>3.</strong> Press <kbd className="px-1.5 py-0.5 bg-slate-100 rounded text-xs">F4</kbd> to charge when ready</li>
+                  <li><strong>3.</strong> Press <kbd className="px-1.5 py-0.5 bg-slate-100 rounded text-xs">F4</kbd> or <kbd className="px-1.5 py-0.5 bg-slate-100 rounded text-xs">Ctrl+S</kbd> to charge</li>
                 </ol>
                 {productCount === 0 && isManager && (
                   <Button className="mt-4" onClick={handleLoadDemo}>Load Demo Products</Button>
@@ -763,10 +760,10 @@ export function CheckoutPage() {
             <Button
               size="lg"
               className="w-full text-xl py-4"
-              onClick={handleCharge}
+              onClick={() => handleCharge()}
               disabled={processing || items.length === 0 || (paymentMethod === 'wallet' && (!giftCardCode || (giftCardBalance != null && giftCardBalance < total)))}
             >
-              {processing ? 'Processing…' : items.length === 0 ? 'Add products first' : `Charge PKR ${total.toFixed(2)} (F4)`}
+              {processing ? 'Processing…' : items.length === 0 ? 'Add products first' : `Charge PKR ${total.toFixed(2)} (F4 / Ctrl+S)`}
             </Button>
           </div>
         </div>
@@ -793,37 +790,6 @@ export function CheckoutPage() {
         }
       >
         <p className="text-slate-600">Remove all {items.length} item(s) from the cart?</p>
-      </Modal>
-
-      <Modal open={!!successSale} title="Sale complete" onClose={() => setSuccessSale(null)} size="lg"
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => { if (successSale) navigate(`/returns?sale=${encodeURIComponent(successSale.saleNumber)}`); setSuccessSale(null); }}>Process Return</Button>
-            <Button variant="secondary" onClick={async () => { if (successSale) await api.print.receipt(successSale.id); toast.success('Receipt sent'); }}>Print Receipt</Button>
-            <Button onClick={() => { setSuccessSale(null); focusElement(searchRef, true); }}>New Sale</Button>
-          </>
-        }
-      >
-        {successSale && (
-          <div className="space-y-4">
-            <div className="text-center py-4">
-              <div className="text-4xl mb-2">✓</div>
-              <p className="text-2xl font-bold text-green-700">PKR {successSale.totalAmount.toFixed(2)}</p>
-              <p className="font-mono text-lg text-slate-700 mt-1">{successSale.saleNumber}</p>
-              <p className="text-sm text-slate-500 mt-1">{formatDateTime(successSale.createdAt)}</p>
-              <p className="text-xs text-slate-400">Save this number for returns</p>
-            </div>
-            <div className="bg-slate-50 rounded-lg p-3 text-sm space-y-1">
-              {successSale.items.map((i) => (
-                <div key={i.productId} className="flex justify-between">
-                  <span>{i.productName} ×{i.quantity}</span>
-                  <span>PKR {i.lineTotal.toFixed(2)}</span>
-                </div>
-              ))}
-            </div>
-            <p className="text-xs text-slate-500 text-center">Next: Returns tab → enter sale # above to process a return</p>
-          </div>
-        )}
       </Modal>
 
       <Modal open={showHeld} title="Resume held sale (F3)" onClose={() => setShowHeld(false)}>

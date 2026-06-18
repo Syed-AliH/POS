@@ -81,7 +81,8 @@ export function SettingsPage() {
         currency: settings.currency ?? 'PKR',
         tax_inclusive: settings.tax_inclusive ?? 'true',
         default_tax_rate: settings.default_tax_rate ?? '17',
-        receipt_printer: '',
+        receipt_printer: settings.receipt_printer ?? '',
+        receipt_paper_mm: settings.receipt_paper_mm ?? '58',
         label_printer: settings.label_printer ?? '',
         label_print_offset_mm: settings.label_print_offset_mm ?? '0',
         auto_print_receipt: settings.auto_print_receipt ?? 'true',
@@ -197,12 +198,41 @@ export function SettingsPage() {
       {tab === 'printers' && (
         <div className="panel p-6 max-w-lg space-y-4">
           <p className="text-sm text-slate-500 rounded-lg bg-slate-50 dark:bg-slate-800 px-3 py-2">
-            Receipts always open in <strong>print preview</strong> (no hardware receipt printer). Labels print silently to the Gainscha label printer below.
+            Choose a receipt printer for silent printing at checkout, or leave on <strong>Print preview</strong> to open the system print dialog. Labels print to the Gainscha printer below.
           </p>
-          <select value={settings.receipt_printer ?? ''} onChange={(e) => updateField('receipt_printer', e.target.value)} className="w-full px-3 py-2 border rounded-lg opacity-60" disabled title="Receipt printing uses preview only">
-            <option value="">Receipt: Preview mode (default)</option>
-            {printers.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Receipt printer</label>
+          <select
+            value={settings.receipt_printer ?? ''}
+            onChange={(e) => updateField('receipt_printer', e.target.value)}
+            className="w-full px-3 py-2 border rounded-lg"
+          >
+            <option value="">Print preview (no hardware printer)</option>
+            {printers.map((p) => (
+              <option key={p.name} value={p.name}>
+                {p.name}
+                {p.isDefault ? ' (Windows default)' : ''}
+                {/gainscha|gs-\d|label/i.test(p.name) ? ' — label printer' : ''}
+              </option>
+            ))}
           </select>
+          <p className="text-xs text-slate-500">
+            Use a <strong>thermal receipt</strong> printer (58/80 mm, ESC/POS). Do not select the Gainscha label printer here.
+          </p>
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Physical paper roll width</label>
+          <select
+            value={settings.receipt_paper_mm ?? '58'}
+            onChange={(e) => updateField('receipt_paper_mm', e.target.value)}
+            className="w-full px-3 py-2 border rounded-lg"
+          >
+            <option value="58">58 mm roll (~2.3 in wide)</option>
+            <option value="80">80 mm roll (~3.1 in wide)</option>
+          </select>
+          <p className="text-xs text-slate-500">
+            Measure the <strong>paper roll</strong>, not the Windows printer page size. POS-80 accepts 80&nbsp;mm rolls
+            (~3.1&nbsp;in); if you loaded a 58&nbsp;mm roll, choose 58&nbsp;mm here even on an 80&nbsp;mm printer.
+            Receipt Designer width can differ — the layout is scaled to this roll.
+          </p>
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Label printer</label>
           <select value={settings.label_printer ?? ''} onChange={(e) => updateField('label_printer', e.target.value)} className="w-full px-3 py-2 border rounded-lg">
             <option value="">Label: Auto-detect Gainscha</option>
             {printers.map((p) => <option key={p.name} value={p.name}>{p.name}{p.name.toLowerCase().includes('gainscha') ? ' (recommended)' : ''}</option>)}

@@ -1,24 +1,12 @@
-import { BrowserWindow } from 'electron';
-// @ts-expect-error no types published
-import PosPrinterPkg from 'electron-pos-printer';
-
-const { PosPrinter } = PosPrinterPkg as { PosPrinter: { print: (data: unknown[], options: unknown) => Promise<void> } };
 import {
-  formatReceipt,
-  SAMPLE_RECEIPT_SALE,
+  resolveReceiptSampleSale,
   type ReceiptSale,
   type ReceiptTemplateConfig,
 } from '@mama-babi/printer';
 import { getAllSettings } from './settings';
 import { getDefaultReceiptTemplate, receiptTemplateToConfig } from './receiptTemplates';
-
-function receiptPrintData(text: string) {
-  return text.split('\n').map((line) => ({
-    type: 'text' as const,
-    value: line,
-    style: { fontSize: '12px', fontFamily: 'monospace' },
-  }));
-}
+import { isLikelyLabelPrinterName, resolveReceiptPrinterName } from './printerDevices';
+import { printReceiptWysiwyg } from './receiptPrintWysiwyg';
 
 export async function printReceiptToDevice(
   sale: ReceiptSale,
@@ -29,33 +17,33 @@ export async function printReceiptToDevice(
     const tpl = getDefaultReceiptTemplate();
     return tpl ? receiptTemplateToConfig(tpl) : undefined;
   })();
-  const widthMm = template?.widthMm ?? 80;
-  const text = formatReceipt(sale, settings, template);
-  const data = receiptPrintData(text);
 
   try {
-    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-    if (!win) throw new Error('No window available for printing');
-    // Receipts always use print preview — never silent/hardware receipt printer.
-    await PosPrinter.print(data, {
-      preview: true,
-      width: `${widthMm}mm`,
-      margin: '0 0 0 0',
-      copies: 1,
-      timeOutPerLine: 400,
-      silent: false,
-      pageSize: `${widthMm}mm`,
-    });
-    return { printed: false };
+    const printerName = await resolveReceiptPrinterName(settings.receipt_printer);
+
+    if (printerName && isLikelyLabelPrinterName(printerName)) {
+      throw new Error(
+        `"${printerName}" is a label printer (TSPL). Choose a thermal receipt printer in Settings → Printers.`,
+      );
+    }
+
+    const result = await printReceiptWysiwyg(sale, settings, template, printerName);
+    return { printed: result.printed };
   } catch (err) {
-    console.log('[print:fallback]\n', text);
-    console.warn('[print:error]', err);
-    return { printed: false, fallback: text };
+    console.warn('[print:receipt:error]', err);
+    return {
+      printed: false,
+      fallback: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
 export async function printTestReceipt(template?: ReceiptTemplateConfig): Promise<{ printed: boolean }> {
-  const result = await printReceiptToDevice(SAMPLE_RECEIPT_SALE, template);
+  const sale = resolveReceiptSampleSale(template);
+  const result = await printReceiptToDevice(sale, template);
+  if (result.fallback && !result.printed) {
+    throw new Error(result.fallback);
+  }
   return { printed: result.printed };
 }
 
