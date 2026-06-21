@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 import { IPC_CHANNELS } from '@shared/ipc-channels';
+import { withCloud } from './cloud-proxy';
 import {
   handleGetSession,
   handleLogin,
@@ -91,7 +92,14 @@ import {
   handleStocktakeStart,
   handleStocktakeCancel,
 } from './stocktake';
-import { handleStaffCreate, handleStaffList, handleStaffUpdate } from './users';
+import {
+  handleStaffCreate,
+  handleStaffDelete,
+  handleStaffGet,
+  handleStaffList,
+  handleStaffResetPassword,
+  handleStaffUpdate,
+} from './users';
 import {
   handleLabelTemplateCreate,
   handleLabelTemplateDelete,
@@ -133,39 +141,59 @@ import {
 import { handlePromotionCreate, handlePromotionList, handlePromotionPreview, handlePromotionUpdate } from './promotions';
 
 export function registerIpcHandlers(): void {
-  ipcMain.handle(IPC_CHANNELS.AUTH_LOGIN, (_e, username: string, password: string) => handleLogin(username, password));
-  ipcMain.handle(IPC_CHANNELS.AUTH_LOGOUT, () => handleLogout());
-  ipcMain.handle(IPC_CHANNELS.AUTH_GET_SESSION, () => handleGetSession());
-  ipcMain.handle(IPC_CHANNELS.AUTH_VERIFY_MANAGER_PIN, (_e, pin: string) => handleVerifyManagerPin(pin));
+  ipcMain.handle(IPC_CHANNELS.AUTH_LOGIN, (_e, username: string, password: string) =>
+    withCloud(IPC_CHANNELS.AUTH_LOGIN, () => handleLogin(username, password), [username, password]));
+  ipcMain.handle(IPC_CHANNELS.AUTH_LOGOUT, () =>
+    withCloud(IPC_CHANNELS.AUTH_LOGOUT, () => handleLogout()));
+  ipcMain.handle(IPC_CHANNELS.AUTH_GET_SESSION, () =>
+    withCloud(IPC_CHANNELS.AUTH_GET_SESSION, () => handleGetSession()));
+  ipcMain.handle(IPC_CHANNELS.AUTH_VERIFY_MANAGER_PIN, (_e, pin: string) =>
+    withCloud(IPC_CHANNELS.AUTH_VERIFY_MANAGER_PIN, () => handleVerifyManagerPin(pin), [pin]));
 
-  ipcMain.handle(IPC_CHANNELS.PRODUCT_SEARCH, (_e, query: string) => handleProductSearch(query));
-  ipcMain.handle(IPC_CHANNELS.PRODUCT_LIST, (_e, params) => handleProductList(params));
-  ipcMain.handle(IPC_CHANNELS.PRODUCT_GET, (_e, id: string) => handleProductGet(id));
-  ipcMain.handle(IPC_CHANNELS.PRODUCT_CREATE, (_e, input) => handleProductCreate(input));
-  ipcMain.handle(IPC_CHANNELS.PRODUCT_UPDATE, (_e, id: string, input) => handleProductUpdate(id, input));
-  ipcMain.handle(IPC_CHANNELS.PRODUCT_BARCODE_LOOKUP, (_e, barcode: string) => handleBarcodeLookup(barcode));
+  ipcMain.handle(IPC_CHANNELS.PRODUCT_SEARCH, (_e, query: string) =>
+    withCloud(IPC_CHANNELS.PRODUCT_SEARCH, () => handleProductSearch(query), [query]));
+  ipcMain.handle(IPC_CHANNELS.PRODUCT_LIST, (_e, params) =>
+    withCloud(IPC_CHANNELS.PRODUCT_LIST, () => handleProductList(params), [params]));
+  ipcMain.handle(IPC_CHANNELS.PRODUCT_GET, (_e, id: string) =>
+    withCloud(IPC_CHANNELS.PRODUCT_GET, () => handleProductGet(id), [id]));
+  ipcMain.handle(IPC_CHANNELS.PRODUCT_CREATE, (_e, input) =>
+    withCloud(IPC_CHANNELS.PRODUCT_CREATE, () => handleProductCreate(input), [input]));
+  ipcMain.handle(IPC_CHANNELS.PRODUCT_UPDATE, (_e, id: string, input) =>
+    withCloud(IPC_CHANNELS.PRODUCT_UPDATE, () => handleProductUpdate(id, input), [id, input]));
+  ipcMain.handle(IPC_CHANNELS.PRODUCT_BARCODE_LOOKUP, (_e, barcode: string) =>
+    withCloud(IPC_CHANNELS.PRODUCT_BARCODE_LOOKUP, () => handleBarcodeLookup(barcode), [barcode]));
   ipcMain.handle(IPC_CHANNELS.PRODUCT_IMPORT_CSV, (_e, csv: string) => handleProductImportCsv(csv));
-  ipcMain.handle(IPC_CHANNELS.CATEGORY_LIST, () => handleCategoryList());
-  ipcMain.handle(IPC_CHANNELS.CATEGORY_CREATE, (_e, name: string, color?: string, skuPrefix?: string) => handleCategoryCreate(name, color, skuPrefix));
+  ipcMain.handle(IPC_CHANNELS.CATEGORY_LIST, () =>
+    withCloud(IPC_CHANNELS.CATEGORY_LIST, () => handleCategoryList()));
+  ipcMain.handle(IPC_CHANNELS.CATEGORY_CREATE, (_e, name: string, color?: string, skuPrefix?: string) =>
+    withCloud(IPC_CHANNELS.CATEGORY_CREATE, () => handleCategoryCreate(name, color, skuPrefix), [name, color, skuPrefix]));
   ipcMain.handle(IPC_CHANNELS.CATEGORY_UPDATE, (_e, id: string, input) => handleCategoryUpdate(id, input));
   ipcMain.handle(IPC_CHANNELS.PRODUCT_ADVANCED_SEARCH, (_e, input) => handleProductAdvancedSearch(input));
   ipcMain.handle(IPC_CHANNELS.PRODUCT_HISTORY, (_e, productId: string) => handleProductHistory(productId));
   ipcMain.handle(IPC_CHANNELS.PRODUCT_ARCHIVE, (_e, id: string) => handleProductArchive(id));
   ipcMain.handle(IPC_CHANNELS.PRODUCT_SEED_DEMO, () => handleProductSeedDemo());
 
-  ipcMain.handle(IPC_CHANNELS.SALE_CREATE, (_e, input) => handleSaleCreate(input));
-  ipcMain.handle(IPC_CHANNELS.SALE_LIST, (_e, params) => handleSaleList(params));
-  ipcMain.handle(IPC_CHANNELS.SALE_GET, (_e, id: string) => handleSaleGet(id));
+  ipcMain.handle(IPC_CHANNELS.SALE_CREATE, (_e, input) =>
+    withCloud(IPC_CHANNELS.SALE_CREATE, () => handleSaleCreate(input), [input]));
+  ipcMain.handle(IPC_CHANNELS.SALE_LIST, (_e, params) =>
+    withCloud(IPC_CHANNELS.SALE_LIST, () => handleSaleList(params), [params]));
+  ipcMain.handle(IPC_CHANNELS.SALE_GET, (_e, id: string) =>
+    withCloud(IPC_CHANNELS.SALE_GET, () => handleSaleGet(id), [id]));
   ipcMain.handle(IPC_CHANNELS.SALE_RECEIPT_PREVIEW, (_e, saleId: string) => handleSaleReceiptPreview(saleId));
   ipcMain.handle(IPC_CHANNELS.SALE_VOID, (_e, id: string) => handleSaleVoid(id));
-  ipcMain.handle(IPC_CHANNELS.SALE_RESUME, (_e, key: string) => handleSaleResume(key));
-  ipcMain.handle(IPC_CHANNELS.SALE_DISCARD_HELD, (_e, id: string) => handleDiscardHeld(id));
+  ipcMain.handle(IPC_CHANNELS.SALE_RESUME, (_e, key: string) =>
+    withCloud(IPC_CHANNELS.SALE_RESUME, () => handleSaleResume(key), [key]));
+  ipcMain.handle(IPC_CHANNELS.SALE_DISCARD_HELD, (_e, id: string) =>
+    withCloud(IPC_CHANNELS.SALE_DISCARD_HELD, () => handleDiscardHeld(id), [id]));
   ipcMain.handle(IPC_CHANNELS.SALE_LOOKUP, (_e, saleNumber: string) => handleSaleLookupForReturn(saleNumber));
   ipcMain.handle(IPC_CHANNELS.SALE_UPDATE, (_e, input) => handleSaleUpdate(input));
 
-  ipcMain.handle(IPC_CHANNELS.SETTINGS_GET, (_e, key: string) => handleSettingsGet(key));
-  ipcMain.handle(IPC_CHANNELS.SETTINGS_GET_ALL, () => handleSettingsGetAll());
-  ipcMain.handle(IPC_CHANNELS.SETTINGS_SET, (_e, input) => handleSettingsSet(input));
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_GET, (_e, key: string) =>
+    withCloud(IPC_CHANNELS.SETTINGS_GET, () => handleSettingsGet(key), [key]));
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_GET_ALL, () =>
+    withCloud(IPC_CHANNELS.SETTINGS_GET_ALL, () => handleSettingsGetAll()));
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_SET, (_e, input) =>
+    withCloud(IPC_CHANNELS.SETTINGS_SET, () => handleSettingsSet(input), [input]));
   ipcMain.handle(IPC_CHANNELS.SETTINGS_LIST_PRINTERS, () => handleListPrinters());
 
   ipcMain.handle(IPC_CHANNELS.SYNC_STATUS, () => handleSyncStatus());
@@ -177,8 +205,10 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.LABEL_FEED, (_e, input) => handleLabelFeed(input));
   ipcMain.handle(IPC_CHANNELS.LABEL_CALIBRATE, (_e, input) => handleLabelCalibrate(input));
   ipcMain.handle(IPC_CHANNELS.PRINT_Z_REPORT, (_e, date?: string) => handlePrintZReport(date));
-  ipcMain.handle(IPC_CHANNELS.LABEL_TEMPLATES, () => handleLabelTemplates());
-  ipcMain.handle(IPC_CHANNELS.LABEL_TEMPLATE_GET, (_e, id: string) => handleLabelTemplateGet(id));
+  ipcMain.handle(IPC_CHANNELS.LABEL_TEMPLATES, () =>
+    withCloud(IPC_CHANNELS.LABEL_TEMPLATES, () => handleLabelTemplates()));
+  ipcMain.handle(IPC_CHANNELS.LABEL_TEMPLATE_GET, (_e, id: string) =>
+    withCloud(IPC_CHANNELS.LABEL_TEMPLATE_GET, () => handleLabelTemplateGet(id), [id]));
   ipcMain.handle(IPC_CHANNELS.LABEL_PRINT_BATCH, (_e, input) => handleLabelPrintBatch(input));
   ipcMain.handle(IPC_CHANNELS.REPORT_DAILY_SALES, (_e, params) => handleDailySales(params));
   ipcMain.handle(IPC_CHANNELS.REPORT_EOD, (_e, params) => handleEodReport(params));
@@ -208,9 +238,12 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.BACKUP_LIST, () => handleBackupList());
   ipcMain.handle(IPC_CHANNELS.BACKUP_RESTORE, (_e, filename: string) => handleBackupRestore(filename));
 
-  ipcMain.handle(IPC_CHANNELS.VENDOR_LIST, () => handleVendorList());
-  ipcMain.handle(IPC_CHANNELS.VENDOR_CREATE, (_e, input) => handleVendorCreate(input));
-  ipcMain.handle(IPC_CHANNELS.VENDOR_UPDATE, (_e, id: string, input) => handleVendorUpdate(id, input));
+  ipcMain.handle(IPC_CHANNELS.VENDOR_LIST, () =>
+    withCloud(IPC_CHANNELS.VENDOR_LIST, () => handleVendorList()));
+  ipcMain.handle(IPC_CHANNELS.VENDOR_CREATE, (_e, input) =>
+    withCloud(IPC_CHANNELS.VENDOR_CREATE, () => handleVendorCreate(input), [input]));
+  ipcMain.handle(IPC_CHANNELS.VENDOR_UPDATE, (_e, id: string, input) =>
+    withCloud(IPC_CHANNELS.VENDOR_UPDATE, () => handleVendorUpdate(id, input), [id, input]));
 
   ipcMain.handle(IPC_CHANNELS.PO_CREATE, (_e, input) => handlePoCreate(input));
   ipcMain.handle(IPC_CHANNELS.PO_LIST, (_e, limit?: number) => handlePoList(limit));
@@ -219,13 +252,20 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.PO_RECEIVE, (_e, input) => handlePoReceive(input));
   ipcMain.handle(IPC_CHANNELS.PO_REORDER_SUGGESTIONS, () => handleReorderSuggestions());
 
-  ipcMain.handle(IPC_CHANNELS.GRN_CREATE, (_e, input) => handleGrnCreate(input));
-  ipcMain.handle(IPC_CHANNELS.GRN_LIST, (_e, params) => handleGrnList(params));
-  ipcMain.handle(IPC_CHANNELS.GRN_GET, (_e, id: string) => handleGrnGet(id));
-  ipcMain.handle(IPC_CHANNELS.GRN_FINALIZE, (_e, id: string) => handleGrnFinalize(id));
-  ipcMain.handle(IPC_CHANNELS.GRN_UPDATE, (_e, id: string, input) => handleGrnUpdate(id, input));
-  ipcMain.handle(IPC_CHANNELS.GRN_CANCEL, (_e, id: string) => handleGrnCancel(id));
-  ipcMain.handle(IPC_CHANNELS.GRN_VOID, (_e, id: string) => handleGrnVoid(id));
+  ipcMain.handle(IPC_CHANNELS.GRN_CREATE, (_e, input) =>
+    withCloud(IPC_CHANNELS.GRN_CREATE, () => handleGrnCreate(input), [input]));
+  ipcMain.handle(IPC_CHANNELS.GRN_LIST, (_e, params) =>
+    withCloud(IPC_CHANNELS.GRN_LIST, () => handleGrnList(params), [params]));
+  ipcMain.handle(IPC_CHANNELS.GRN_GET, (_e, id: string) =>
+    withCloud(IPC_CHANNELS.GRN_GET, () => handleGrnGet(id), [id]));
+  ipcMain.handle(IPC_CHANNELS.GRN_FINALIZE, (_e, id: string) =>
+    withCloud(IPC_CHANNELS.GRN_FINALIZE, () => handleGrnFinalize(id), [id]));
+  ipcMain.handle(IPC_CHANNELS.GRN_UPDATE, (_e, id: string, input) =>
+    withCloud(IPC_CHANNELS.GRN_UPDATE, () => handleGrnUpdate(id, input), [id, input]));
+  ipcMain.handle(IPC_CHANNELS.GRN_CANCEL, (_e, id: string) =>
+    withCloud(IPC_CHANNELS.GRN_CANCEL, () => handleGrnCancel(id), [id]));
+  ipcMain.handle(IPC_CHANNELS.GRN_VOID, (_e, id: string) =>
+    withCloud(IPC_CHANNELS.GRN_VOID, () => handleGrnVoid(id), [id]));
 
   ipcMain.handle(IPC_CHANNELS.SUPPLIER_PAYMENT_LIST, (_e, params) => handleSupplierPaymentList(params));
   ipcMain.handle(IPC_CHANNELS.SUPPLIER_PAYMENT_CREATE, (_e, input) => handleSupplierPaymentCreate(input));
@@ -268,14 +308,29 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.STOCKTAKE_LIST, (_e, limit?: number) => handleStocktakeList(limit));
   ipcMain.handle(IPC_CHANNELS.STOCKTAKE_CANCEL, (_e, sessionId: string) => handleStocktakeCancel(sessionId));
 
-  ipcMain.handle(IPC_CHANNELS.STAFF_LIST, () => handleStaffList());
-  ipcMain.handle(IPC_CHANNELS.STAFF_CREATE, (_e, input) => handleStaffCreate(input));
-  ipcMain.handle(IPC_CHANNELS.STAFF_UPDATE, (_e, id: string, input) => handleStaffUpdate(id, input));
+  ipcMain.handle(IPC_CHANNELS.STAFF_LIST, () =>
+    withCloud(IPC_CHANNELS.STAFF_LIST, () => handleStaffList()));
+  ipcMain.handle(IPC_CHANNELS.STAFF_GET, (_e, id: string) =>
+    withCloud(IPC_CHANNELS.STAFF_GET, () => handleStaffGet(id), [id]));
+  ipcMain.handle(IPC_CHANNELS.STAFF_CREATE, (_e, input) =>
+    withCloud(IPC_CHANNELS.STAFF_CREATE, () => handleStaffCreate(input), [input]));
+  ipcMain.handle(IPC_CHANNELS.STAFF_UPDATE, (_e, id: string, input) =>
+    withCloud(IPC_CHANNELS.STAFF_UPDATE, () => handleStaffUpdate(id, input), [id, input]));
+  ipcMain.handle(IPC_CHANNELS.STAFF_DELETE, (_e, id: string) =>
+    withCloud(IPC_CHANNELS.STAFF_DELETE, () => handleStaffDelete(id), [id]));
+  ipcMain.handle(IPC_CHANNELS.STAFF_RESET_PASSWORD, (_e, id: string, input) =>
+    withCloud(IPC_CHANNELS.STAFF_RESET_PASSWORD, () => handleStaffResetPassword(id, input), [id, input]));
 
-  ipcMain.handle(IPC_CHANNELS.RECEIPT_TEMPLATES, () => handleReceiptTemplates());
-  ipcMain.handle(IPC_CHANNELS.RECEIPT_TEMPLATE_UPDATE, (_e, id: string, input) => handleReceiptTemplateUpdate(id, input));
-  ipcMain.handle(IPC_CHANNELS.LABEL_TEMPLATE_UPDATE, (_e, id: string, input) => handleLabelTemplateUpdate(id, input));
-  ipcMain.handle(IPC_CHANNELS.LABEL_TEMPLATE_CREATE, (_e, input) => handleLabelTemplateCreate(input));
-  ipcMain.handle(IPC_CHANNELS.LABEL_TEMPLATE_DELETE, (_e, id: string) => handleLabelTemplateDelete(id));
-  ipcMain.handle(IPC_CHANNELS.LABEL_TEMPLATE_SET_DEFAULT, (_e, id: string) => handleLabelTemplateSetDefault(id));
+  ipcMain.handle(IPC_CHANNELS.RECEIPT_TEMPLATES, () =>
+    withCloud(IPC_CHANNELS.RECEIPT_TEMPLATES, () => handleReceiptTemplates()));
+  ipcMain.handle(IPC_CHANNELS.RECEIPT_TEMPLATE_UPDATE, (_e, id: string, input) =>
+    withCloud(IPC_CHANNELS.RECEIPT_TEMPLATE_UPDATE, () => handleReceiptTemplateUpdate(id, input), [id, input]));
+  ipcMain.handle(IPC_CHANNELS.LABEL_TEMPLATE_UPDATE, (_e, id: string, input) =>
+    withCloud(IPC_CHANNELS.LABEL_TEMPLATE_UPDATE, () => handleLabelTemplateUpdate(id, input), [id, input]));
+  ipcMain.handle(IPC_CHANNELS.LABEL_TEMPLATE_CREATE, (_e, input) =>
+    withCloud(IPC_CHANNELS.LABEL_TEMPLATE_CREATE, () => handleLabelTemplateCreate(input), [input]));
+  ipcMain.handle(IPC_CHANNELS.LABEL_TEMPLATE_DELETE, (_e, id: string) =>
+    withCloud(IPC_CHANNELS.LABEL_TEMPLATE_DELETE, () => handleLabelTemplateDelete(id), [id]));
+  ipcMain.handle(IPC_CHANNELS.LABEL_TEMPLATE_SET_DEFAULT, (_e, id: string) =>
+    withCloud(IPC_CHANNELS.LABEL_TEMPLATE_SET_DEFAULT, () => handleLabelTemplateSetDefault(id), [id]));
 }

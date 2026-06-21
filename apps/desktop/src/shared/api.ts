@@ -428,8 +428,11 @@ export function createApi(): MamaBabiAPI {
     },
     staff: {
       list: () => invoke(IPC_CHANNELS.STAFF_LIST),
+      get: (id: string) => invoke(IPC_CHANNELS.STAFF_GET, id),
       create: (input) => invoke(IPC_CHANNELS.STAFF_CREATE, input),
       update: (id, input) => invoke(IPC_CHANNELS.STAFF_UPDATE, id, input),
+      delete: (id: string) => invoke(IPC_CHANNELS.STAFF_DELETE, id),
+      resetPassword: (id: string, input) => invoke(IPC_CHANNELS.STAFF_RESET_PASSWORD, id, input),
     },
     templates: {
       receiptList: () => invoke(IPC_CHANNELS.RECEIPT_TEMPLATES),

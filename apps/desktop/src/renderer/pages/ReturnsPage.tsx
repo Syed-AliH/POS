@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { Search } from 'lucide-react';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
+import { useAuthStore } from '@renderer/stores/authStore';
 import { focusElement, registerPageShortcuts } from '@renderer/lib/shortcuts';
 import { WorkflowStepper } from '@renderer/components/WorkflowStepper';
 import { Modal } from '@renderer/components/Modal';
@@ -47,10 +49,14 @@ export function ReturnsPage() {
   const [searchParams] = useSearchParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const { session } = useAuthStore();
+  const isCashier = session?.role === 'cashier';
+
   const [lookupMode, setLookupMode] = useState<LookupMode>('saleNumber');
   const [searchQuery, setSearchQuery] = useState('');
   const [sale, setSale] = useState<SaleSummary | null>(null);
   const [allSales, setAllSales] = useState<SaleSummary[]>([]);
+  const [searched, setSearched] = useState(false);
   const [receiptPreview, setReceiptPreview] = useState<ReceiptPreviewData | null>(null);
   const [reason, setReason] = useState('');
   const [refundMethod, setRefundMethod] = useState<'cash' | 'store_credit' | 'loyalty'>('cash');
@@ -116,6 +122,8 @@ export function ReturnsPage() {
   };
 
   const loadAllSales = async () => {
+    // Cashiers cannot browse all sales — they must look up a specific invoice
+    if (isCashier) return;
     setLoading(true);
     const result = await api.sales.list({
       status: 'completed',
@@ -158,7 +166,7 @@ export function ReturnsPage() {
   const handleLookup = async (query?: string) => {
     const q = (query ?? searchQuery).trim();
     if (!q) {
-      await loadAllSales();
+      if (!isCashier) await loadAllSales();
       return;
     }
 
@@ -168,8 +176,31 @@ export function ReturnsPage() {
       setLoading(false);
       if (result.success && result.data) {
         await selectSale(result.data);
+        setSearched(true);
       } else {
         toast.error(result.error ?? 'Sale not found');
+      }
+      return;
+    }
+
+    // For cashier: search by name/phone hits the API with a text filter
+    if (isCashier) {
+      setLoading(true);
+      const result = await api.sales.list({
+        status: 'completed',
+        limit: 50,
+        search: q,
+      });
+      setLoading(false);
+      setSearched(true);
+      if (result.success) {
+        const matches = result.data ?? [];
+        setAllSales(matches);
+        if (matches.length === 1) {
+          await selectSale(matches[0]);
+        } else if (!matches.length) {
+          toast.error('No matching sales found');
+        }
       }
       return;
     }
@@ -219,6 +250,8 @@ export function ReturnsPage() {
       setSearchQuery('');
       setReceiptPreview(null);
       setReason('');
+      setAllSales([]);
+      setSearched(false);
       loadReturns();
       loadAllSales();
       toast.success(`Return ${result.data.returnNumber} — PKR ${result.data.totalRefund.toFixed(2)}`);
@@ -234,6 +267,8 @@ export function ReturnsPage() {
   const handleModeChange = (mode: LookupMode) => {
     setLookupMode(mode);
     setSearchQuery('');
+    setAllSales([]);
+    setSearched(false);
     focusElement(searchRef, true);
   };
 
@@ -247,12 +282,14 @@ export function ReturnsPage() {
             <h2 className="text-2xl font-bold">Returns</h2>
             <p className="text-sm text-slate-500">Return policy: {returnPolicyDays} days from purchase</p>
           </div>
-          <div className="flex gap-2 items-center flex-wrap">
-            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="px-3 py-2 border rounded-lg text-sm" />
-            <span className="text-slate-400 text-sm">to</span>
-            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="px-3 py-2 border rounded-lg text-sm" />
-            <Button variant="ghost" onClick={() => navigate('/sales')}>View Sales History</Button>
-          </div>
+          {!isCashier && (
+            <div className="flex gap-2 items-center flex-wrap">
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="px-3 py-2 border rounded-lg text-sm" />
+              <span className="text-slate-400 text-sm">to</span>
+              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="px-3 py-2 border rounded-lg text-sm" />
+              <Button variant="ghost" onClick={() => navigate('/sales')}>View Sales History</Button>
+            </div>
+          )}
         </div>
 
         <div className="panel p-4 mb-6">
@@ -285,60 +322,76 @@ export function ReturnsPage() {
             <Button onClick={() => handleLookup()} disabled={loading}>{loading ? '…' : 'Lookup'}</Button>
           </div>
 
-          <div className="border border-dashed rounded-lg min-h-[320px] flex flex-col">
+          <div className="border border-dashed rounded-lg min-h-[280px] flex flex-col">
             {receiptPreview && (
               <div className="p-4 border-b flex justify-center bg-slate-50/50">
                 <ReceiptPreview data={receiptPreview} className="max-w-lg w-full shadow-sm" />
               </div>
             )}
-            <div className="flex-1 overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="table-head">
-                  <tr className="text-left border-b">
-                    <th className="p-2 pl-3">Sale #</th>
-                    <th className="p-2">Date</th>
-                    <th className="p-2">Time</th>
-                    <th className="p-2 text-right">Amount</th>
-                    <th className="p-2">Customer</th>
-                    <th className="p-2 pr-3">Phone</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredSales.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="p-8 text-center text-slate-400">
-                        {loading
-                          ? 'Loading sales…'
-                          : searchQuery.trim()
-                            ? 'No sales match your filter'
-                            : 'No completed sales for the selected date'}
-                      </td>
+
+            {/* Cashier mode: show prompt until a search is made */}
+            {isCashier && !searched && !sale && (
+              <div className="flex-1 flex flex-col items-center justify-center gap-3 py-10 text-slate-400">
+                <Search className="h-10 w-10 opacity-40" />
+                <p className="text-sm font-medium">Enter an invoice number or customer phone to look up a sale</p>
+                <p className="text-xs">You cannot browse all sales — enter a specific invoice # or phone number</p>
+              </div>
+            )}
+
+            {/* Full list (managers) or search results (cashiers after search) */}
+            {(!isCashier || searched) && !sale && (
+              <div className="flex-1 overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="table-head">
+                    <tr className="text-left border-b">
+                      <th className="p-2 pl-3">Sale #</th>
+                      <th className="p-2">Date</th>
+                      <th className="p-2">Time</th>
+                      <th className="p-2 text-right">Amount</th>
+                      <th className="p-2">Customer</th>
+                      <th className="p-2 pr-3">Phone</th>
                     </tr>
-                  ) : filteredSales.map((row) => (
-                    <tr
-                      key={row.id}
-                      onClick={() => selectSale(row)}
-                      className={`border-t cursor-pointer row-hover ${
-                        sale?.id === row.id ? 'row-active' : ''
-                      }`}
-                    >
-                      <td className="p-2 pl-3 font-mono font-medium">{row.saleNumber}</td>
-                      <td className="p-2 text-slate-500 whitespace-nowrap text-xs">{formatDateOnly(row.createdAt)}</td>
-                      <td className="p-2 text-slate-500 whitespace-nowrap text-xs">{formatTimeOnly(row.createdAt)}</td>
-                      <td className="p-2 text-right font-semibold">PKR {row.totalAmount.toFixed(2)}</td>
-                      <td className="p-2">{row.customerName ?? '—'}</td>
-                      <td className="p-2 pr-3 text-slate-600">{row.customerPhone ?? '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {filteredSales.length > 0 && (
-              <p className="text-xs text-slate-400 px-3 py-2 border-t">
-                {filteredSales.length} sale{filteredSales.length !== 1 ? 's' : ''}
-                {searchQuery.trim() ? ' matching filter' : ` for ${startDate === endDate ? startDate : `${startDate} → ${endDate}`}`}
-                {' '}— click a row to view receipt
-              </p>
+                  </thead>
+                  <tbody>
+                    {filteredSales.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="p-8 text-center text-slate-400">
+                          {loading
+                            ? 'Looking up…'
+                            : 'No sales found — try a different invoice # or phone number'}
+                        </td>
+                      </tr>
+                    ) : filteredSales.map((row) => (
+                      <tr
+                        key={row.id}
+                        onClick={() => selectSale(row)}
+                        className={`border-t cursor-pointer row-hover ${
+                          sale?.id === row.id ? 'row-active' : ''
+                        }`}
+                      >
+                        <td className="p-2 pl-3 font-mono font-medium">{row.saleNumber}</td>
+                        <td className="p-2 text-slate-500 whitespace-nowrap text-xs">{formatDateOnly(row.createdAt)}</td>
+                        <td className="p-2 text-slate-500 whitespace-nowrap text-xs">{formatTimeOnly(row.createdAt)}</td>
+                        <td className="p-2 text-right font-semibold">PKR {row.totalAmount.toFixed(2)}</td>
+                        <td className="p-2">{row.customerName ?? '—'}</td>
+                        <td className="p-2 pr-3 text-slate-600">{row.customerPhone ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {filteredSales.length > 0 && !isCashier && (
+                  <p className="text-xs text-slate-400 px-3 py-2 border-t">
+                    {filteredSales.length} sale{filteredSales.length !== 1 ? 's' : ''}
+                    {searchQuery.trim() ? ' matching filter' : ` for ${startDate === endDate ? startDate : `${startDate} → ${endDate}`}`}
+                    {' '}— click a row to view receipt
+                  </p>
+                )}
+                {filteredSales.length > 1 && isCashier && (
+                  <p className="text-xs text-slate-400 px-3 py-2 border-t">
+                    {filteredSales.length} sales found — click a row to select
+                  </p>
+                )}
+              </div>
             )}
           </div>
 
@@ -412,33 +465,35 @@ export function ReturnsPage() {
           )}
         </div>
 
-        <div className="panel">
-          <h3 className="p-4 font-semibold border-b">
-            Recent Returns
-            <span className="text-sm font-normal text-slate-500 ml-2">
-              ({startDate === endDate ? startDate : `${startDate} → ${endDate}`})
-            </span>
-          </h3>
-          <table className="w-full text-sm">
-            <thead className="table-head">
-              <tr><th className="p-3 text-left">Return #</th><th className="p-3">Date</th><th className="p-3">Time</th><th className="p-3">Sale #</th><th className="p-3">Refund</th><th className="p-3">Method</th></tr>
-            </thead>
-            <tbody>
-              {returns.length === 0 ? (
-                <tr><td colSpan={6} className="p-8 text-center text-slate-400">No returns for the selected date</td></tr>
-              ) : returns.map((r) => (
-                <tr key={r.id} className="border-t">
-                  <td className="p-3 font-mono">{r.returnNumber}</td>
-                  <td className="p-3 text-slate-500 whitespace-nowrap text-xs">{formatDateOnly(r.createdAt)}</td>
-                  <td className="p-3 text-slate-500 whitespace-nowrap text-xs">{formatTimeOnly(r.createdAt)}</td>
-                  <td className="p-3">{r.saleNumber}</td>
-                  <td className="p-3">PKR {r.totalRefund.toFixed(2)}</td>
-                  <td className="p-3 capitalize">{r.refundMethod.replace('_', ' ')}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        {!isCashier && (
+          <div className="panel">
+            <h3 className="p-4 font-semibold border-b">
+              Recent Returns
+              <span className="text-sm font-normal text-slate-500 ml-2">
+                ({startDate === endDate ? startDate : `${startDate} → ${endDate}`})
+              </span>
+            </h3>
+            <table className="w-full text-sm">
+              <thead className="table-head">
+                <tr><th className="p-3 text-left">Return #</th><th className="p-3">Date</th><th className="p-3">Time</th><th className="p-3">Sale #</th><th className="p-3">Refund</th><th className="p-3">Method</th></tr>
+              </thead>
+              <tbody>
+                {returns.length === 0 ? (
+                  <tr><td colSpan={6} className="p-8 text-center text-slate-400">No returns for the selected date</td></tr>
+                ) : returns.map((r) => (
+                  <tr key={r.id} className="border-t">
+                    <td className="p-3 font-mono">{r.returnNumber}</td>
+                    <td className="p-3 text-slate-500 whitespace-nowrap text-xs">{formatDateOnly(r.createdAt)}</td>
+                    <td className="p-3 text-slate-500 whitespace-nowrap text-xs">{formatTimeOnly(r.createdAt)}</td>
+                    <td className="p-3">{r.saleNumber}</td>
+                    <td className="p-3">PKR {r.totalRefund.toFixed(2)}</td>
+                    <td className="p-3 capitalize">{r.refundMethod.replace('_', ' ')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <Modal open={!!successReturn} title="Return processed" onClose={() => setSuccessReturn(null)}

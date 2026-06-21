@@ -1,6 +1,8 @@
 import type { ApiResult, LabelTemplateSummary, SaleSummary } from '@shared/types';
 import type { ReceiptSale, ReceiptTemplateConfig } from '@mama-babi/printer';
 import { requireSession, requireRole } from '../session';
+import { isCloudMode } from '../cloud/config';
+import { fetchCloudSale } from '../cloud/client';
 import { printReceiptToDevice, printTestReceipt, formatZReport } from '../services/printer';
 import { printTestLabelFromTemplate } from '../services/labelPrintTemplate';
 import { sendLabelPrinterCommand } from '../services/labelPrinterCommands';
@@ -34,12 +36,22 @@ function toReceiptSale(summary: SaleSummary): ReceiptSale {
 export async function handlePrintReceipt(saleId: string): Promise<ApiResult<{ printed: boolean }>> {
   try {
     requireSession();
-    const db = getDb();
-    const summary = buildSaleSummary(saleId);
-    if (!summary) return { success: false, error: 'Sale not found' };
+    let summary: SaleSummary | null;
+
+    if (isCloudMode()) {
+      const result = await fetchCloudSale(saleId);
+      if (!result.success || !result.data) {
+        return { success: false, error: result.error ?? 'Sale not found' };
+      }
+      summary = result.data;
+    } else {
+      summary = buildSaleSummary(saleId);
+      if (!summary) return { success: false, error: 'Sale not found' };
+      const db = getDb();
+      db.update(sales).set({ receiptPrinted: true, updatedAt: new Date().toISOString() }).where(eq(sales.id, saleId)).run();
+    }
 
     const result = await printReceiptToDevice(toReceiptSale(summary));
-    db.update(sales).set({ receiptPrinted: true, updatedAt: new Date().toISOString() }).where(eq(sales.id, saleId)).run();
     return { success: true, data: { printed: result.printed } };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Print failed' };

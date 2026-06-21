@@ -1,6 +1,8 @@
 import { app, BrowserWindow, Menu, shell } from 'electron';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { getCloudApiUrl, isCloudMode } from './cloud/config';
+import { purgeLocalBusinessData } from './cloud/purgeLocal';
 import { getDbPath, initDatabase } from './db';
 import { registerIpcHandlers } from './ipc';
 import { seedLabelTemplatesIfEmpty } from './services/labelTemplates';
@@ -92,21 +94,28 @@ app.whenReady().then(async () => {
   }
 
   initDatabase();
-  console.log('[main] Database:', getDbPath());
-  try {
-    await seedIfEmpty();
-  } catch (err) {
-    console.error('[seed] seedIfEmpty failed:', err);
+
+  if (isCloudMode()) {
+    console.log('[main] Cloud mode — API:', getCloudApiUrl());
+    purgeLocalBusinessData();
+    // Designs load from cloud after login (not default seeds)
+  } else {
+    console.log('[main] Local mode — Database:', getDbPath());
+    try {
+      await seedIfEmpty();
+    } catch (err) {
+      console.error('[seed] seedIfEmpty failed:', err);
+    }
+    try {
+      await ensureAuthCredentials();
+    } catch (err) {
+      console.error('[auth] ensureAuthCredentials failed:', err);
+    }
+    seedDemoProductsIfEmpty();
+    ensureDefaultSettings();
+    seedLabelTemplatesIfEmpty();
+    seedReceiptTemplatesIfEmpty();
   }
-  try {
-    await ensureAuthCredentials();
-  } catch (err) {
-    console.error('[auth] ensureAuthCredentials failed:', err);
-  }
-  seedDemoProductsIfEmpty();
-  ensureDefaultSettings();
-  seedLabelTemplatesIfEmpty();
-  seedReceiptTemplatesIfEmpty();
   registerIpcHandlers();
   Menu.setApplicationMenu(null);
   createWindow();

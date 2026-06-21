@@ -22,9 +22,11 @@ Electron Main Process
 ## Monorepo Structure
 
 ```
-apps/desktop/       Electron POS app
+apps/desktop/       Electron POS app (SQLite, offline-first)
+apps/api/           Fastify HTTP API (PostgreSQL)
 packages/
-  db-schema/        Drizzle schema + migrations
+  db-schema/        Drizzle schema + SQLite client (desktop)
+  db-pg/            Drizzle schema + PostgreSQL client (API)
   barcode/          SKU/barcode generation
   printer/          Receipt formatting
   reports/          Report generators
@@ -32,6 +34,15 @@ packages/
   sync-engine/      Cloud sync stubs
 docs/               This documentation
 ```
+
+See [08-postgresql-backend.md](./08-postgresql-backend.md) for API setup and migrations.
+
+## Data stores
+
+| Runtime | Database | Access |
+|---------|----------|--------|
+| Desktop | SQLite (`userData/mama-babi.db`) | IPC → Drizzle (`@mama-babi/db-schema`) |
+| API | PostgreSQL | HTTP → Drizzle (`@mama-babi/db-pg`) |
 
 ## Security
 

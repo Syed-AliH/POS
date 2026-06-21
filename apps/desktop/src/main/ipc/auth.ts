@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import { and, eq } from 'drizzle-orm';
 import { users } from '@mama-babi/db-schema';
 import type { ApiResult, UserSession } from '@shared/types';
+import { getDefaultPermissions } from '@shared/permissions';
 import { getDb } from '../db';
 import { getSession, setSession } from '../session';
 import { logAudit } from '../services/audit';
@@ -10,7 +11,11 @@ const MAX_ATTEMPTS = 5;
 const LOCK_MINUTES = 15;
 
 function toSession(user: typeof users.$inferSelect): UserSession {
-  return { id: user.id, name: user.name, role: user.role };
+  const row = user as typeof user & { permissionsJson?: string | null };
+  const permissions: string[] = row.permissionsJson
+    ? (JSON.parse(row.permissionsJson) as string[])
+    : getDefaultPermissions(user.role);
+  return { id: user.id, name: user.name, role: user.role, permissions };
 }
 
 export async function handleLogin(username: string, password: string): Promise<ApiResult<UserSession>> {
@@ -53,6 +58,10 @@ export async function handleLogin(username: string, password: string): Promise<A
       .set({ failedLoginAttempts: 0, lockedUntil: null, updatedAt: now })
       .where(eq(users.id, user.id))
       .run();
+    // Record last login time (best-effort, column may not exist in older schema versions)
+    try {
+      db.update(users).set({ updatedAt: now } as Partial<typeof users.$inferInsert>).where(eq(users.id, user.id)).run();
+    } catch { /* non-critical */ }
 
     const session = toSession(user);
     setSession(session);

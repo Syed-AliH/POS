@@ -2,9 +2,15 @@ import { cpSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import react from '@vitejs/plugin-react';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
+import { loadEnv } from 'vite';
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, resolve('../..'), '');
 
-export default defineConfig({
+  return {
   main: {
+    define: {
+      'process.env.CLOUD_API_URL': JSON.stringify(env.CLOUD_API_URL ?? ''),
+    },
     plugins: [
       externalizeDepsPlugin({ exclude: ['@mama-babi/db-schema', '@mama-babi/barcode', '@mama-babi/printer', '@mama-babi/reports', '@mama-babi/sync-engine'] }),
       {
@@ -61,4 +67,5 @@ export default defineConfig({
     },
     plugins: [react({ include: '**/*.{jsx,tsx}' })],
   },
+};
 });

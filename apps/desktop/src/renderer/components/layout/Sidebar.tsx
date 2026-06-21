@@ -49,7 +49,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { to: '/checkout', label: 'Checkout', icon: ShoppingCart, roles: ['cashier', 'manager', 'super_admin'] },
       { to: '/returns', label: 'Returns', icon: Undo2, roles: ['cashier', 'manager', 'super_admin'] },
-      { to: '/sales', label: 'Sales', icon: Receipt, roles: ['cashier', 'manager', 'super_admin'] },
+      { to: '/sales', label: 'Sales History', icon: Receipt, roles: ['manager', 'super_admin'] },
     ],
   },
   {
@@ -98,7 +98,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: 'Admin',
     items: [
       { to: '/settings', label: 'Settings', icon: Settings, roles: ['manager', 'super_admin'] },
-      { to: '/settings', label: 'Users', icon: ShieldCheck, roles: ['super_admin'] },
+      { to: '/users', label: 'Users', icon: ShieldCheck, roles: ['super_admin'] },
     ],
   },
 ];

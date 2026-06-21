@@ -4,6 +4,8 @@ export interface UserSession {
   id: string;
   name: string;
   role: UserRole;
+  permissions?: string[];
+  token?: string;
 }
 
 export interface Product {
@@ -545,15 +547,25 @@ export interface StaffUser {
   id: string;
   name: string;
   username: string | null;
+  email: string | null;
+  phone: string | null;
   role: UserRole;
   isActive: boolean;
+  permissions: string[];
+  createdAt: string;
+  updatedAt: string;
+  lastLoginAt: string | null;
 }
 
 export interface CreateStaffInput {
   name: string;
   username: string;
   password: string;
+  confirmPassword?: string;
   role: UserRole;
+  email?: string;
+  phone?: string;
+  permissions?: string[];
 }
 
 export interface UpdateStaffInput {
@@ -562,6 +574,14 @@ export interface UpdateStaffInput {
   password?: string;
   role?: UserRole;
   isActive?: boolean;
+  email?: string;
+  phone?: string;
+  permissions?: string[];
+}
+
+export interface ResetPasswordInput {
+  password: string;
+  confirmPassword?: string;
 }
 
 export interface LoginInput {

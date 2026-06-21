@@ -136,8 +136,11 @@ export const IPC_CHANNELS = {
   STOCKTAKE_CANCEL: 'stocktake:cancel',
 
   STAFF_LIST: 'staff:list',
+  STAFF_GET: 'staff:get',
   STAFF_CREATE: 'staff:create',
   STAFF_UPDATE: 'staff:update',
+  STAFF_DELETE: 'staff:delete',
+  STAFF_RESET_PASSWORD: 'staff:reset-password',
 
   RECEIPT_TEMPLATES: 'template:receipt-list',
   RECEIPT_TEMPLATE_UPDATE: 'template:receipt-update',
