@@ -10,6 +10,7 @@ export const IPC_CHANNELS = {
   PRODUCT_UPDATE: 'product:update',
   PRODUCT_BARCODE_LOOKUP: 'product:barcode-lookup',
   PRODUCT_IMPORT_CSV: 'product:import-csv',
+  PRODUCT_IMPORT_ROWS: 'product:import-rows',
   PRODUCT_LIST: 'product:list',
   PRODUCT_ARCHIVE: 'product:archive',
   PRODUCT_SEED_DEMO: 'product:seed-demo',
@@ -109,6 +110,7 @@ export const IPC_CHANNELS = {
   CUSTOMER_UPDATE: 'customer:update',
   CUSTOMER_GET: 'customer:get',
   LOYALTY_RULES: 'customer:loyalty-rules',
+  LOYALTY_RULES_UPDATE: 'customer:loyalty-rules-update',
 
   PROMOTION_LIST: 'promotion:list',
   PROMOTION_CREATE: 'promotion:create',
@@ -141,6 +143,10 @@ export const IPC_CHANNELS = {
   STAFF_UPDATE: 'staff:update',
   STAFF_DELETE: 'staff:delete',
   STAFF_RESET_PASSWORD: 'staff:reset-password',
+
+  APP_GET_CONFIG: 'app:get-config',
+  APP_SAVE_CONFIG: 'app:save-config',
+  APP_PING_SERVER: 'app:ping-server',
 
   RECEIPT_TEMPLATES: 'template:receipt-list',
   RECEIPT_TEMPLATE_UPDATE: 'template:receipt-update',

@@ -1,8 +1,9 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, gte, ilike, inArray, lt, or, sql } from 'drizzle-orm';
 import { v4 as uuid } from 'uuid';
 import { customers, inventoryMovements, products, saleItems, sales, users } from '@mama-babi/db-pg';
 import type { PostgresClient } from '@mama-babi/db-pg';
-import { getSetting, incrementSaleCounter } from './settings.service';
+import { coerceReportDateRange, isoRangeBounds } from '../lib/reportDateRange';
+import { getSetting, incrementSaleCounter, getAllSettings } from './settings.service';
 
 function calcLineTotal(unitPrice: number, qty: number, discountPercent: number): number {
   const subtotal = unitPrice * qty;
@@ -254,19 +255,96 @@ export async function createSale(
 
 export async function listSales(
   db: PostgresClient,
-  params?: { status?: string; limit?: number; search?: string },
+  params?: { status?: string; limit?: number; search?: string; startDate?: string; endDate?: string },
 ) {
   const limit = params?.limit ?? 50;
-  let rows = await db.select().from(sales).orderBy(desc(sales.createdAt)).limit(limit * 5);
-  if (params?.status) rows = rows.filter((r) => r.status === params.status);
-  if (params?.search?.trim()) {
-    const q = params.search.trim().toLowerCase();
-    rows = rows.filter((r) => r.saleNumber.toLowerCase().includes(q));
+  const conditions = [];
+
+  if (params?.status) {
+    conditions.push(eq(sales.status, params.status as 'completed' | 'held' | 'voided' | 'returned'));
   }
+
+  if (params?.startDate || params?.endDate) {
+    const range = coerceReportDateRange({
+      startDate: params.startDate,
+      endDate: params.endDate,
+    });
+    const { startInclusive, endExclusive } = isoRangeBounds(range);
+    conditions.push(gte(sales.createdAt, startInclusive));
+    conditions.push(lt(sales.createdAt, endExclusive));
+  }
+
+  if (params?.search?.trim()) {
+    const term = params.search.trim();
+    const pattern = `%${term}%`;
+    const matchingCustomers = await db
+      .select({ id: customers.id })
+      .from(customers)
+      .where(or(ilike(customers.name, pattern), ilike(customers.phone, pattern)));
+    const customerIds = matchingCustomers.map((c) => c.id);
+    const saleNumberMatch = sql`lower(${sales.saleNumber}) like ${`%${term.toLowerCase()}%`}`;
+    if (customerIds.length) {
+      conditions.push(or(saleNumberMatch, inArray(sales.customerId, customerIds)));
+    } else {
+      conditions.push(saleNumberMatch);
+    }
+  }
+
+  const where = conditions.length ? and(...conditions) : undefined;
+  const rows = await db
+    .select()
+    .from(sales)
+    .where(where)
+    .orderBy(desc(sales.createdAt))
+    .limit(limit);
+
   const summaries = (
-    await Promise.all(rows.slice(0, limit).map((r) => buildSaleSummary(db, r.id)))
+    await Promise.all(rows.map((r) => buildSaleSummary(db, r.id)))
   ).filter(Boolean);
   return { success: true as const, data: summaries as NonNullable<Awaited<ReturnType<typeof buildSaleSummary>>>[] };
+}
+
+export async function lookupSaleByNumber(db: PostgresClient, saleNumber: string) {
+  const trimmed = saleNumber.trim();
+  if (!trimmed) return { success: false as const, error: 'Sale number is required' };
+  const [sale] = await db
+    .select()
+    .from(sales)
+    .where(sql`lower(${sales.saleNumber}) = ${trimmed.toLowerCase()}`)
+    .limit(1);
+  if (!sale) return { success: false as const, error: 'Sale not found' };
+  return getSale(db, sale.id);
+}
+
+export async function getSaleReceiptPreview(db: PostgresClient, saleId: string) {
+  const summary = await buildSaleSummary(db, saleId);
+  if (!summary) return { success: false as const, error: 'Sale not found' };
+  const settings = await getAllSettings(db);
+  return {
+    success: true as const,
+    data: {
+      saleNumber: summary.saleNumber,
+      storeName: settings.store_name ?? 'Mama Babi',
+      storeAddress: settings.store_address ?? '',
+      storePhone: settings.store_phone ?? '',
+      cashierName: summary.cashierName,
+      createdAt: summary.createdAt,
+      items: summary.items.map((i) => ({
+        name: i.productName,
+        qty: i.quantity,
+        unitPrice: i.unitPrice,
+        lineTotal: i.lineTotal,
+      })),
+      subtotal: summary.subtotal,
+      discountAmount: summary.discountAmount,
+      taxAmount: summary.taxAmount,
+      totalAmount: summary.totalAmount,
+      paymentMethod: summary.paymentMethod,
+      amountTendered: summary.amountTendered,
+      changeGiven: summary.changeGiven,
+      footerMessage: settings.receipt_footer ?? 'Thank you for shopping!',
+    },
+  };
 }
 
 export async function getSale(db: PostgresClient, id: string) {

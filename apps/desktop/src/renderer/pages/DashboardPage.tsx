@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ShoppingCart, Receipt, Wallet, Package } from 'lucide-react';
 import { Button, KpiCard, PageHeader } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
+import { SortableTh } from '@renderer/components/SortableTh';
 import { Modal } from '@renderer/components/Modal';
 import { ReceiptPreview } from '@renderer/components/ReceiptPreview';
 import { toast } from '@renderer/stores/toastStore';
+import { sortByKey, useTableSort } from '@renderer/lib/useTableSort';
 import { formatDateTime, localCalendarDate } from '@shared/datetime';
 import type {
   ProfitReport,
@@ -14,6 +16,8 @@ import type {
 } from '@shared/types';
 
 const api = getApi();
+
+type SaleSortKey = 'saleNumber' | 'cashier' | 'customer' | 'payment' | 'total' | 'date';
 
 export function DashboardPage() {
   const navigate = useNavigate();
@@ -27,6 +31,19 @@ export function DashboardPage() {
   const [selectedSale, setSelectedSale] = useState<SaleSummary | null>(null);
   const [receiptPreview, setReceiptPreview] = useState<ReceiptPreviewData | null>(null);
   const [receiptOpen, setReceiptOpen] = useState(false);
+  const { onSort, icon, sortKey, sortDir } = useTableSort<SaleSortKey>('date', 'desc');
+
+  const sortedSales = useMemo(
+    () => sortByKey(sales, sortKey, sortDir, {
+      saleNumber: (s) => s.saleNumber,
+      cashier: (s) => s.cashierName,
+      customer: (s) => s.customerName ?? '',
+      payment: (s) => s.paymentMethod,
+      total: (s) => s.totalAmount,
+      date: (s) => s.createdAt,
+    }),
+    [sales, sortKey, sortDir],
+  );
 
   const range = { startDate, endDate };
   const rangeLabel = startDate === endDate ? startDate : `${startDate} → ${endDate}`;
@@ -101,16 +118,16 @@ export function DashboardPage() {
         <table className="data-table">
           <thead className="bg-slate-50">
             <tr className="text-left text-sm text-slate-500">
-              <th className="p-3">Sale #</th>
-              <th className="p-3">Cashier</th>
-              <th className="p-3">Customer</th>
-              <th className="p-3">Payment</th>
-              <th className="p-3 text-right">Total</th>
-              <th className="p-3">Date / Time</th>
+              <SortableTh label="Sale #" columnKey="saleNumber" onSort={onSort} icon={icon} className="p-3" />
+              <SortableTh label="Cashier" columnKey="cashier" onSort={onSort} icon={icon} className="p-3" />
+              <SortableTh label="Customer" columnKey="customer" onSort={onSort} icon={icon} className="p-3" />
+              <SortableTh label="Payment" columnKey="payment" onSort={onSort} icon={icon} className="p-3" />
+              <SortableTh label="Total" columnKey="total" onSort={onSort} icon={icon} className="p-3" align="right" />
+              <SortableTh label="Date / Time" columnKey="date" onSort={onSort} icon={icon} className="p-3" />
             </tr>
           </thead>
           <tbody>
-            {sales.map((s) => (
+            {sortedSales.map((s) => (
               <tr
                 key={s.id}
                 className="border-t border-slate-100 cursor-pointer hover:bg-primary-50"
@@ -124,14 +141,14 @@ export function DashboardPage() {
                 <td className="p-3 text-sm text-slate-500 whitespace-nowrap">{formatDateTime(s.createdAt)}</td>
               </tr>
             ))}
-            {sales.length === 0 && !loading && (
+            {sortedSales.length === 0 && !loading && (
               <tr>
                 <td colSpan={6} className="p-8 text-center text-slate-400">
                   No completed bills in this period
                 </td>
               </tr>
             )}
-            {loading && sales.length === 0 && (
+            {loading && sortedSales.length === 0 && (
               <tr>
                 <td colSpan={6} className="p-8 text-center text-slate-400">Loading…</td>
               </tr>

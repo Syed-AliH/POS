@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
+import { SortableTh } from '@renderer/components/SortableTh';
+import { sortByKey, useTableSort } from '@renderer/lib/useTableSort';
 import { focusElement, getActiveRoute, registerPageShortcuts } from '@renderer/lib/shortcuts';
 import { Modal, ModalActions } from '@renderer/components/Modal';
 import { ProductHistoryModal } from '@renderer/components/ProductHistoryModal';
@@ -38,6 +40,8 @@ const WORKFLOW_STEPS = [
   { id: 'done', label: 'Complete', hint: 'Receipt & return if needed' },
 ];
 
+type CartSortKey = 'product' | 'qty' | 'disc' | 'price' | 'total';
+
 export function CheckoutPage() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -48,7 +52,7 @@ export function CheckoutPage() {
     items, discountAmount, discountReason, promotionIds, customer, loyaltyPointsRedeemed, heldSaleId,
     addProduct, updateQuantity, updateLineDiscount, removeItem, clear,
     setDiscount, setCustomer, setLoyaltyRedemption, restoreHeldSale,
-    getSubtotal, getTax, getTotal,
+    getSubtotal, getTotal,
   } = useCartStore();
 
   const [search, setSearch] = useState('');
@@ -57,7 +61,7 @@ export function CheckoutPage() {
   const [productCount, setProductCount] = useState<number | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [amountTendered, setAmountTendered] = useState('');
-  const [taxInclusive, setTaxInclusive] = useState(true);
+  const [taxInclusive] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [barcodeBuffer, setBarcodeBuffer] = useState('');
   const [heldSales, setHeldSales] = useState<SaleSummary[]>([]);
@@ -78,6 +82,18 @@ export function CheckoutPage() {
   const [stockMap, setStockMap] = useState<Record<string, number>>({});
   const [stockWarning, setStockWarning] = useState<{ productName: string; stock: number } | null>(null);
   const [historyProduct, setHistoryProduct] = useState<{ id: string; name: string } | null>(null);
+  const { onSort: onCartSort, icon: cartSortIcon, sortKey: cartSortKey, sortDir: cartSortDir } = useTableSort<CartSortKey>('product');
+
+  const sortedCartItems = useMemo(
+    () => sortByKey(items, cartSortKey, cartSortDir, {
+      product: (i) => i.productName,
+      qty: (i) => i.quantity,
+      disc: (i) => i.discountPercent,
+      price: (i) => i.unitPrice,
+      total: (i) => i.lineTotal,
+    }),
+    [items, cartSortKey, cartSortDir],
+  );
 
   const barcodeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -116,8 +132,8 @@ export function CheckoutPage() {
   }, [getOnHandStock, items]);
 
   useEffect(() => {
-    api.settings.get('tax_inclusive').then((r) => {
-      if (r.success && r.data) setTaxInclusive(r.data === 'true');
+    api.settings.get('tax_inclusive').then(() => {
+      // Tax disabled
     });
     api.customers.loyaltyRules().then((r) => {
       if (r.success && r.data?.[0]) setRedemptionRate(r.data[0].redemptionRate);
@@ -424,21 +440,6 @@ export function CheckoutPage() {
     } else toast.error(result.error ?? 'Could not add customer');
   };
 
-  const handleLoadDemo = async () => {
-    const result = await api.products.seedDemo();
-    if (result.success) {
-      toast.success(`Loaded ${result.data?.added ?? 0} demo products`);
-      const list = await api.products.list();
-      if (list.success) {
-        setProductCount(list.data?.length ?? 0);
-        const map: Record<string, number> = {};
-        (list.data ?? []).forEach((p) => { map[p.id] = p.stockQty; });
-        setStockMap(map);
-      }
-      focusElement(searchRef, true);
-    } else toast.error(result.error ?? 'Failed');
-  };
-
   const setExactCash = () => setAmountTendered(total.toFixed(2));
 
   return (
@@ -450,14 +451,11 @@ export function CheckoutPage() {
           <div>
             <p className="font-semibold text-amber-900 dark:text-amber-200">No products in catalog</p>
             <p className="text-sm text-amber-700 dark:text-amber-300">
-              {isManager ? 'Load demo data or add products in Products tab' : 'Ask a manager to add products first'}
+              {isManager ? 'Add products in the Products tab' : 'Ask a manager to add products first'}
             </p>
           </div>
           {isManager && (
-            <div className="flex gap-2 shrink-0">
-              <Button size="sm" onClick={handleLoadDemo}>Load Demo Products</Button>
-              <Button size="sm" variant="secondary" onClick={() => navigate('/products')}>Add Products</Button>
-            </div>
+            <Button size="sm" variant="secondary" onClick={() => navigate('/products')}>Add Products</Button>
           )}
         </div>
       )}
@@ -488,23 +486,23 @@ export function CheckoutPage() {
                   <li><strong>3.</strong> Press <kbd className="px-1.5 py-0.5 bg-slate-100 rounded text-xs">F4</kbd> or <kbd className="px-1.5 py-0.5 bg-slate-100 rounded text-xs">Ctrl+S</kbd> to charge</li>
                 </ol>
                 {productCount === 0 && isManager && (
-                  <Button className="mt-4" onClick={handleLoadDemo}>Load Demo Products</Button>
+                  <Button className="mt-4" variant="secondary" onClick={() => navigate('/products')}>Go to Products</Button>
                 )}
               </div>
             ) : (
               <table className="w-full">
                 <thead className="sticky top-0 bg-slate-50 dark:bg-slate-800/90">
                   <tr className="text-left text-sm text-slate-500 dark:text-slate-400">
-                    <th className="p-3">Product</th>
-                    <th className="p-3 w-28">Qty</th>
-                    <th className="p-3 w-16">Disc%</th>
-                    <th className="p-3 w-24 text-right">Price</th>
-                    <th className="p-3 w-28 text-right">Total</th>
+                    <SortableTh label="Product" columnKey="product" onSort={onCartSort} icon={cartSortIcon} className="p-3" />
+                    <SortableTh label="Qty" columnKey="qty" onSort={onCartSort} icon={cartSortIcon} className="p-3 w-28" />
+                    <SortableTh label="Disc%" columnKey="disc" onSort={onCartSort} icon={cartSortIcon} className="p-3 w-16" />
+                    <SortableTh label="Price" columnKey="price" onSort={onCartSort} icon={cartSortIcon} className="p-3 w-24" align="right" />
+                    <SortableTh label="Total" columnKey="total" onSort={onCartSort} icon={cartSortIcon} className="p-3 w-28" align="right" />
                     <th className="p-3 w-16" />
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((item) => {
+                  {sortedCartItems.map((item) => {
                     const onHand = getOnHandStock(item.productId);
                     const available = getAvailableStock(item.productId);
                     const lowStock = available > 0 && available <= 5;
@@ -575,7 +573,6 @@ export function CheckoutPage() {
                 <span>- PKR {loyaltyDiscount.toFixed(2)}</span>
               </div>
             )}
-            <div className="flex justify-between text-sm"><span>Tax</span><span>PKR {getTax(taxInclusive).toFixed(2)}</span></div>
             <div className="flex justify-between border-t pt-2 text-xl font-bold text-primary-700 dark:border-slate-700 dark:text-primary-400">
               <span>Total</span><span>PKR {total.toFixed(2)}</span>
             </div>

@@ -1,32 +1,25 @@
-import { and, eq, like } from 'drizzle-orm';
+import { eq, or, sql } from 'drizzle-orm';
+import { deriveSkuPrefix, formatCategorySku, nextSkuSequence } from '@mama-babi/barcode';
 import { categories, products } from '@mama-babi/db-schema';
 import { getDb } from '../db';
+
+export { deriveSkuPrefix } from '@mama-babi/barcode';
 
 export function generateCategorySku(categoryId: string): string {
   const db = getDb();
   const cat = db.select().from(categories).where(eq(categories.id, categoryId)).get();
-  const prefix = cat?.skuPrefix?.trim().toUpperCase() || 'GEN';
-  const pattern = `MB-${prefix}-%`;
+  const prefix = cat?.skuPrefix?.trim().toUpperCase() || deriveSkuPrefix(cat?.name ?? '');
+  const p = prefix.trim().toUpperCase() || 'GEN';
+
+  // SKU is globally unique — scan all matching SKUs for this prefix, not just this category.
   const existing = db
-    .select()
+    .select({ sku: products.sku })
     .from(products)
-    .where(like(products.sku, pattern))
+    .where(
+      or(sql`lower(${products.sku}) like ${`sku-${p.toLowerCase()}-%`}`, sql`lower(${products.sku}) like ${`mb-${p.toLowerCase()}-%`}`),
+    )
     .all();
 
-  let maxSeq = 0;
-  for (const p of existing) {
-    const parts = p.sku.split('-');
-    const seq = parseInt(parts[parts.length - 1] ?? '0', 10);
-    if (!Number.isNaN(seq) && seq > maxSeq) maxSeq = seq;
-  }
-
-  return `MB-${prefix}-${String(maxSeq + 1).padStart(4, '0')}`;
-}
-
-export function deriveSkuPrefix(categoryName: string): string {
-  const words = categoryName.trim().split(/\s+/);
-  if (words.length >= 2) {
-    return (words[0].slice(0, 2) + words[1].slice(0, 1)).toUpperCase();
-  }
-  return categoryName.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() || 'GEN';
+  const seq = nextSkuSequence(existing.map((row) => row.sku), p);
+  return formatCategorySku(p, seq);
 }

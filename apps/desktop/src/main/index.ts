@@ -1,7 +1,10 @@
-import { app, BrowserWindow, Menu, shell } from 'electron';
+import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
+import updaterPkg from 'electron-updater';
+const { autoUpdater } = updaterPkg;
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { getCloudApiUrl, isCloudMode } from './cloud/config';
+import { getCloudApiUrl, getUpdateFeedUrl, isBundledDeployment, isCloudMode } from './cloud/config';
+import { startBundledApiIfNeeded, stopBundledApi } from './localApi/server';
 import { purgeLocalBusinessData } from './cloud/purgeLocal';
 import { getDbPath, initDatabase } from './db';
 import { registerIpcHandlers } from './ipc';
@@ -10,6 +13,7 @@ import { seedReceiptTemplatesIfEmpty } from './services/receiptTemplates';
 import { seedDemoProductsIfEmpty } from './services/demoProducts';
 import { ensureAuthCredentials } from './services/ensureAuth';
 import { seedIfEmpty } from './services/seed';
+import { syncSkuPrefixesLocal } from './services/syncSkuPrefixes';
 import { ensureDefaultSettings } from './services/settings';
 
 const isDev = !app.isPackaged;
@@ -93,10 +97,26 @@ app.whenReady().then(async () => {
     app.setAppUserModelId('com.mamababi.pos');
   }
 
+  if (isBundledDeployment()) {
+    try {
+      await startBundledApiIfNeeded();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to start local API.';
+      console.error('[localApi]', message);
+      dialog.showErrorBox('Mama Babi POS — Server Error', message);
+      app.quit();
+      return;
+    }
+  }
+
   initDatabase();
 
   if (isCloudMode()) {
-    console.log('[main] Cloud mode — API:', getCloudApiUrl());
+    if (isBundledDeployment()) {
+      console.log('[main] Bundled mode — local API:', getCloudApiUrl());
+    } else {
+      console.log('[main] Cloud mode — API:', getCloudApiUrl());
+    }
     purgeLocalBusinessData();
     // Designs load from cloud after login (not default seeds)
   } else {
@@ -105,6 +125,16 @@ app.whenReady().then(async () => {
       await seedIfEmpty();
     } catch (err) {
       console.error('[seed] seedIfEmpty failed:', err);
+    }
+    try {
+      const sync = syncSkuPrefixesLocal();
+      if (sync.categoriesUpdated > 0 || sync.productsUpdated > 0) {
+        console.log(
+          `[sync] SKU prefixes — categories: ${sync.categoriesUpdated}, products: ${sync.productsUpdated}`,
+        );
+      }
+    } catch (err) {
+      console.error('[sync] syncSkuPrefixesLocal failed:', err);
     }
     try {
       await ensureAuthCredentials();
@@ -119,6 +149,7 @@ app.whenReady().then(async () => {
   registerIpcHandlers();
   Menu.setApplicationMenu(null);
   createWindow();
+  initAutoUpdater();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -128,3 +159,56 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
+app.on('will-quit', () => {
+  stopBundledApi();
+});
+
+// ─── Auto-updater (only active in packaged builds with an update URL configured) ─
+function initAutoUpdater(): void {
+  if (!app.isPackaged) return;
+
+  const feedUrl = getUpdateFeedUrl();
+  if (!feedUrl) return;
+
+  autoUpdater.setFeedURL({ provider: 'generic', url: feedUrl });
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('update-available', (info) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (!win) return;
+    dialog.showMessageBox(win, {
+      type: 'info',
+      title: 'Update Available',
+      message: `Version ${String(info.version)} is available.`,
+      detail: 'Would you like to download it now? The app will update when you restart.',
+      buttons: ['Download', 'Later'],
+      defaultId: 0,
+    }).then(({ response }) => {
+      if (response === 0) autoUpdater.downloadUpdate();
+    }).catch(() => undefined);
+  });
+
+  autoUpdater.on('update-downloaded', () => {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (!win) return;
+    dialog.showMessageBox(win, {
+      type: 'info',
+      title: 'Update Ready',
+      message: 'Update downloaded. Restart now to apply it?',
+      buttons: ['Restart Now', 'Later'],
+      defaultId: 0,
+    }).then(({ response }) => {
+      if (response === 0) autoUpdater.quitAndInstall();
+    }).catch(() => undefined);
+  });
+
+  autoUpdater.on('error', (err) => {
+    console.error('[updater] Auto-update error:', err.message);
+  });
+
+  // Check for updates 10 seconds after launch, then every 4 hours
+  setTimeout(() => { autoUpdater.checkForUpdates().catch(() => undefined); }, 10_000);
+  setInterval(() => { autoUpdater.checkForUpdates().catch(() => undefined); }, 4 * 60 * 60 * 1000);
+}

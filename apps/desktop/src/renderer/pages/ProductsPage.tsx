@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
@@ -6,6 +6,15 @@ import { Modal } from '@renderer/components/Modal';
 import { WorkflowStepper } from '@renderer/components/WorkflowStepper';
 import { toast } from '@renderer/stores/toastStore';
 import { newProductFormDefaults, useProductDefaultsStore } from '@renderer/stores/productDefaultsStore';
+import {
+  downloadExcelTemplate,
+  mapProductImportRows,
+  parseExcelFile,
+  PRODUCT_IMPORT_HEADERS,
+} from '@renderer/lib/excelImport';
+import { importProductsViaApi } from '@renderer/lib/productImport';
+import { SortableTh } from '@renderer/components/SortableTh';
+import { sortByKey, useTableSort } from '@renderer/lib/useTableSort';
 import { formatDateTime } from '@shared/datetime';
 import type { Category, Product, ProductHistory, ProductInput } from '@shared/types';
 
@@ -13,6 +22,7 @@ const api = getApi();
 
 type SortKey = 'name' | 'sku' | 'category' | 'price' | 'stock' | 'status';
 type HistoryTab = 'purchases' | 'sales' | 'returns';
+type ProductHistSortKey = 'date' | 'reference' | 'qty' | 'total';
 
 const WORKFLOW_STEPS = [
   { id: 'add', label: 'Add product', hint: 'Cost + markup pricing' },
@@ -22,7 +32,7 @@ const WORKFLOW_STEPS = [
 ];
 
 function emptyForm(): ProductInput & { retailMarkup?: string; saleMarkup?: string } {
-  return { name: '', costPrice: undefined, retailMarkup: '', saleMarkup: '', stockQty: 0, taxRate: 17, reorderLevel: 10 };
+  return { name: '', costPrice: undefined, retailMarkup: '', saleMarkup: '', stockQty: 0, taxRate: 0, reorderLevel: 10 };
 }
 
 /** % suffix → cost + that % of cost; plain number → fixed retail/sale price */
@@ -68,16 +78,23 @@ export function ProductsPage() {
   const [newCategoryPrefix, setNewCategoryPrefix] = useState('');
   const [csvText, setCsvText] = useState('');
   const [message, setMessage] = useState('');
+  const [importOpen, setImportOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{ imported: number; errors: string[] } | null>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
   const [detailProduct, setDetailProduct] = useState<Product | null>(null);
   const [history, setHistory] = useState<ProductHistory | null>(null);
   const [historyTab, setHistoryTab] = useState<HistoryTab>('purchases');
+  const { onSort: onHistSort, icon: histIcon, sortKey: histSortKey, sortDir: histSortDir } = useTableSort<ProductHistSortKey>('date', 'desc');
   const defaultCategoryId = useProductDefaultsStore((s) => s.defaultCategoryId);
   const setDefaultCategoryId = useProductDefaultsStore((s) => s.setDefaultCategoryId);
 
   const load = async () => {
     const [p, c] = await Promise.all([api.products.list(), api.categories.list()]);
     if (p.success) setProducts(p.data ?? []);
+    else toast.error(p.error ?? 'Failed to load products');
     if (c.success) setCategories(c.data ?? []);
+    else toast.error(c.error ?? 'Failed to load categories');
   };
 
   useEffect(() => { load(); }, []);
@@ -126,6 +143,16 @@ export function ProductsPage() {
     if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     else { setSortKey(key); setSortDir('asc'); }
   };
+
+  const sortedHistoryRows = useMemo(() => {
+    const rows = history?.[historyTab] ?? [];
+    return sortByKey(rows, histSortKey, histSortDir, {
+      date: (e) => e.date,
+      reference: (e) => e.reference,
+      qty: (e) => e.qty,
+      total: (e) => e.total,
+    });
+  }, [history, historyTab, histSortKey, histSortDir]);
 
   const cost = form.costPrice ?? 0;
   const computedRetail = parseMarkupInput(form.retailMarkup ?? '', cost) ?? form.retailPrice ?? 0;
@@ -181,6 +208,33 @@ export function ProductsPage() {
     }
   };
 
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const rawRows = await parseExcelFile(file);
+      const rows = mapProductImportRows(rawRows);
+      if (!rows.length) { toast.error('No valid rows found in the file'); setImporting(false); return; }
+      const result = await importProductsViaApi(api, rows);
+      setImportResult(result);
+      if (result.imported > 0) {
+        toast.success(`Imported ${result.imported} product(s)`);
+        await load();
+      } else if (result.errors.length) {
+        toast.error(result.errors[0] ?? 'No products were imported');
+      } else {
+        toast.error('No products were imported');
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to read file');
+    } finally {
+      setImporting(false);
+      if (importFileRef.current) importFileRef.current.value = '';
+    }
+  };
+
   const handleArchive = async (id: string, name: string) => {
     if (!confirm(`Archive "${name}"?`)) return;
     const result = await api.products.archive(id);
@@ -189,9 +243,23 @@ export function ProductsPage() {
   };
 
   const handleAddCategory = async () => {
-    if (!newCategory.trim()) return;
-    const result = await api.categories.create(newCategory.trim(), undefined, newCategoryPrefix || undefined);
-    if (result.success) { setNewCategory(''); setNewCategoryPrefix(''); load(); }
+    if (!newCategory.trim()) {
+      toast.error('Enter a category name');
+      return;
+    }
+    const result = await api.categories.create(
+      newCategory.trim(),
+      undefined,
+      newCategoryPrefix.trim() || undefined,
+    );
+    if (result.success) {
+      toast.success(`Category "${newCategory.trim()}" added`);
+      setNewCategory('');
+      setNewCategoryPrefix('');
+      load();
+    } else {
+      toast.error(result.error ?? 'Failed to add category');
+    }
   };
 
   const openDetail = async (p: Product) => {
@@ -239,8 +307,19 @@ export function ProductsPage() {
             <h2 className="text-2xl font-bold">Products</h2>
             <p className="text-sm text-slate-500">{products.length} items</p>
           </div>
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={async () => { const r = await api.products.seedDemo(); if (r.success) { toast.success(`Loaded ${r.data?.added} products`); load(); } }}>Load Demo</Button>
+          <div className="flex gap-2 flex-wrap">
+            <Button
+              variant="ghost"
+              onClick={() =>
+                downloadExcelTemplate('products-template.xlsx', PRODUCT_IMPORT_HEADERS, [
+                  { 'Product Name': 'Basmati Rice 1kg', Category: 'Groceries', 'Cost Price': 120, 'Retail Price': 150, 'Sale Price': '' },
+                  { 'Product Name': 'Cooking Oil 1L', Category: 'Groceries', 'Cost Price': 280, 'Retail Price': 320, 'Sale Price': '' },
+                ])
+              }
+            >
+              ⬇ Template
+            </Button>
+            <Button variant="ghost" onClick={() => { setImportOpen(true); setImportResult(null); }}>⬆ Import Excel</Button>
             <Button variant="secondary" onClick={startNewProduct}>+ Add Product</Button>
           </div>
         </div>
@@ -408,10 +487,20 @@ export function ProductsPage() {
                 ))}
               </div>
               <div className="max-h-48 overflow-y-auto border rounded-lg text-sm">
-                {(history?.[historyTab] ?? []).length === 0 && <p className="p-4 text-slate-400 text-center">No {historyTab} history</p>}
+                {sortedHistoryRows.length === 0 && <p className="p-4 text-slate-400 text-center">No {historyTab} history</p>}
                 <table className="w-full">
+                  {sortedHistoryRows.length > 0 && (
+                    <thead className="bg-slate-50 sticky top-0">
+                      <tr>
+                        <SortableTh label="Date" columnKey="date" onSort={onHistSort} icon={histIcon} className="p-2" />
+                        <SortableTh label="Reference" columnKey="reference" onSort={onHistSort} icon={histIcon} className="p-2" />
+                        <SortableTh label="Qty" columnKey="qty" onSort={onHistSort} icon={histIcon} className="p-2" align="right" />
+                        <SortableTh label="Total" columnKey="total" onSort={onHistSort} icon={histIcon} className="p-2" align="right" />
+                      </tr>
+                    </thead>
+                  )}
                   <tbody>
-                    {(history?.[historyTab] ?? []).map((e, i) => (
+                    {sortedHistoryRows.map((e, i) => (
                       <tr key={i} className="border-b">
                         <td className="p-2 whitespace-nowrap text-xs">{formatDateTime(e.date)}</td>
                         <td className="p-2">{e.reference}</td>
@@ -424,6 +513,49 @@ export function ProductsPage() {
               </div>
             </div>
           )}
+        </Modal>
+
+        {/* Excel Import Modal */}
+        <Modal open={importOpen} onClose={() => setImportOpen(false)} title="Import Products from Excel">
+          <div className="space-y-4 w-full max-w-lg">
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+              Fill in the template (⬇ Template button on the Products page) then upload below.
+              SKU and barcode are auto-generated as <strong>SKU-[Category]-[Number]</strong>.
+              Categories are matched by name — new ones are created automatically.
+            </p>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Upload filled Excel file (.xlsx)</label>
+              <input
+                ref={importFileRef}
+                type="file"
+                accept=".xlsx,.xls"
+                onChange={handleImportFile}
+                disabled={importing}
+                className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-primary-50 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-primary-700 hover:file:bg-primary-100 dark:text-slate-300"
+              />
+              {importing && <p className="mt-2 text-sm text-slate-500">Importing…</p>}
+            </div>
+
+            {importResult && (
+              <div className={`rounded-lg p-3 text-sm ${importResult.imported > 0 ? 'bg-green-50 dark:bg-green-950' : 'bg-amber-50 dark:bg-amber-950'}`}>
+                <p className="font-semibold mb-1">
+                  {importResult.imported > 0 ? `✓ ${importResult.imported} product(s) imported` : 'No products imported'}
+                </p>
+                {importResult.errors.length > 0 && (
+                  <div className="mt-2 max-h-40 overflow-y-auto space-y-0.5">
+                    {importResult.errors.map((e, i) => (
+                      <p key={i} className="text-red-600 dark:text-red-400 text-xs">{e}</p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex justify-end pt-2">
+              <Button variant="ghost" onClick={() => setImportOpen(false)}>Close</Button>
+            </div>
+          </div>
         </Modal>
       </div>
     </div>

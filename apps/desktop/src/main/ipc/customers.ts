@@ -1,7 +1,7 @@
 import { and, eq, like, or } from 'drizzle-orm';
 import { v4 as uuid } from 'uuid';
 import { customers, loyaltyRules } from '@mama-babi/db-schema';
-import type { ApiResult, Customer, CustomerInput, LoyaltyRule } from '@shared/types';
+import type { ApiResult, Customer, CustomerInput, LoyaltyRule, LoyaltyRuleInput } from '@shared/types';
 import { getDb } from '../db';
 import { requireRole, requireSession } from '../session';
 import { logAudit } from '../services/audit';
@@ -167,6 +167,7 @@ export function handleCustomerCreate(input: CustomerInput): ApiResult<Customer> 
         email: input.email ?? null,
         address: input.address ?? null,
         notes: input.notes ?? null,
+        loyaltyPoints: Math.max(0, Math.floor(input.loyaltyPoints ?? 0)),
         deviceId,
         branchId,
         createdAt: now,
@@ -201,6 +202,9 @@ export function handleCustomerUpdate(id: string, input: Partial<CustomerInput>):
         email: input.email !== undefined ? input.email : existing.email,
         address: input.address !== undefined ? input.address : existing.address,
         notes: input.notes !== undefined ? input.notes : existing.notes,
+        loyaltyPoints: input.loyaltyPoints !== undefined
+          ? Math.max(0, Math.floor(input.loyaltyPoints))
+          : existing.loyaltyPoints,
         updatedAt: now,
       })
       .where(eq(customers.id, id))
@@ -214,23 +218,74 @@ export function handleCustomerUpdate(id: string, input: Partial<CustomerInput>):
   }
 }
 
+function mapLoyaltyRule(row: typeof loyaltyRules.$inferSelect): LoyaltyRule {
+  return {
+    id: row.id,
+    spendThreshold: row.spendThreshold,
+    pointsAwarded: row.pointsAwarded,
+    redemptionRate: row.redemptionRate,
+    isActive: row.isActive,
+  };
+}
+
 export function handleLoyaltyRules(): ApiResult<LoyaltyRule[]> {
   try {
     requireSession();
     const db = getDb();
     const rows = db.select().from(loyaltyRules).where(eq(loyaltyRules.isActive, true)).all();
-    return {
-      success: true,
-      data: rows.map((r) => ({
-        id: r.id,
-        spendThreshold: r.spendThreshold,
-        pointsAwarded: r.pointsAwarded,
-        redemptionRate: r.redemptionRate,
-        isActive: r.isActive,
-      })),
-    };
+    return { success: true, data: rows.map(mapLoyaltyRule) };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Rules failed' };
+  }
+}
+
+export function handleLoyaltyRuleSave(input: LoyaltyRuleInput): ApiResult<LoyaltyRule> {
+  try {
+    requireRole('super_admin', 'manager');
+    if (input.spendThreshold <= 0) return { success: false, error: 'Sale amount must be greater than zero' };
+    if (input.pointsAwarded < 0) return { success: false, error: 'Points must be zero or greater' };
+    const redemptionRate = input.redemptionRate ?? 1;
+    if (redemptionRate <= 0) return { success: false, error: 'Redemption rate must be greater than zero' };
+
+    const db = getDb();
+    const active = db.select().from(loyaltyRules).where(eq(loyaltyRules.isActive, true)).get();
+    const now = new Date().toISOString();
+    const id = active?.id ?? uuid();
+    const deviceId = getSetting('device_id') ?? 'local-device';
+    const branchId = getSetting('branch_id') ?? 'main';
+
+    if (active) {
+      db.update(loyaltyRules)
+        .set({
+          spendThreshold: input.spendThreshold,
+          pointsAwarded: Math.floor(input.pointsAwarded),
+          redemptionRate,
+          isActive: true,
+          updatedAt: now,
+        })
+        .where(eq(loyaltyRules.id, id))
+        .run();
+    } else {
+      db.insert(loyaltyRules)
+        .values({
+          id,
+          spendThreshold: input.spendThreshold,
+          pointsAwarded: Math.floor(input.pointsAwarded),
+          redemptionRate,
+          isActive: true,
+          deviceId,
+          branchId,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .run();
+    }
+
+    logAudit('customers', 'loyalty_rule_update', id, undefined, input);
+    const row = db.select().from(loyaltyRules).where(eq(loyaltyRules.id, id)).get()!;
+    return { success: true, data: mapLoyaltyRule(row) };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Update failed' };
   }
 }
 

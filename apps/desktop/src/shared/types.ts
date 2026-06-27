@@ -461,6 +461,7 @@ export interface CustomerInput {
   email?: string;
   address?: string;
   notes?: string;
+  loyaltyPoints?: number;
 }
 
 export interface LoyaltyRule {
@@ -469,6 +470,12 @@ export interface LoyaltyRule {
   pointsAwarded: number;
   redemptionRate: number;
   isActive: boolean;
+}
+
+export interface LoyaltyRuleInput {
+  spendThreshold: number;
+  pointsAwarded: number;
+  redemptionRate?: number;
 }
 
 export interface Promotion {

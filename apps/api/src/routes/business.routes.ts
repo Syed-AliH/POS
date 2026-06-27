@@ -7,6 +7,9 @@ import * as products from '../services/products.service';
 import * as vendors from '../services/vendors.service';
 import * as grn from '../services/grn.service';
 import * as sales from '../services/sales.service';
+import * as returns from '../services/returns.service';
+import * as reports from '../services/reports.service';
+import * as customers from '../services/customers.service';
 import * as templates from '../services/templates.service';
 import type { JwtUser } from '../types';
 
@@ -49,6 +52,15 @@ export async function businessRoutes(app: FastifyInstance) {
     return products.searchProducts(app.db, q ?? '');
   });
 
+  app.post('/products/search/advanced', { preHandler: anyUser }, async (request) => {
+    const body = z.object({
+      sku: z.string().optional(),
+      master: z.string().optional(),
+      refine: z.string().optional(),
+    }).parse(request.body);
+    return products.advancedSearchProducts(app.db, body);
+  });
+
   app.get('/products', { preHandler: anyUser }, async (request) => {
     const query = request.query as { status?: string; limit?: string };
     return products.listProducts(app.db, {
@@ -86,6 +98,19 @@ export async function businessRoutes(app: FastifyInstance) {
     return products.createProduct(app.db, body);
   });
 
+  app.post('/products/import', { preHandler: manager }, async (request) => {
+    const body = z.object({
+      rows: z.array(z.object({
+        name: z.string().min(1),
+        category: z.string().min(1),
+        cost_price: z.number().optional(),
+        retail_price: z.number().positive(),
+        sale_price: z.number().optional(),
+      })).min(1),
+    }).parse(request.body);
+    return products.importProductRows(app.db, body.rows);
+  });
+
   app.patch('/products/:id', { preHandler: manager }, async (request) => {
     const { id } = request.params as { id: string };
     const body = request.body as Record<string, unknown>;
@@ -102,6 +127,16 @@ export async function businessRoutes(app: FastifyInstance) {
       skuPrefix: z.string().optional(),
     }).parse(request.body);
     return products.createCategory(app.db, body.name, body.color, body.skuPrefix);
+  });
+
+  app.patch('/categories/:id', { preHandler: manager }, async (request) => {
+    const { id } = request.params as { id: string };
+    const body = z.object({
+      name: z.string().min(1).optional(),
+      color: z.string().optional(),
+      skuPrefix: z.string().optional(),
+    }).parse(request.body);
+    return products.updateCategory(app.db, id, body);
   });
 
   // Vendors
@@ -205,12 +240,30 @@ export async function businessRoutes(app: FastifyInstance) {
   });
 
   app.get('/sales', { preHandler: anyUser }, async (request) => {
-    const q = request.query as { status?: string; limit?: string; search?: string };
+    const q = request.query as {
+      status?: string;
+      limit?: string;
+      search?: string;
+      startDate?: string;
+      endDate?: string;
+    };
     return sales.listSales(app.db, {
       status: q.status,
       limit: q.limit ? parseInt(q.limit, 10) : undefined,
       search: q.search,
+      startDate: q.startDate,
+      endDate: q.endDate,
     });
+  });
+
+  app.get('/sales/lookup/:saleNumber', { preHandler: anyUser }, async (request) => {
+    const { saleNumber } = request.params as { saleNumber: string };
+    return sales.lookupSaleByNumber(app.db, decodeURIComponent(saleNumber));
+  });
+
+  app.get('/sales/:id/receipt-preview', { preHandler: anyUser }, async (request) => {
+    const { id } = request.params as { id: string };
+    return sales.getSaleReceiptPreview(app.db, id);
   });
 
   app.get('/sales/:id', { preHandler: anyUser }, async (request) => {
@@ -226,6 +279,148 @@ export async function businessRoutes(app: FastifyInstance) {
   app.get('/sales/resume/:heldKey', { preHandler: anyUser }, async (request) => {
     const { heldKey } = request.params as { heldKey: string };
     return sales.resumeHeldSale(app.db, heldKey);
+  });
+
+  app.get('/returns', { preHandler: anyUser }, async (request) => {
+    const q = request.query as { limit?: string; startDate?: string; endDate?: string };
+    return returns.listReturns(app.db, {
+      limit: q.limit ? parseInt(q.limit, 10) : undefined,
+      startDate: q.startDate,
+      endDate: q.endDate,
+    });
+  });
+
+  app.post('/returns', { preHandler: anyUser }, async (request) => {
+    const user = request.user as JwtUser;
+    const body = z.object({
+      saleNumber: z.string().min(1),
+      reason: z.string().min(1),
+      refundMethod: z.enum(['cash', 'store_credit', 'loyalty']),
+      items: z.array(z.object({
+        saleItemId: z.string().min(1),
+        qtyReturned: z.number().int().positive(),
+        restocked: z.boolean().optional(),
+      })).min(1),
+    }).parse(request.body);
+    const result = await returns.createReturn(app.db, user.id, body);
+    if (result.success) {
+      await logAuditEvent(app.db, {
+        userId: user.id,
+        module: 'returns',
+        action: 'create',
+        recordId: result.data.id,
+        ip: request.ip,
+      });
+    }
+    return result;
+  });
+
+  app.get('/reports/profit', { preHandler: manager }, async (request) => {
+    const q = request.query as { startDate?: string; endDate?: string };
+    return reports.getProfitReport(app.db, {
+      startDate: q.startDate,
+      endDate: q.endDate,
+    });
+  });
+
+  app.get('/reports/inventory', { preHandler: manager }, async (request) => {
+    const q = request.query as {
+      search?: string;
+      categoryId?: string;
+      stockFilter?: 'all' | 'negative' | 'zero' | 'low';
+    };
+    return reports.getInventoryReport(app.db, {
+      search: q.search,
+      categoryId: q.categoryId,
+      stockFilter: q.stockFilter,
+    });
+  });
+
+  // Customers
+  app.get('/customers/search', { preHandler: anyUser }, async (request) => {
+    const { q } = request.query as { q?: string };
+    return customers.searchCustomers(app.db, q ?? '');
+  });
+
+  app.get('/customers', { preHandler: manager }, async (request) => {
+    const { limit } = request.query as { limit?: string };
+    return customers.listCustomers(app.db, limit ? parseInt(limit, 10) : 50);
+  });
+
+  app.get('/customers/:id', { preHandler: anyUser }, async (request) => {
+    const { id } = request.params as { id: string };
+    return customers.getCustomer(app.db, id);
+  });
+
+  app.post('/customers', { preHandler: manager }, async (request) => {
+    const user = request.user as JwtUser;
+    const body = z.object({
+      name: z.string().min(1),
+      phone: z.string().optional(),
+      email: z.string().optional(),
+      address: z.string().optional(),
+      notes: z.string().optional(),
+      loyaltyPoints: z.number().int().min(0).optional(),
+    }).parse(request.body);
+    const result = await customers.createCustomer(app.db, body);
+    if (result.success) {
+      await logAuditEvent(app.db, {
+        userId: user.id,
+        module: 'customers',
+        action: 'create',
+        recordId: result.data.id,
+        ip: request.ip,
+      });
+    }
+    return result;
+  });
+
+  app.patch('/customers/:id', { preHandler: manager }, async (request) => {
+    const user = request.user as JwtUser;
+    const { id } = request.params as { id: string };
+    const body = z.object({
+      name: z.string().min(1).optional(),
+      phone: z.string().optional(),
+      email: z.string().optional(),
+      address: z.string().optional(),
+      notes: z.string().optional(),
+      loyaltyPoints: z.number().int().min(0).optional(),
+    }).parse(request.body);
+    const result = await customers.updateCustomer(app.db, id, body);
+    if (result.success) {
+      await logAuditEvent(app.db, {
+        userId: user.id,
+        module: 'customers',
+        action: 'update',
+        recordId: id,
+        ip: request.ip,
+      });
+    }
+    return result;
+  });
+
+  app.get('/loyalty-rules', { preHandler: anyUser }, async () =>
+    customers.listLoyaltyRules(app.db));
+
+  app.put('/loyalty-rules', { preHandler: manager }, async (request) => {
+    const user = request.user as JwtUser;
+    const body = z.object({
+      spendThreshold: z.number().positive(),
+      pointsAwarded: z.number().int().min(0),
+      redemptionRate: z.number().positive().optional(),
+    }).parse(request.body);
+    const result = await customers.saveLoyaltyRule(app.db, body);
+    if (result.success) {
+      await logAuditEvent(app.db, {
+        userId: user.id,
+        module: 'customers',
+        action: 'loyalty_rule_update',
+        recordId: result.data.id,
+        newValue: JSON.stringify(body),
+        ip: request.ip,
+      });
+    }
+    return result;
   });
 
   // Receipt & label designs (shared across all POS machines)

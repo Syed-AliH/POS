@@ -1,13 +1,17 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Eye, EyeOff, Lock, MoreVertical, Pencil, Plus, RotateCcw, Search, ShieldCheck, Trash2, UserCheck, UserX, X } from 'lucide-react';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
+import { SortableTh } from '@renderer/components/SortableTh';
+import { sortByKey, useTableSort } from '@renderer/lib/useTableSort';
 import { useAuthStore } from '../stores/authStore';
 import type { CreateStaffInput, StaffUser, UpdateStaffInput, UserRole } from '@shared/types';
 import { PERMISSION_GROUPS, getDefaultPermissions } from '@shared/permissions';
 import type { Permission } from '@shared/permissions';
 
 const api = getApi();
+
+type UserSortKey = 'name' | 'username' | 'contact' | 'role' | 'status' | 'created' | 'lastLogin';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -635,6 +639,7 @@ export function UsersPage() {
   const [resetPwUser, setResetPwUser] = useState<StaffUser | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<StaffUser | null>(null);
   const [confirmToggle, setConfirmToggle] = useState<StaffUser | null>(null);
+  const { onSort, icon, sortKey, sortDir } = useTableSort<UserSortKey>('name');
 
   const isSuperAdmin = session?.role === 'super_admin';
 
@@ -668,6 +673,19 @@ export function UsersPage() {
     }
     return true;
   });
+
+  const sortedUsers = useMemo(
+    () => sortByKey(filtered, sortKey, sortDir, {
+      name: (u) => u.name,
+      username: (u) => u.username ?? '',
+      contact: (u) => `${u.email ?? ''} ${u.phone ?? ''}`,
+      role: (u) => u.role,
+      status: (u) => (u.isActive ? 'active' : 'inactive'),
+      created: (u) => u.createdAt,
+      lastLogin: (u) => u.lastLoginAt ?? '',
+    }),
+    [filtered, sortKey, sortDir],
+  );
 
   const handleToggleActive = async (user: StaffUser) => {
     await api.staff.update(user.id, { isActive: !user.isActive });
@@ -783,18 +801,18 @@ export function UsersPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
-                  <th className="px-4 py-3 text-left font-medium text-slate-500">Name</th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-500">Username</th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-500 hidden md:table-cell">Contact</th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-500">Role</th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-500">Status</th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-500 hidden lg:table-cell">Created</th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-500 hidden lg:table-cell">Last Login</th>
+                  <SortableTh label="Name" columnKey="name" onSort={onSort} icon={icon} className="px-4 py-3 font-medium text-slate-500" />
+                  <SortableTh label="Username" columnKey="username" onSort={onSort} icon={icon} className="px-4 py-3 font-medium text-slate-500" />
+                  <SortableTh label="Contact" columnKey="contact" onSort={onSort} icon={icon} className="px-4 py-3 font-medium text-slate-500 hidden md:table-cell" />
+                  <SortableTh label="Role" columnKey="role" onSort={onSort} icon={icon} className="px-4 py-3 font-medium text-slate-500" />
+                  <SortableTh label="Status" columnKey="status" onSort={onSort} icon={icon} className="px-4 py-3 font-medium text-slate-500" />
+                  <SortableTh label="Created" columnKey="created" onSort={onSort} icon={icon} className="px-4 py-3 font-medium text-slate-500 hidden lg:table-cell" />
+                  <SortableTh label="Last Login" columnKey="lastLogin" onSort={onSort} icon={icon} className="px-4 py-3 font-medium text-slate-500 hidden lg:table-cell" />
                   <th className="px-4 py-3 text-right font-medium text-slate-500">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {filtered.map((user) => (
+                {sortedUsers.map((user) => (
                   <tr key={user.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2.5">

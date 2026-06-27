@@ -13,7 +13,7 @@ const CHECKOUT_SHORTCUTS = [
 ];
 
 const WORKFLOW_GUIDE = [
-  { step: '1', label: 'Products (manager)', desc: 'Add product or Load Demo Products' },
+  { step: '1', label: 'Products (manager)', desc: 'Add products or import from Excel' },
   { step: '2', label: 'Checkout', desc: 'F1 search → add to cart → F4 charge' },
   { step: '3', label: 'Sales', desc: 'View receipt, reprint, or start return' },
   { step: '4', label: 'Returns', desc: 'Enter sale # → select items → F4 refund' },

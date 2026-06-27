@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
+import { SortableTh } from '@renderer/components/SortableTh';
+import { sortByKey, useTableSort } from '@renderer/lib/useTableSort';
 import { localCalendarDate } from '@shared/datetime';
 import type {
   EodReport,
@@ -13,6 +15,8 @@ import type {
 } from '@shared/types';
 
 const api = getApi();
+
+type NegStockSortKey = 'name' | 'sku' | 'stock';
 
 export function ReportsPage() {
   const today = useMemo(() => localCalendarDate(), []);
@@ -26,6 +30,16 @@ export function ReportsPage() {
   const [valuation, setValuation] = useState<InventoryValuation | null>(null);
   const [profit, setProfit] = useState<ProfitReport | null>(null);
   const [loading, setLoading] = useState(false);
+  const { onSort: onNegSort, icon: negIcon, sortKey: negSortKey, sortDir: negSortDir } = useTableSort<NegStockSortKey>('stock');
+
+  const sortedNegativeStock = useMemo(
+    () => sortByKey(valuation?.negativeStockItems ?? [], negSortKey, negSortDir, {
+      name: (p) => p.name,
+      sku: (p) => p.sku,
+      stock: (p) => p.stockQty,
+    }),
+    [valuation?.negativeStockItems, negSortKey, negSortDir],
+  );
 
   const range = { startDate, endDate };
   const periodLabel = startDate === endDate ? startDate : `${startDate} → ${endDate}`;
@@ -117,8 +131,15 @@ export function ReportsPage() {
               </p>
               <div className="max-h-36 overflow-y-auto border rounded-lg text-sm">
                 <table className="w-full">
+                  <thead className="bg-slate-50 sticky top-0">
+                    <tr>
+                      <SortableTh label="Product" columnKey="name" onSort={onNegSort} icon={negIcon} className="p-2" />
+                      <SortableTh label="SKU" columnKey="sku" onSort={onNegSort} icon={negIcon} className="p-2" />
+                      <SortableTh label="Stock" columnKey="stock" onSort={onNegSort} icon={negIcon} className="p-2" align="right" />
+                    </tr>
+                  </thead>
                   <tbody>
-                    {valuation.negativeStockItems.map((p) => (
+                    {sortedNegativeStock.map((p) => (
                       <tr key={p.id} className="border-b border-slate-100 last:border-0">
                         <td className="p-2">{p.name}</td>
                         <td className="p-2 font-mono text-xs text-slate-500">{p.sku}</td>

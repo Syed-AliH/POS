@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
+import { SortableTh } from '@renderer/components/SortableTh';
+import { sortByKey, useTableSort } from '@renderer/lib/useTableSort';
 import { Modal } from './Modal';
 import { formatDateTime } from '@shared/datetime';
 import type { ProductHistory } from '@shared/types';
@@ -8,6 +10,8 @@ import type { ProductHistory } from '@shared/types';
 const api = getApi();
 
 type HistoryTab = 'sales' | 'purchases';
+type SalesHistSortKey = 'date' | 'qty' | 'price' | 'receipt';
+type PurchaseHistSortKey = 'date' | 'supplier' | 'grn' | 'cost' | 'qty';
 
 interface Props {
   open: boolean;
@@ -21,6 +25,29 @@ export function ProductHistoryModal({ open, productId, productName, onClose }: P
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<HistoryTab>('sales');
+  const { onSort: onSalesSort, icon: salesIcon, sortKey: salesSortKey, sortDir: salesSortDir } = useTableSort<SalesHistSortKey>('date', 'desc');
+  const { onSort: onPurchaseSort, icon: purchaseIcon, sortKey: purchaseSortKey, sortDir: purchaseSortDir } = useTableSort<PurchaseHistSortKey>('date', 'desc');
+
+  const sortedSales = useMemo(
+    () => (history ? sortByKey(history.sales, salesSortKey, salesSortDir, {
+      date: (e) => e.date,
+      qty: (e) => e.qty,
+      price: (e) => e.unitCostOrPrice,
+      receipt: (e) => e.reference ?? '',
+    }) : []),
+    [history, salesSortKey, salesSortDir],
+  );
+
+  const sortedPurchases = useMemo(
+    () => (history ? sortByKey(history.purchases, purchaseSortKey, purchaseSortDir, {
+      date: (e) => e.date,
+      supplier: (e) => e.vendorOrCustomer ?? '',
+      grn: (e) => e.reference,
+      cost: (e) => e.unitCostOrPrice,
+      qty: (e) => e.qty,
+    }) : []),
+    [history, purchaseSortKey, purchaseSortDir],
+  );
 
   useEffect(() => {
     if (!open || !productId) {
@@ -77,14 +104,14 @@ export function ProductHistoryModal({ open, productId, productName, onClose }: P
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 sticky top-0">
                     <tr className="text-left text-slate-500">
-                      <th className="p-2">Sale date & time</th>
-                      <th className="p-2 text-right">Qty sold</th>
-                      <th className="p-2 text-right">Selling price</th>
-                      <th className="p-2">Receipt #</th>
+                      <SortableTh label="Sale date & time" columnKey="date" onSort={onSalesSort} icon={salesIcon} className="p-2" />
+                      <SortableTh label="Qty sold" columnKey="qty" onSort={onSalesSort} icon={salesIcon} className="p-2" align="right" />
+                      <SortableTh label="Selling price" columnKey="price" onSort={onSalesSort} icon={salesIcon} className="p-2" align="right" />
+                      <SortableTh label="Receipt #" columnKey="receipt" onSort={onSalesSort} icon={salesIcon} className="p-2" />
                     </tr>
                   </thead>
                   <tbody>
-                    {history.sales.map((e, i) => (
+                    {sortedSales.map((e, i) => (
                       <tr key={i} className="border-t border-slate-100">
                         <td className="p-2 whitespace-nowrap">{formatDateTime(e.date)}</td>
                         <td className="p-2 text-right">{e.qty}</td>
@@ -106,15 +133,15 @@ export function ProductHistoryModal({ open, productId, productName, onClose }: P
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 sticky top-0">
                     <tr className="text-left text-slate-500">
-                      <th className="p-2">Purchase date & time</th>
-                      <th className="p-2">Supplier</th>
-                      <th className="p-2">GRN #</th>
-                      <th className="p-2 text-right">Cost price</th>
-                      <th className="p-2 text-right">Qty</th>
+                      <SortableTh label="Purchase date & time" columnKey="date" onSort={onPurchaseSort} icon={purchaseIcon} className="p-2" />
+                      <SortableTh label="Supplier" columnKey="supplier" onSort={onPurchaseSort} icon={purchaseIcon} className="p-2" />
+                      <SortableTh label="GRN #" columnKey="grn" onSort={onPurchaseSort} icon={purchaseIcon} className="p-2" />
+                      <SortableTh label="Cost price" columnKey="cost" onSort={onPurchaseSort} icon={purchaseIcon} className="p-2" align="right" />
+                      <SortableTh label="Qty" columnKey="qty" onSort={onPurchaseSort} icon={purchaseIcon} className="p-2" align="right" />
                     </tr>
                   </thead>
                   <tbody>
-                    {history.purchases.map((e, i) => (
+                    {sortedPurchases.map((e, i) => (
                       <tr key={i} className="border-t border-slate-100">
                         <td className="p-2 whitespace-nowrap">{formatDateTime(e.date)}</td>
                         <td className="p-2">{e.vendorOrCustomer ?? '—'}</td>

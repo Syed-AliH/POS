@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FileText, Sticker } from 'lucide-react';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
+import { SortableTh } from '@renderer/components/SortableTh';
+import { sortByKey, useTableSort } from '@renderer/lib/useTableSort';
 import { useAuthStore } from '../stores/authStore';
 import { formatDateTime } from '@shared/datetime';
 import type {
@@ -19,6 +21,7 @@ import type {
 const api = getApi();
 
 type Tab = 'general' | 'printers' | 'currency' | 'backup' | 'staff' | 'templates' | 'audit' | 'sync';
+type AuditSortKey = 'time' | 'user' | 'module' | 'action';
 
 export function SettingsPage() {
   const { session } = useAuthStore();
@@ -37,6 +40,17 @@ export function SettingsPage() {
   const [editStaff, setEditStaff] = useState({ name: '', username: '', password: '', role: 'cashier' as UserRole });
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false);
+  const { onSort: onAuditSort, icon: auditIcon, sortKey: auditSortKey, sortDir: auditSortDir } = useTableSort<AuditSortKey>('time', 'desc');
+
+  const sortedAuditLogs = useMemo(
+    () => sortByKey(auditLogs, auditSortKey, auditSortDir, {
+      time: (l) => l.createdAt,
+      user: (l) => l.userName ?? '',
+      module: (l) => l.module,
+      action: (l) => l.action,
+    }),
+    [auditLogs, auditSortKey, auditSortDir],
+  );
 
   const isSuperAdmin = session?.role === 'super_admin';
 
@@ -79,8 +93,8 @@ export function SettingsPage() {
         store_address: settings.store_address ?? '',
         store_phone: settings.store_phone ?? '',
         currency: settings.currency ?? 'PKR',
-        tax_inclusive: settings.tax_inclusive ?? 'true',
-        default_tax_rate: settings.default_tax_rate ?? '17',
+        tax_inclusive: 'true',
+        default_tax_rate: '0',
         receipt_printer: settings.receipt_printer ?? '',
         receipt_paper_mm: settings.receipt_paper_mm ?? '58',
         label_printer: settings.label_printer ?? '',
@@ -174,21 +188,10 @@ export function SettingsPage() {
           <input placeholder="Store name" value={settings.store_name ?? ''} onChange={(e) => updateField('store_name', e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
           <input placeholder="Address" value={settings.store_address ?? ''} onChange={(e) => updateField('store_address', e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
           <input placeholder="Phone" value={settings.store_phone ?? ''} onChange={(e) => updateField('store_phone', e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
-          <div className="grid grid-cols-2 gap-4">
-            <input placeholder="Currency" value={settings.currency ?? 'PKR'} onChange={(e) => updateField('currency', e.target.value)} className="px-3 py-2 border rounded-lg" />
-            <input type="number" placeholder="Tax %" value={settings.default_tax_rate ?? '17'} onChange={(e) => updateField('default_tax_rate', e.target.value)} className="px-3 py-2 border rounded-lg" />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-sm text-slate-600">Return policy (days)</label>
-              <input type="number" value={settings.return_policy_days ?? '7'} onChange={(e) => updateField('return_policy_days', e.target.value)} className="w-full mt-1 px-3 py-2 border rounded-lg" />
-            </div>
-            <div className="flex items-end">
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={settings.tax_inclusive === 'true'} onChange={(e) => updateField('tax_inclusive', e.target.checked ? 'true' : 'false')} />
-                Tax inclusive
-              </label>
-            </div>
+          <input placeholder="Currency" value={settings.currency ?? 'PKR'} onChange={(e) => updateField('currency', e.target.value)} className="px-3 py-2 border rounded-lg" />
+          <div>
+            <label className="text-sm text-slate-600">Return policy (days)</label>
+            <input type="number" value={settings.return_policy_days ?? '7'} onChange={(e) => updateField('return_policy_days', e.target.value)} className="w-full mt-1 px-3 py-2 border rounded-lg" />
           </div>
           <p className="text-xs text-slate-400">Database is stored locally unencrypted (SQLCipher planned for production hardening).</p>
           <Button onClick={() => handleSave()} disabled={saving}>Save</Button>
@@ -383,9 +386,16 @@ export function SettingsPage() {
       {tab === 'audit' && (
         <div className="panel max-h-[32rem] overflow-y-auto">
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 sticky top-0"><tr><th className="p-2 text-left">Time</th><th className="p-2 text-left">User</th><th className="p-2 text-left">Module</th><th className="p-2 text-left">Action</th></tr></thead>
+            <thead className="bg-slate-50 sticky top-0">
+              <tr>
+                <SortableTh label="Time" columnKey="time" onSort={onAuditSort} icon={auditIcon} className="p-2" />
+                <SortableTh label="User" columnKey="user" onSort={onAuditSort} icon={auditIcon} className="p-2" />
+                <SortableTh label="Module" columnKey="module" onSort={onAuditSort} icon={auditIcon} className="p-2" />
+                <SortableTh label="Action" columnKey="action" onSort={onAuditSort} icon={auditIcon} className="p-2" />
+              </tr>
+            </thead>
             <tbody>
-              {auditLogs.map((l) => (
+              {sortedAuditLogs.map((l) => (
                 <tr key={l.id} className="border-t">
                   <td className="p-2 text-slate-500 whitespace-nowrap text-xs">{formatDateTime(l.createdAt)}</td>
                   <td className="p-2">{l.userName ?? '—'}</td>

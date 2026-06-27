@@ -5,11 +5,13 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import { loadEnv } from 'vite';
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, resolve('../..'), '');
+  // Only bake CLOUD_API_URL for dev — production installers must use config.json / setup screen
+  const cloudApiUrlForBuild = mode === 'production' ? '' : (env.CLOUD_API_URL ?? '');
 
   return {
   main: {
     define: {
-      'process.env.CLOUD_API_URL': JSON.stringify(env.CLOUD_API_URL ?? ''),
+      'process.env.CLOUD_API_URL': JSON.stringify(cloudApiUrlForBuild),
     },
     plugins: [
       externalizeDepsPlugin({ exclude: ['@mama-babi/db-schema', '@mama-babi/barcode', '@mama-babi/printer', '@mama-babi/reports', '@mama-babi/sync-engine'] }),

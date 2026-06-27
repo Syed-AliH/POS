@@ -1,6 +1,7 @@
 import './load-env';
 import bcrypt from 'bcryptjs';
 import { v4 as uuid } from 'uuid';
+import { deriveSkuPrefix } from '@mama-babi/barcode';
 import { eq } from 'drizzle-orm';
 import {
   brands,
@@ -117,7 +118,7 @@ async function seed() {
     id: categoryId,
     name: 'General',
     color: '#3B82F6',
-    skuPrefix: 'GEN',
+    skuPrefix: deriveSkuPrefix('General'),
     deviceId,
     branchId,
     createdAt: now,

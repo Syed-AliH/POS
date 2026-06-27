@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
+import { SortableTh } from '@renderer/components/SortableTh';
+import { sortByKey, useTableSort } from '@renderer/lib/useTableSort';
 import { LabelPrintPreviewModal } from '@renderer/components/designer/LabelRollPreview';
 import { Modal } from '@renderer/components/Modal';
 import { ProductSearchModal } from '@renderer/components/ProductSearchModal';
@@ -11,6 +13,11 @@ import {
   resolveLabelLayoutForPreview,
 } from '@renderer/lib/labelTemplateUtils';
 import { parseMarkupInput, resolveMarkupToPrice } from '@renderer/lib/markup';
+import {
+  downloadExcelTemplate,
+  GRN_IMPORT_HEADERS,
+  parseExcelFile,
+} from '@renderer/lib/excelImport';
 import { getActiveRoute, registerPageShortcuts } from '@renderer/lib/shortcuts';
 import { toast } from '@renderer/stores/toastStore';
 import { useLabelDefaultsStore } from '@renderer/stores/labelDefaultsStore';
@@ -32,6 +39,7 @@ const GRN_ROUTE = '/grn';
 
 type Tab = 'create' | 'records';
 type LineSortKey = 'product' | 'qty' | 'cost' | 'retail' | 'margin' | 'total';
+type RecordSortKey = 'grn' | 'vendor' | 'payment' | 'created' | 'received' | 'total' | 'status';
 
 function lineMarginPct(unitCost: number, unitRetail: number): number {
   if (unitRetail <= 0) return 0;
@@ -157,8 +165,26 @@ export function GrnPage() {
   const [lineSortDir, setLineSortDir] = useState<'asc' | 'desc'>('asc');
   const [editLineSortKey, setEditLineSortKey] = useState<LineSortKey>('product');
   const [editLineSortDir, setEditLineSortDir] = useState<'asc' | 'desc'>('asc');
+  const [grnImportOpen, setGrnImportOpen] = useState(false);
+  const [grnImporting, setGrnImporting] = useState(false);
+  const [grnImportErrors, setGrnImportErrors] = useState<string[]>([]);
+  const grnImportFileRef = useRef<HTMLInputElement>(null);
   const recordDetailRef = useRef<HTMLDivElement>(null);
   const setLastTemplateId = useLabelDefaultsStore((s) => s.setLastTemplateId);
+  const { onSort: onRecordSort, icon: recordSortIcon, sortKey: recordSortKey, sortDir: recordSortDir } = useTableSort<RecordSortKey>('created', 'desc');
+
+  const sortedRecords = useMemo(
+    () => sortByKey(records, recordSortKey, recordSortDir, {
+      grn: (g) => g.grnNumber,
+      vendor: (g) => g.vendorName,
+      payment: (g) => g.paymentType ?? 'cash',
+      created: (g) => g.createdAt,
+      received: (g) => g.receivedDate,
+      total: (g) => g.linesTotal,
+      status: (g) => g.status,
+    }),
+    [records, recordSortKey, recordSortDir],
+  );
 
   const linesTotal = useMemo(() => lines.reduce((s, l) => s + l.qty * l.unitCost, 0), [lines]);
   const lineTotals = useMemo(() => summarizeDraftLines(lines), [lines]);
@@ -215,6 +241,17 @@ export function GrnPage() {
 
   const lineSortIcon = (key: LineSortKey) =>
     lineSortKey === key ? (lineSortDir === 'asc' ? ' ↑' : ' ↓') : '';
+
+  const toggleEditLineSort = (key: LineSortKey) => {
+    if (editLineSortKey === key) setEditLineSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setEditLineSortKey(key);
+      setEditLineSortDir('asc');
+    }
+  };
+
+  const editLineSortIcon = (key: LineSortKey) =>
+    editLineSortKey === key ? (editLineSortDir === 'asc' ? ' ↑' : ' ↓') : '';
 
   const applyVendorPaymentPreference = (id: string, setter: (value: GrnPaymentType) => void) => {
     const vendor = vendors.find((v) => v.id === id);
@@ -313,6 +350,72 @@ export function GrnPage() {
     setProductSearch('');
     toast.success(`Added: ${product.name}`);
   };
+
+  const handleGrnImportFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setGrnImporting(true);
+    setGrnImportErrors([]);
+    try {
+      const rawRows = await parseExcelFile(file);
+      const errors: string[] = [];
+      let added = 0;
+
+      for (let i = 0; i < rawRows.length; i++) {
+        const r = rawRows[i];
+        const rowNum = i + 2;
+        const get = (...keys: string[]) => {
+          for (const k of keys) {
+            const v = r[k] ?? r[k.toLowerCase()] ?? r[k.toUpperCase()];
+            if (v !== undefined && String(v).trim() !== '') return String(v).trim();
+          }
+          return '';
+        };
+
+        const sku = get('SKU', 'sku', 'product_sku');
+        const nameRaw = get('Product Name', 'product_name', 'name', 'product');
+        const qty = parseInt(get('Qty', 'qty', 'quantity') || '1', 10) || 1;
+        const costPrice = parseFloat(get('Cost Price', 'cost_price', 'cost') || '0') || 0;
+        const retailPrice = parseFloat(get('Retail Price', 'retail_price', 'retail') || '0') || 0;
+
+        if (!sku && !nameRaw) { errors.push(`Row ${rowNum}: SKU or Product Name is required`); continue; }
+
+        const matched = products.find((p) =>
+          (sku && p.sku.toLowerCase() === sku.toLowerCase()) ||
+          (nameRaw && p.name.toLowerCase() === nameRaw.toLowerCase()),
+        );
+
+        if (!matched) {
+          errors.push(`Row ${rowNum}: Product "${sku || nameRaw}" not found — add it to inventory first`);
+          continue;
+        }
+
+        setLines((prev) => {
+          if (prev.some((l) => l.productId === matched.id)) return prev;
+          return [...prev, {
+            productId: matched.id,
+            productName: matched.name,
+            productSku: matched.sku,
+            qty,
+            unitCost: costPrice || matched.costPrice,
+            unitRetail: retailPrice || matched.retailPrice,
+            retailInput: String(retailPrice || matched.retailPrice),
+          }];
+        });
+        added++;
+      }
+
+      setGrnImportErrors(errors);
+      if (added > 0) toast.success(`Added ${added} product line(s) from Excel`);
+      else toast.error('No matching products found');
+      if (!errors.length) setGrnImportOpen(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to read file');
+    } finally {
+      setGrnImporting(false);
+      if (grnImportFileRef.current) grnImportFileRef.current.value = '';
+    }
+  }, [products]);
 
   const updateLine = (idx: number, patch: Partial<GrnDraftLine>) => {
     setLines((prev) => {
@@ -703,9 +806,26 @@ export function GrnPage() {
           <div className="panel flex flex-col p-4">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <h3 className="font-semibold">Add Products</h3>
-              {lines.length > 0 && (
-                <span className="text-sm text-slate-500">{lines.length} line{lines.length !== 1 ? 's' : ''}</span>
-              )}
+              <div className="flex items-center gap-2">
+                {lines.length > 0 && (
+                  <span className="text-sm text-slate-500">{lines.length} line{lines.length !== 1 ? 's' : ''}</span>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    downloadExcelTemplate('grn-template.xlsx', GRN_IMPORT_HEADERS, [
+                      { SKU: 'SKU-FD-0001', 'Product Name': 'Feeder Bottle 250ml', Qty: 10, 'Cost Price': 120, 'Retail Price': 150 },
+                      { SKU: 'SKU-GRO-0001', 'Product Name': 'Basmati Rice 1kg', Qty: 5, 'Cost Price': 280, 'Retail Price': 320 },
+                    ])
+                  }
+                >
+                  ⬇ Template
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => { setGrnImportOpen(true); setGrnImportErrors([]); }}>
+                  ⬆ Import Excel
+                </Button>
+              </div>
             </div>
             <div className="mb-4 flex gap-2">
               <input
@@ -875,11 +995,18 @@ export function GrnPage() {
           <table className="data-table-wrap w-full text-sm">
             <thead className="bg-slate-50">
               <tr className="text-left text-slate-500">
-                <th className="p-3">GRN #</th><th className="p-3">Vendor</th><th className="p-3">Payment</th><th className="p-3">Created</th><th className="p-3">Received</th><th className="p-3 text-right">Total</th><th className="p-3">Status</th><th className="p-3"></th>
+                <SortableTh label="GRN #" columnKey="grn" onSort={onRecordSort} icon={recordSortIcon} className="p-3" />
+                <SortableTh label="Vendor" columnKey="vendor" onSort={onRecordSort} icon={recordSortIcon} className="p-3" />
+                <SortableTh label="Payment" columnKey="payment" onSort={onRecordSort} icon={recordSortIcon} className="p-3" />
+                <SortableTh label="Created" columnKey="created" onSort={onRecordSort} icon={recordSortIcon} className="p-3" />
+                <SortableTh label="Received" columnKey="received" onSort={onRecordSort} icon={recordSortIcon} className="p-3" />
+                <SortableTh label="Total" columnKey="total" onSort={onRecordSort} icon={recordSortIcon} className="p-3" align="right" />
+                <SortableTh label="Status" columnKey="status" onSort={onRecordSort} icon={recordSortIcon} className="p-3" />
+                <th className="p-3" />
               </tr>
             </thead>
             <tbody>
-              {records.map((g) => (
+              {sortedRecords.map((g) => (
                 <tr
                   key={g.id}
                   className={`border-t cursor-pointer hover:bg-primary-50 ${editingRecord?.id === g.id ? 'bg-primary-50' : ''}`}
@@ -1026,12 +1153,36 @@ export function GrnPage() {
                 <table className="w-full text-sm">
                   <thead className="table-head">
                     <tr>
-                      <th className="min-w-[220px] p-2 pl-3 text-left">Product</th>
-                      <th className="w-20 p-2">Qty</th>
-                      <th className="w-28 p-2">Cost</th>
-                      <th className="w-32 p-2">Retail</th>
-                      <th className="w-24 p-2">Margin %</th>
-                      <th className="w-28 p-2 text-right">Total</th>
+                      <th className="min-w-[220px] p-2 pl-3 text-left">
+                        <button type="button" onClick={() => toggleEditLineSort('product')} className="font-medium hover:text-primary-700 dark:hover:text-primary-400">
+                          Product{editLineSortIcon('product')}
+                        </button>
+                      </th>
+                      <th className="w-20 p-2">
+                        <button type="button" onClick={() => toggleEditLineSort('qty')} className="font-medium hover:text-primary-700 dark:hover:text-primary-400">
+                          Qty{editLineSortIcon('qty')}
+                        </button>
+                      </th>
+                      <th className="w-28 p-2">
+                        <button type="button" onClick={() => toggleEditLineSort('cost')} className="font-medium hover:text-primary-700 dark:hover:text-primary-400">
+                          Cost{editLineSortIcon('cost')}
+                        </button>
+                      </th>
+                      <th className="w-32 p-2">
+                        <button type="button" onClick={() => toggleEditLineSort('retail')} className="font-medium hover:text-primary-700 dark:hover:text-primary-400">
+                          Retail{editLineSortIcon('retail')}
+                        </button>
+                      </th>
+                      <th className="w-24 p-2">
+                        <button type="button" onClick={() => toggleEditLineSort('margin')} className="font-medium hover:text-primary-700 dark:hover:text-primary-400">
+                          Margin %{editLineSortIcon('margin')}
+                        </button>
+                      </th>
+                      <th className="w-28 p-2 text-right">
+                        <button type="button" onClick={() => toggleEditLineSort('total')} className="font-medium hover:text-primary-700 dark:hover:text-primary-400">
+                          Total{editLineSortIcon('total')}
+                        </button>
+                      </th>
                       {canEditRecord && <th className="w-10 p-2" />}
                     </tr>
                   </thead>
@@ -1205,6 +1356,47 @@ export function GrnPage() {
           }
         />
       )}
+
+      {/* GRN Excel Import Modal */}
+      <Modal open={grnImportOpen} onClose={() => setGrnImportOpen(false)} title="Import GRN Lines from Excel">
+        <div className="space-y-4 w-full max-w-lg">
+          <p className="text-sm text-slate-600 dark:text-slate-400">
+            Use the <strong>⬇ Template</strong> button in the Add Products section to get the template.
+            Fill in SKUs (e.g. <code className="bg-slate-100 px-1 rounded text-xs dark:bg-slate-800">SKU-FD-0001</code>)
+            or product names to match existing inventory. Set the supplier and payment type first.
+          </p>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Upload filled Excel file (.xlsx)</label>
+            <input
+              ref={grnImportFileRef}
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={handleGrnImportFile}
+              disabled={grnImporting}
+              className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-primary-50 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-primary-700 hover:file:bg-primary-100 dark:text-slate-300"
+            />
+            {grnImporting && <p className="mt-2 text-sm text-slate-500">Importing…</p>}
+          </div>
+
+          {grnImportErrors.length > 0 && (
+            <div className="rounded-lg bg-amber-50 p-3 dark:bg-amber-950">
+              <p className="text-sm font-semibold mb-1 text-amber-800 dark:text-amber-200">
+                Some rows could not be matched:
+              </p>
+              <div className="max-h-40 overflow-y-auto space-y-0.5">
+                {grnImportErrors.map((e, i) => (
+                  <p key={i} className="text-xs text-red-600 dark:text-red-400">{e}</p>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex justify-end pt-2">
+            <Button variant="ghost" onClick={() => setGrnImportOpen(false)}>Close</Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

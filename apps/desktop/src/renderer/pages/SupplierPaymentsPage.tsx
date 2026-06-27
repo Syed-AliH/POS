@@ -1,12 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
+import { SortableTh } from '@renderer/components/SortableTh';
+import { sortByKey, useTableSort } from '@renderer/lib/useTableSort';
 import { Modal, ModalActions } from '@renderer/components/Modal';
 import { toast } from '@renderer/stores/toastStore';
 import { formatDateOnly, formatDateTime, formatTimeOnly, localCalendarDate } from '@shared/datetime';
 import type { SupplierLedgerEntry, SupplierPaymentSummary, Vendor } from '@shared/types';
 
 const api = getApi();
+
+type LedgerSortKey = 'date' | 'time' | 'type' | 'reference' | 'debit' | 'credit' | 'balance' | 'notes';
 
 export function SupplierPaymentsPage() {
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -24,6 +28,21 @@ export function SupplierPaymentsPage() {
   const [editDate, setEditDate] = useState('');
   const [editNotes, setEditNotes] = useState('');
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const { onSort, icon, sortKey, sortDir } = useTableSort<LedgerSortKey>('date', 'desc');
+
+  const sortedLedger = useMemo(
+    () => sortByKey(ledger, sortKey, sortDir, {
+      date: (e) => e.createdAt,
+      time: (e) => e.createdAt,
+      type: (e) => e.transactionType,
+      reference: (e) => e.referenceNumber,
+      debit: (e) => e.debitAmount,
+      credit: (e) => e.creditAmount,
+      balance: (e) => e.runningBalance,
+      notes: (e) => e.notes ?? '',
+    }),
+    [ledger, sortKey, sortDir],
+  );
 
   const loadVendors = async () => {
     const result = await api.vendors.list();
@@ -178,20 +197,20 @@ export function SupplierPaymentsPage() {
           <table className="w-full text-sm min-w-[900px]">
             <thead className="bg-slate-50">
               <tr className="text-left text-slate-500">
-                <th className="p-3">Date</th>
-                <th className="p-3">Time</th>
-                <th className="p-3">Type</th>
-                <th className="p-3">Reference</th>
-                <th className="p-3 text-right">Debit</th>
-                <th className="p-3 text-right">Credit</th>
-                <th className="p-3 text-right">Balance</th>
-                <th className="p-3">Notes</th>
+                <SortableTh label="Date" columnKey="date" onSort={onSort} icon={icon} className="p-3" />
+                <SortableTh label="Time" columnKey="time" onSort={onSort} icon={icon} className="p-3" />
+                <SortableTh label="Type" columnKey="type" onSort={onSort} icon={icon} className="p-3" />
+                <SortableTh label="Reference" columnKey="reference" onSort={onSort} icon={icon} className="p-3" />
+                <SortableTh label="Debit" columnKey="debit" onSort={onSort} icon={icon} className="p-3" align="right" />
+                <SortableTh label="Credit" columnKey="credit" onSort={onSort} icon={icon} className="p-3" align="right" />
+                <SortableTh label="Balance" columnKey="balance" onSort={onSort} icon={icon} className="p-3" align="right" />
+                <SortableTh label="Notes" columnKey="notes" onSort={onSort} icon={icon} className="p-3" />
               </tr>
             </thead>
             <tbody>
-              {ledger.length === 0 ? (
+              {sortedLedger.length === 0 ? (
                 <tr><td colSpan={8} className="p-8 text-center text-slate-400">{loading ? 'Loading…' : 'No ledger entries'}</td></tr>
-              ) : ledger.map((entry) => (
+              ) : sortedLedger.map((entry) => (
                 <tr key={`${entry.transactionType}-${entry.id}`} className="border-t">
                   <td className="p-3 whitespace-nowrap">{formatDateOnly(entry.createdAt)}</td>
                   <td className="p-3 whitespace-nowrap">{formatTimeOnly(entry.createdAt)}</td>

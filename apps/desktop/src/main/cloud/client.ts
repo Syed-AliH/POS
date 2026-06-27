@@ -1,4 +1,5 @@
-import type { ApiResult, LabelTemplateSummary, ReceiptTemplate, UserSession } from '@shared/types';
+import type { AdvancedProductSearchInput, ApiResult, LabelTemplateSummary, Product, ReceiptTemplate, UserSession } from '@shared/types';
+import { filterProductsByAdvancedSearch } from '@shared/productSearch';
 import { setSession } from '../session';
 import { IPC_CHANNELS } from '@shared/ipc-channels';
 import { getCloudApiUrl } from './config';
@@ -21,18 +22,66 @@ async function apiFetch<T>(
   auth = true,
 ): Promise<ApiResult<T>> {
   const base = getCloudApiUrl();
-  if (!base) return { success: false, error: 'CLOUD_API_URL not configured' };
+  if (!base) return { success: false, error: 'Server not configured. Set API URL in config.json.' };
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (auth && getAuthToken()) headers.Authorization = `Bearer ${getAuthToken()}`;
 
-  const res = await fetch(`${base.replace(/\/$/, '')}${path}`, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${base.replace(/\/$/, '')}${path}`, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch (err) {
+    const isNetworkErr =
+      err instanceof TypeError &&
+      (err.message.includes('fetch') || err.message.includes('network') || err.message.includes('ECONNREFUSED'));
+    if (isNetworkErr) {
+      return { success: false, error: 'Cannot reach the server. Check your internet connection.' };
+    }
+    return { success: false, error: err instanceof Error ? err.message : 'Network error' };
+  }
 
-  const json = (await res.json()) as ApiResult<T> & { data?: T & { token?: string } };
+  // Handle 401 — expired or invalid token
+  if (res.status === 401) {
+    setCloudSession(null);
+    return { success: false, error: 'Session expired. Please log in again.' };
+  }
+
+  let json: ApiResult<T>;
+  try {
+    json = (await res.json()) as ApiResult<T> & { data?: T & { token?: string } };
+  } catch {
+    return { success: false, error: `Server returned an unexpected response (HTTP ${res.status})` };
+  }
+
+  if (!res.ok && !json.success) {
+    const details = (json as { details?: Array<{ field?: string; message: string }> }).details;
+    const detailMsg = details?.map((d) => d.message).filter(Boolean).join('; ');
+    if (res.status === 404) {
+      return {
+        success: false,
+        error: json.error ?? detailMsg ?? 'API route not found — restart the app after running pnpm build:api',
+      };
+    }
+    if (res.status === 422) {
+      return {
+        success: false,
+        error: detailMsg || json.error || 'Validation failed',
+      };
+    }
+    return { success: false, error: json.error ?? detailMsg ?? `Request failed (HTTP ${res.status})` };
+  }
+
+  if (!res.ok) {
+    if (res.status === 404) {
+      return { success: false, error: 'API route not found — restart the app after running pnpm build:api' };
+    }
+    return { success: false, error: `Request failed (HTTP ${res.status})` };
+  }
+
   return json;
 }
 
@@ -72,11 +121,22 @@ const handlers: Partial<Record<string, CloudHandler>> = {
   [IPC_CHANNELS.SETTINGS_GET_ALL]: async () => apiFetch<Record<string, string>>('GET', '/api/v1/settings'),
   [IPC_CHANNELS.SETTINGS_GET]: async (key: unknown) =>
     apiFetch<string | null>('GET', `/api/v1/settings/${encodeURIComponent(String(key))}`),
-  [IPC_CHANNELS.SETTINGS_SET]: async (input: unknown) =>
-    apiFetch<Record<string, string>>('PATCH', '/api/v1/settings', input),
+  [IPC_CHANNELS.SETTINGS_SET]: async (input: unknown) => {
+    const wrapped = input as { settings?: Record<string, string> };
+    const body = wrapped.settings ?? (input as Record<string, string>);
+    return apiFetch<Record<string, string>>('PATCH', '/api/v1/settings', body);
+  },
 
   [IPC_CHANNELS.PRODUCT_SEARCH]: async (query: unknown) =>
     apiFetch('GET', `/api/v1/products/search?q=${encodeURIComponent(String(query))}`),
+  [IPC_CHANNELS.PRODUCT_ADVANCED_SEARCH]: async (input: unknown) => {
+    const filters = (input ?? {}) as AdvancedProductSearchInput;
+    const qs = new URLSearchParams({ status: 'active', limit: '500' });
+    const list = await apiFetch<Product[]>('GET', `/api/v1/products?${qs}`);
+    if (!list.success) return list;
+    const active = (list.data ?? []).filter((p) => p.status === 'active');
+    return { success: true as const, data: filterProductsByAdvancedSearch(active, filters) };
+  },
   [IPC_CHANNELS.PRODUCT_LIST]: async (params: unknown) => {
     const p = (params ?? {}) as { status?: string; limit?: number };
     const qs = new URLSearchParams();
@@ -88,6 +148,8 @@ const handlers: Partial<Record<string, CloudHandler>> = {
     apiFetch('GET', `/api/v1/products/${id}`),
   [IPC_CHANNELS.PRODUCT_CREATE]: async (input: unknown) =>
     apiFetch('POST', '/api/v1/products', input),
+  [IPC_CHANNELS.PRODUCT_IMPORT_ROWS]: async (rows: unknown) =>
+    apiFetch('POST', '/api/v1/products/import', { rows }),
   [IPC_CHANNELS.PRODUCT_UPDATE]: async (id: unknown, input: unknown) =>
     apiFetch('PATCH', `/api/v1/products/${id}`, input),
   [IPC_CHANNELS.PRODUCT_BARCODE_LOOKUP]: async (barcode: unknown) =>
@@ -95,7 +157,9 @@ const handlers: Partial<Record<string, CloudHandler>> = {
 
   [IPC_CHANNELS.CATEGORY_LIST]: async () => apiFetch('GET', '/api/v1/categories'),
   [IPC_CHANNELS.CATEGORY_CREATE]: async (name: unknown, color?: unknown, skuPrefix?: unknown) =>
-    apiFetch('POST', '/api/v1/categories', { name, color, skuPrefix }),
+    apiFetch('POST', '/api/v1/categories', { name: String(name ?? '').trim(), color, skuPrefix }),
+  [IPC_CHANNELS.CATEGORY_UPDATE]: async (id: unknown, input: unknown) =>
+    apiFetch('PATCH', `/api/v1/categories/${id}`, input),
 
   [IPC_CHANNELS.VENDOR_LIST]: async () => apiFetch('GET', '/api/v1/vendors'),
   [IPC_CHANNELS.VENDOR_CREATE]: async (input: unknown) =>
@@ -136,6 +200,57 @@ const handlers: Partial<Record<string, CloudHandler>> = {
     apiFetch('POST', `/api/v1/sales/${id}/discard-held`, {}),
   [IPC_CHANNELS.SALE_RESUME]: async (key: unknown) =>
     apiFetch('GET', `/api/v1/sales/resume/${encodeURIComponent(String(key))}`),
+  [IPC_CHANNELS.SALE_LOOKUP]: async (saleNumber: unknown) =>
+    apiFetch('GET', `/api/v1/sales/lookup/${encodeURIComponent(String(saleNumber))}`),
+  [IPC_CHANNELS.SALE_RECEIPT_PREVIEW]: async (saleId: unknown) =>
+    apiFetch('GET', `/api/v1/sales/${saleId}/receipt-preview`),
+
+  [IPC_CHANNELS.RETURN_LIST]: async (params: unknown) => {
+    const p = (params ?? {}) as Record<string, string | number | undefined>;
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(p)) {
+      if (v != null && v !== '') qs.set(k, String(v));
+    }
+    const suffix = qs.toString() ? `?${qs}` : '';
+    return apiFetch('GET', `/api/v1/returns${suffix}`);
+  },
+  [IPC_CHANNELS.RETURN_CREATE]: async (input: unknown) =>
+    apiFetch('POST', '/api/v1/returns', input),
+
+  [IPC_CHANNELS.REPORT_PROFIT]: async (params: unknown) => {
+    const p = (params ?? {}) as { startDate?: string; endDate?: string };
+    const qs = new URLSearchParams();
+    if (p.startDate) qs.set('startDate', p.startDate);
+    if (p.endDate) qs.set('endDate', p.endDate);
+    return apiFetch('GET', `/api/v1/reports/profit?${qs}`);
+  },
+
+  [IPC_CHANNELS.REPORT_INVENTORY]: async (params: unknown) => {
+    const p = (params ?? {}) as { search?: string; categoryId?: string; stockFilter?: string };
+    const qs = new URLSearchParams();
+    if (p.search) qs.set('search', p.search);
+    if (p.categoryId) qs.set('categoryId', p.categoryId);
+    if (p.stockFilter) qs.set('stockFilter', p.stockFilter);
+    return apiFetch('GET', `/api/v1/reports/inventory?${qs}`);
+  },
+
+  [IPC_CHANNELS.CUSTOMER_SEARCH]: async (query: unknown) =>
+    apiFetch('GET', `/api/v1/customers/search?q=${encodeURIComponent(String(query))}`),
+  [IPC_CHANNELS.CUSTOMER_LIST]: async (limit: unknown) => {
+    const qs = new URLSearchParams();
+    if (limit != null) qs.set('limit', String(limit));
+    const suffix = qs.toString() ? `?${qs}` : '';
+    return apiFetch('GET', `/api/v1/customers${suffix}`);
+  },
+  [IPC_CHANNELS.CUSTOMER_GET]: async (id: unknown) =>
+    apiFetch('GET', `/api/v1/customers/${id}`),
+  [IPC_CHANNELS.CUSTOMER_CREATE]: async (input: unknown) =>
+    apiFetch('POST', '/api/v1/customers', input),
+  [IPC_CHANNELS.CUSTOMER_UPDATE]: async (id: unknown, input: unknown) =>
+    apiFetch('PATCH', `/api/v1/customers/${id}`, input),
+  [IPC_CHANNELS.LOYALTY_RULES]: async () => apiFetch('GET', '/api/v1/loyalty-rules'),
+  [IPC_CHANNELS.LOYALTY_RULES_UPDATE]: async (input: unknown) =>
+    apiFetch('PUT', '/api/v1/loyalty-rules', input),
 
   [IPC_CHANNELS.RECEIPT_TEMPLATES]: async () => {
     const result = await apiFetch<ReceiptTemplate[]>('GET', '/api/v1/receipt-templates');

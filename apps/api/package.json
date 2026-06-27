@@ -2,10 +2,11 @@
   "name": "@mama-babi/api",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts",
+    "prebuild": "pnpm --filter @mama-babi/barcode --filter @mama-babi/db-pg build",
+    "build": "tsc",
+    "start": "node dist/server.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

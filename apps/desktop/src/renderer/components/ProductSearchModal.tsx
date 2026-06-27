@@ -45,16 +45,18 @@ export function ProductSearchModal({ open, onClose, onSelect, getAvailableStock 
   const sortIcon = (key: 'name' | 'price') => (sortKey === key ? (sortDir === 'asc' ? ' ↑' : ' ↓') : '');
 
   const search = useCallback(async () => {
-    if (!sku.trim() && !master.trim() && !refine.trim()) {
-      setResults([]);
-      return;
-    }
     setLoading(true);
-    const result = await api.products.advancedSearch({ sku: sku || undefined, master: master || undefined, refine: refine || undefined });
+    const result = await api.products.advancedSearch({
+      sku: sku.trim() || undefined,
+      master: master.trim() || undefined,
+      refine: refine.trim() || undefined,
+    });
     setLoading(false);
     if (result.success) {
       setResults(result.data ?? []);
       setSelectedIdx(0);
+    } else {
+      setResults([]);
     }
   }, [sku, master, refine]);
 
@@ -107,14 +109,14 @@ export function ProductSearchModal({ open, onClose, onSelect, getAvailableStock 
         </div>
         <div>
           <label className="text-xs font-medium text-slate-500">Master search</label>
-          <input ref={masterRef} value={master} onChange={(e) => setMaster(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Name starts with…" />
+          <input ref={masterRef} value={master} onChange={(e) => setMaster(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" placeholder="First word starts with…" />
         </div>
         <div>
           <label className="text-xs font-medium text-slate-500">Refine</label>
-          <input value={refine} onChange={(e) => setRefine(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Narrow results (e.g. bo)" />
+          <input value={refine} onChange={(e) => setRefine(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Any word contains…" />
         </div>
       </div>
-      <p className="text-xs text-slate-400 mb-2 shrink-0">Master: name prefix · Refine: narrow list · ↑↓ Enter add · Esc close</p>
+      <p className="text-xs text-slate-400 mb-2 shrink-0">Master: first word prefix · Refine: any word (partial) · Both apply together · ↑↓ Enter add · Esc close</p>
       <div className="flex h-[280px] flex-col overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
         <div className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs font-medium text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
           <button type="button" onClick={() => toggleSort('name')} className="text-left hover:text-primary-700">

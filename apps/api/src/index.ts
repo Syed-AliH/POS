@@ -7,8 +7,11 @@ async function main() {
   const app = await buildApp(config);
 
   try {
-    await app.listen({ host: config.API_HOST, port: config.API_PORT });
-    app.log.info(`API listening on http://${config.API_HOST}:${config.API_PORT}`);
+    const port = config.API_PORT;
+    const host = config.API_HOST;
+    await app.listen({ host, port });
+    console.log(`Server running on http://${host}:${port}`);
+    app.log.info(`API listening on http://${host}:${port} (PORT=${process.env.PORT ?? '—'}, API_PORT=${process.env.API_PORT ?? '—'})`);
   } catch (err) {
     app.log.error(err);
     process.exit(1);

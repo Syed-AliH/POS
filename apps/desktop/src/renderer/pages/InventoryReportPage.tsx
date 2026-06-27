@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
+import { SortableTh } from '@renderer/components/SortableTh';
+import { sortByKey, useTableSort } from '@renderer/lib/useTableSort';
 import { formatDateOnly, formatDateTime } from '@shared/datetime';
-import type { Category, InventoryReportSummary, InventoryStockFilter } from '@shared/types';
+import type { Category, InventoryReportRow, InventoryReportSummary, InventoryStockFilter } from '@shared/types';
+
+type InvSortKey = 'product' | 'barcode' | 'category' | 'stock' | 'cost' | 'retail' | 'value' | 'grn' | 'updated';
 
 const api = getApi();
 
@@ -31,6 +35,7 @@ export function InventoryReportPage() {
   const [stockFilter, setStockFilter] = useState<InventoryStockFilter>('all');
   const [loading, setLoading] = useState(false);
   const printRef = useRef<HTMLDivElement>(null);
+  const { onSort, icon, sortKey, sortDir } = useTableSort<InvSortKey>('product');
 
   const load = async () => {
     setLoading(true);
@@ -51,7 +56,20 @@ export function InventoryReportPage() {
 
   useEffect(() => { load(); }, [categoryId, stockFilter]);
 
-  const rows = report?.rows ?? [];
+  const rows = useMemo(() => {
+    const raw = report?.rows ?? [];
+    return sortByKey(raw, sortKey, sortDir, {
+      product: (r) => r.productName,
+      barcode: (r) => r.barcode,
+      category: (r) => r.categoryName,
+      stock: (r) => r.stockQty,
+      cost: (r) => r.costPrice,
+      retail: (r) => r.retailPrice,
+      value: (r) => r.inventoryValue,
+      grn: (r) => r.lastGrnDate ?? '',
+      updated: (r) => r.updatedAt,
+    });
+  }, [report?.rows, sortKey, sortDir]);
 
   const exportCsv = () => {
     const header = [
@@ -183,15 +201,15 @@ export function InventoryReportPage() {
           <table className="w-full text-sm min-w-[1100px]">
             <thead className="bg-slate-50">
               <tr className="text-left text-slate-500">
-                <th className="p-3">Product</th>
-                <th className="p-3">Barcode</th>
-                <th className="p-3">Category</th>
-                <th className="p-3 text-right">Stock</th>
-                <th className="p-3 text-right">Cost</th>
-                <th className="p-3 text-right">Retail</th>
-                <th className="p-3 text-right">Inv. Value</th>
-                <th className="p-3">Last GRN</th>
-                <th className="p-3">Updated</th>
+                <SortableTh label="Product" columnKey="product" onSort={onSort} icon={icon} className="p-3" />
+                <SortableTh label="Barcode" columnKey="barcode" onSort={onSort} icon={icon} className="p-3" />
+                <SortableTh label="Category" columnKey="category" onSort={onSort} icon={icon} className="p-3" />
+                <SortableTh label="Stock" columnKey="stock" onSort={onSort} icon={icon} className="p-3" align="right" />
+                <SortableTh label="Cost" columnKey="cost" onSort={onSort} icon={icon} className="p-3" align="right" />
+                <SortableTh label="Retail" columnKey="retail" onSort={onSort} icon={icon} className="p-3" align="right" />
+                <SortableTh label="Inv. Value" columnKey="value" onSort={onSort} icon={icon} className="p-3" align="right" />
+                <SortableTh label="Last GRN" columnKey="grn" onSort={onSort} icon={icon} className="p-3" />
+                <SortableTh label="Updated" columnKey="updated" onSort={onSort} icon={icon} className="p-3" />
               </tr>
             </thead>
             <tbody>

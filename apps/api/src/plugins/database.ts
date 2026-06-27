@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { PostgresClient } from '@mama-babi/db-pg';
-import { createPostgresDatabase } from '@mama-babi/db-pg';
+import { createPostgresDatabase, syncSkuPrefixes } from '@mama-babi/db-pg';
 import type { AppConfig } from '../config';
 
 declare module 'fastify' {
@@ -22,6 +22,18 @@ export async function registerDatabase(app: FastifyInstance, config: AppConfig) 
   });
 
   app.decorate('db', db);
+
+  try {
+    const result = await syncSkuPrefixes(db);
+    if (result.categoriesUpdated > 0 || result.productsUpdated > 0) {
+      app.log.info(
+        { ...result },
+        'Synced category SKU prefixes and product SKUs',
+      );
+    }
+  } catch (err) {
+    app.log.error({ err }, 'SKU prefix sync failed');
+  }
 
   app.addHook('onClose', async () => {
     await db.$client.end();

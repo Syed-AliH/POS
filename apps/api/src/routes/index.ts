@@ -4,6 +4,7 @@ import { healthRoutes } from './health';
 import { authRoutes } from './auth.routes';
 import { businessRoutes } from './business.routes';
 import { userRoutes } from './users.routes';
+import { ownerRoutes } from './owner.routes';
 
 export async function registerRoutes(app: FastifyInstance, config: AppConfig) {
   await app.register(healthRoutes, { prefix: '/api/v1' });
@@ -13,4 +14,5 @@ export async function registerRoutes(app: FastifyInstance, config: AppConfig) {
   );
   await app.register(businessRoutes, { prefix: '/api/v1' });
   await app.register(userRoutes, { prefix: '/api/v1' });
+  await app.register(ownerRoutes, { prefix: '/api/v1' });
 }

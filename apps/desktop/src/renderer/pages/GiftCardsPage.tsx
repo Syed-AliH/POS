@@ -1,10 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
+import { SortableTh } from '@renderer/components/SortableTh';
+import { sortByKey, useTableSort } from '@renderer/lib/useTableSort';
 import { formatDateTime } from '@shared/datetime';
 import type { GiftCard } from '@shared/types';
 
 const api = getApi();
+
+type CardSortKey = 'code' | 'balance' | 'status' | 'created';
 
 export function GiftCardsPage() {
   const [cards, setCards] = useState<GiftCard[]>([]);
@@ -14,6 +18,17 @@ export function GiftCardsPage() {
   const [lookupCode, setLookupCode] = useState('');
   const [lookupResult, setLookupResult] = useState<GiftCard | null>(null);
   const [message, setMessage] = useState('');
+  const { onSort, icon, sortKey, sortDir } = useTableSort<CardSortKey>('created', 'desc');
+
+  const sortedCards = useMemo(
+    () => sortByKey(cards, sortKey, sortDir, {
+      code: (c) => c.code,
+      balance: (c) => c.currentBalance,
+      status: (c) => c.status,
+      created: (c) => c.createdAt,
+    }),
+    [cards, sortKey, sortDir],
+  );
 
   const load = async () => {
     const result = await api.giftCards.list();
@@ -88,9 +103,17 @@ export function GiftCardsPage() {
       <div className="panel">
         <h3 className="p-4 font-semibold border-b">Recent Cards</h3>
         <table className="w-full text-sm">
-          <thead className="bg-slate-50"><tr><th className="p-3 text-left">Code</th><th className="p-3 text-left">Balance</th><th className="p-3 text-left">Status</th><th className="p-3 text-left">Created</th><th className="p-3"></th></tr></thead>
+          <thead className="bg-slate-50">
+            <tr>
+              <SortableTh label="Code" columnKey="code" onSort={onSort} icon={icon} className="p-3" />
+              <SortableTh label="Balance" columnKey="balance" onSort={onSort} icon={icon} className="p-3" />
+              <SortableTh label="Status" columnKey="status" onSort={onSort} icon={icon} className="p-3" />
+              <SortableTh label="Created" columnKey="created" onSort={onSort} icon={icon} className="p-3" />
+              <th className="p-3" />
+            </tr>
+          </thead>
           <tbody>
-            {cards.map((c) => (
+            {sortedCards.map((c) => (
               <tr key={c.id} className="border-t">
                 <td className="p-3 font-mono">{c.code}</td>
                 <td className="p-3">PKR {c.currentBalance.toFixed(2)}</td>

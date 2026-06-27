@@ -1,10 +1,14 @@
-import { lazy, Suspense, useEffect } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { Spinner } from '@mama-babi/ui';
+import { isBundledMode } from '@shared/deployment';
+import { isValidApiUrl } from '@shared/apiUrl';
+import { IPC_CHANNELS } from '@shared/ipc-channels';
 import { useAuthStore } from './stores/authStore';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Layout } from './components/Layout';
 import { ToastHost } from './components/ToastHost';
+import { SetupPage } from './pages/SetupPage';
 
 const LoginPage = lazy(() => import('./pages/LoginPage').then((m) => ({ default: m.LoginPage })));
 const CheckoutPage = lazy(() => import('./pages/CheckoutPage').then((m) => ({ default: m.CheckoutPage })));
@@ -37,10 +41,41 @@ function PageLoader() {
 
 export function App() {
   const { init, session, loading, initError } = useAuthStore();
+  const [setupChecked, setSetupChecked] = useState(false);
+  const [needsSetup, setNeedsSetup] = useState(false);
 
   useEffect(() => {
-    init();
-  }, [init]);
+    window.electron?.ipcRenderer
+      .invoke(IPC_CHANNELS.APP_GET_CONFIG)
+      .then((cfg: { apiUrl?: string; deploymentMode?: string } | null) => {
+        if (isBundledMode(cfg?.deploymentMode)) {
+          setNeedsSetup(false);
+        } else if (!isValidApiUrl(cfg?.apiUrl)) {
+          setNeedsSetup(true);
+        }
+        setSetupChecked(true);
+      })
+      .catch(() => setSetupChecked(true));
+  }, []);
+
+  useEffect(() => {
+    if (setupChecked && !needsSetup) init();
+  }, [setupChecked, needsSetup, init]);
+
+  if (!setupChecked) {
+    return <PageLoader />;
+  }
+
+  if (needsSetup) {
+    return (
+      <SetupPage
+        onSaved={() => {
+          setNeedsSetup(false);
+          init();
+        }}
+      />
+    );
+  }
 
   if (loading && !session) {
     return <PageLoader />;

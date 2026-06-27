@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "pnpm --filter @mama-babi/desktop dev",
     "dev:api": "pnpm --filter @mama-babi/api dev",
+    "dev:owner": "pnpm --filter @mama-babi/owner-portal dev",
     "build": "pnpm -r build",
     "build:desktop": "pnpm --filter @mama-babi/desktop build",
     "db:generate": "pnpm --filter @mama-babi/db-schema generate",
@@ -19,6 +20,8 @@
     "db:pg:enable-rls": "pnpm --filter @mama-babi/db-pg enable-rls",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
+    "build:api": "pnpm --filter @mama-babi/api build",
+    "start": "pnpm --filter @mama-babi/api start",
     "postinstall": "pnpm --filter @mama-babi/desktop exec electron-builder install-app-deps",
     "rebuild:native": "pnpm --filter @mama-babi/desktop exec electron-rebuild -f -w better-sqlite3"
   },

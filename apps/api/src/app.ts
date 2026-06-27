@@ -4,6 +4,7 @@ import fastifyJwt from '@fastify/jwt';
 import rateLimit from '@fastify/rate-limit';
 import { ZodError } from 'zod';
 import type { AppConfig } from './config';
+import { jwtSignOptions } from './config';
 import { registerDatabase } from './plugins/database';
 import { registerRoutes } from './routes';
 
@@ -32,7 +33,7 @@ export async function buildApp(config: AppConfig) {
   // ── JWT ───────────────────────────────────────────────────────────────────
   await app.register(fastifyJwt, {
     secret: config.JWT_SECRET,
-    sign: { expiresIn: config.JWT_EXPIRES_IN },
+    sign: jwtSignOptions(config.JWT_EXPIRES_IN),
   });
 
   // ── Global error handler ──────────────────────────────────────────────────
@@ -42,6 +43,14 @@ export async function buildApp(config: AppConfig) {
         success: false,
         error: 'Validation failed',
         details: err.issues.map((i) => ({ field: i.path.join('.'), message: i.message })),
+      });
+    }
+    const pgCode = (err as { code?: string }).code;
+    if (pgCode === '23505') {
+      const detail = (err as { detail?: string }).detail;
+      return reply.code(409).send({
+        success: false,
+        error: detail ?? 'Duplicate value — this record already exists',
       });
     }
     const statusCode = (err as { statusCode?: number }).statusCode;

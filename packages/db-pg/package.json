@@ -2,17 +2,27 @@
   "name": "@mama-babi/db-pg",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./schema": "./src/schema/index.ts",
-    "./client": "./src/client.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./schema": {
+      "types": "./dist/schema/index.d.ts",
+      "default": "./dist/schema/index.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    }
   },
   "scripts": {
+    "build": "tsc",
     "generate": "drizzle-kit generate",
     "migrate": "tsx src/migrate.ts",
+    "sync-sku-prefixes": "tsx src/run-sync-sku-prefixes.ts",
     "seed": "tsx src/seed.ts",
     "reset": "tsx src/reset.ts",
     "bootstrap": "tsx src/bootstrap-from-local.ts",
@@ -20,6 +30,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@mama-babi/barcode": "workspace:*",
     "bcryptjs": "^3.0.2",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.39.3",

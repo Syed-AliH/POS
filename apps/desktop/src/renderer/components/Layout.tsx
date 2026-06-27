@@ -1,11 +1,11 @@
-import { Suspense, useEffect, useMemo } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Moon, Sun, Keyboard } from 'lucide-react';
 import { Spinner } from '@mama-babi/ui';
+import { IPC_CHANNELS } from '@shared/ipc-channels';
 import { useAuthStore } from '../stores/authStore';
 import { useCartStore } from '../stores/cartStore';
 import { useThemeStore } from '../stores/themeStore';
-import { useAutoLock } from '../hooks/useAutoLock';
 import { initShortcutBridge, registerGlobalShortcuts, setActiveRoute } from '../lib/shortcuts';
 import { flattenNavForShortcuts, Sidebar } from './layout/Sidebar';
 import { ShortcutHelp } from './ShortcutHelp';
@@ -19,6 +19,57 @@ const WORKFLOW_HINTS: Record<string, string> = {
   '/sales': 'Return or reprint from sale row',
 };
 
+type ServerStatus = 'checking' | 'online' | 'offline';
+
+function ServerStatusBadge() {
+  const [status, setStatus] = useState<ServerStatus>('checking');
+
+  const checkServer = useCallback(async () => {
+    try {
+      const result = await window.electron.ipcRenderer.invoke(IPC_CHANNELS.APP_PING_SERVER) as {
+        ok: boolean;
+        error?: string;
+      };
+      setStatus(result?.ok ? 'online' : 'offline');
+    } catch {
+      setStatus('offline');
+    }
+  }, []);
+
+  useEffect(() => {
+    void checkServer();
+    const id = setInterval(() => void checkServer(), 30_000);
+    return () => clearInterval(id);
+  }, [checkServer]);
+
+  if (status === 'checking') {
+    return (
+      <span className="hidden rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400 sm:inline">
+        Checking…
+      </span>
+    );
+  }
+
+  if (status === 'online') {
+    return (
+      <span className="hidden rounded-md bg-green-50 px-2 py-1 text-xs font-medium text-green-700 dark:bg-green-950 dark:text-green-400 sm:inline">
+        Online
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => void checkServer()}
+      className="hidden rounded-md bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100 dark:bg-amber-950 dark:text-amber-300 dark:hover:bg-amber-900 sm:inline"
+      title="Cannot reach the API server — click to retry"
+    >
+      Offline
+    </button>
+  );
+}
+
 export function Layout() {
   const { session, logout } = useAuthStore();
   const cartItems = useCartStore((s) => s.items.length);
@@ -26,7 +77,6 @@ export function Layout() {
   const { theme, toggleTheme } = useThemeStore();
   const navigate = useNavigate();
   const location = useLocation();
-  useAutoLock();
 
   const workflowHint = Object.entries(WORKFLOW_HINTS).find(([path]) => location.pathname.includes(path))?.[1];
 
@@ -81,9 +131,7 @@ export function Layout() {
             >
               {theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
             </button>
-            <span className="hidden rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400 sm:inline">
-              Offline
-            </span>
+            <ServerStatusBadge />
             <span className="hidden text-sm font-medium text-slate-700 dark:text-slate-300 md:inline">{session.name}</span>
             <button
               type="button"

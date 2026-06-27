@@ -1,11 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
+import { SortableTh } from '@renderer/components/SortableTh';
+import { sortByKey, useTableSort } from '@renderer/lib/useTableSort';
 import { Modal, ModalActions } from '@renderer/components/Modal';
 import { formatDateTime } from '@shared/datetime';
 import type { EodClosingRecord, EodReport, ShiftSummary } from '@shared/types';
 
 const api = getApi();
+
+type ClosingSortKey = 'date' | 'sales' | 'txns';
+type ShiftSortKey = 'cashier' | 'start' | 'end' | 'status';
 
 export function ShiftsPage() {
   const [currentShift, setCurrentShift] = useState<ShiftSummary | null>(null);
@@ -20,6 +25,27 @@ export function ShiftsPage() {
   const [closingFilterEnd, setClosingFilterEnd] = useState('');
   const [showCloseDay, setShowCloseDay] = useState(false);
   const [message, setMessage] = useState('');
+  const { onSort: onClosingSort, icon: closingIcon, sortKey: closingSortKey, sortDir: closingSortDir } = useTableSort<ClosingSortKey>('date', 'desc');
+  const { onSort: onShiftSort, icon: shiftIcon, sortKey: shiftSortKey, sortDir: shiftSortDir } = useTableSort<ShiftSortKey>('start', 'desc');
+
+  const sortedClosings = useMemo(
+    () => sortByKey(closings, closingSortKey, closingSortDir, {
+      date: (c) => c.closingDate,
+      sales: (c) => c.totalSales,
+      txns: (c) => c.transactionCount,
+    }),
+    [closings, closingSortKey, closingSortDir],
+  );
+
+  const sortedShifts = useMemo(
+    () => sortByKey(shifts, shiftSortKey, shiftSortDir, {
+      cashier: (s) => s.cashierName,
+      start: (s) => s.startTime,
+      end: (s) => s.endTime ?? '',
+      status: (s) => s.status,
+    }),
+    [shifts, shiftSortKey, shiftSortDir],
+  );
 
   const load = async () => {
     const [current, list, report, closingList] = await Promise.all([
@@ -125,15 +151,22 @@ export function ShiftsPage() {
             <input type="date" value={closingFilterEnd} onChange={(e) => setClosingFilterEnd(e.target.value)} className="px-2 py-1 border rounded text-sm" />
           </div>
           <table className="w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-slate-500">
+                <SortableTh label="Date" columnKey="date" onSort={onClosingSort} icon={closingIcon} className="p-3" />
+                <SortableTh label="Sales" columnKey="sales" onSort={onClosingSort} icon={closingIcon} className="p-3" align="right" />
+                <SortableTh label="Transactions" columnKey="txns" onSort={onClosingSort} icon={closingIcon} className="p-3" align="right" />
+              </tr>
+            </thead>
             <tbody>
-              {closings.map((c) => (
+              {sortedClosings.map((c) => (
                 <tr key={c.id} className="border-t cursor-pointer hover:bg-slate-50" onClick={() => viewClosing(c.id)}>
                   <td className="p-3">{c.closingDate}</td>
                   <td className="p-3 text-right">PKR {c.totalSales.toFixed(0)}</td>
                   <td className="p-3 text-right text-slate-500">{c.transactionCount} txns</td>
                 </tr>
               ))}
-              {closings.length === 0 && <tr><td colSpan={3} className="p-6 text-center text-slate-400">No closings yet</td></tr>}
+              {sortedClosings.length === 0 && <tr><td colSpan={3} className="p-6 text-center text-slate-400">No closings yet</td></tr>}
             </tbody>
           </table>
         </div>
@@ -166,11 +199,14 @@ export function ShiftsPage() {
         <table className="w-full text-sm">
           <thead className="bg-slate-50">
             <tr className="text-left text-slate-500">
-              <th className="p-3">Cashier</th><th className="p-3">Start</th><th className="p-3">End</th><th className="p-3">Status</th>
+              <SortableTh label="Cashier" columnKey="cashier" onSort={onShiftSort} icon={shiftIcon} className="p-3" />
+              <SortableTh label="Start" columnKey="start" onSort={onShiftSort} icon={shiftIcon} className="p-3" />
+              <SortableTh label="End" columnKey="end" onSort={onShiftSort} icon={shiftIcon} className="p-3" />
+              <SortableTh label="Status" columnKey="status" onSort={onShiftSort} icon={shiftIcon} className="p-3" />
             </tr>
           </thead>
           <tbody>
-            {shifts.map((s) => (
+            {sortedShifts.map((s) => (
               <tr key={s.id} className="border-t">
                 <td className="p-3">{s.cashierName}</td>
                 <td className="p-3 whitespace-nowrap text-xs">{formatDateTime(s.startTime)}</td>

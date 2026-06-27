@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
+import { SortableTh } from '@renderer/components/SortableTh';
+import { sortByKey, useTableSort } from '@renderer/lib/useTableSort';
 import { Modal, ModalActions } from '@renderer/components/Modal';
 import { ProductSearchModal } from '@renderer/components/ProductSearchModal';
 import { ReceiptPreview } from '@renderer/components/ReceiptPreview';
@@ -11,6 +13,9 @@ import { formatDateOnly, formatTimeOnly, localCalendarDate } from '@shared/datet
 import type { CartItem, Customer, Product, ReceiptPreview as ReceiptPreviewData, SaleSummary } from '@shared/types';
 
 const api = getApi();
+
+type SaleSortKey = 'sale' | 'status' | 'customer' | 'date' | 'time' | 'total';
+type EditItemSortKey = 'item' | 'qty' | 'total';
 
 export function SalesHistoryPage() {
   const navigate = useNavigate();
@@ -27,6 +32,8 @@ export function SalesHistoryPage() {
   const [showProductSearch, setShowProductSearch] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [loading, setLoading] = useState(false);
+  const { onSort, icon, sortKey, sortDir } = useTableSort<SaleSortKey>('date', 'desc');
+  const { onSort: onEditSort, icon: editIcon, sortKey: editSortKey, sortDir: editSortDir } = useTableSort<EditItemSortKey>('item');
 
   const load = async () => {
     setLoading(true);
@@ -45,6 +52,27 @@ export function SalesHistoryPage() {
 
   const filtered = sales.filter((s) =>
     !search || s.saleNumber.toLowerCase().includes(search.toLowerCase()),
+  );
+
+  const sortedSales = useMemo(
+    () => sortByKey(filtered, sortKey, sortDir, {
+      sale: (s) => s.saleNumber,
+      status: (s) => s.status,
+      customer: (s) => s.customerName ?? '',
+      date: (s) => s.createdAt,
+      time: (s) => s.createdAt,
+      total: (s) => s.totalAmount,
+    }),
+    [filtered, sortKey, sortDir],
+  );
+
+  const sortedEditItems = useMemo(
+    () => sortByKey(editItems, editSortKey, editSortDir, {
+      item: (i) => i.productName,
+      qty: (i) => i.quantity,
+      total: (i) => i.lineTotal,
+    }),
+    [editItems, editSortKey, editSortDir],
   );
 
   const editSubtotal = useMemo(
@@ -249,17 +277,17 @@ export function SalesHistoryPage() {
             <table className="w-full text-sm">
               <thead className="table-head">
                 <tr>
-                  <th className="p-3 text-left">Sale #</th>
-                  <th className="p-3">Status</th>
-                  <th className="p-3">Customer</th>
-                  <th className="p-3">Date</th>
-                  <th className="p-3">Time</th>
-                  <th className="p-3 text-right">Total</th>
+                  <SortableTh label="Sale #" columnKey="sale" onSort={onSort} icon={icon} className="p-3" />
+                  <SortableTh label="Status" columnKey="status" onSort={onSort} icon={icon} className="p-3" />
+                  <SortableTh label="Customer" columnKey="customer" onSort={onSort} icon={icon} className="p-3" />
+                  <SortableTh label="Date" columnKey="date" onSort={onSort} icon={icon} className="p-3" />
+                  <SortableTh label="Time" columnKey="time" onSort={onSort} icon={icon} className="p-3" />
+                  <SortableTh label="Total" columnKey="total" onSort={onSort} icon={icon} className="p-3" align="right" />
                   <th className="p-3">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((s) => (
+                {sortedSales.map((s) => (
                   <tr key={s.id} className={`border-t cursor-pointer row-hover ${selected?.id === s.id ? 'row-active' : ''}`} onClick={() => viewDetail(s.id)}>
                     <td className="p-3 font-mono">{s.saleNumber}</td>
                     <td className="p-3 capitalize">{s.status}</td>
@@ -312,13 +340,13 @@ export function SalesHistoryPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-slate-500 border-b">
-                      <th className="p-1.5">Item</th>
-                      <th className="p-1.5">Qty</th>
-                      <th className="p-1.5 text-right">Total</th>
+                      <SortableTh label="Item" columnKey="item" onSort={onEditSort} icon={editIcon} className="p-1.5" />
+                      <SortableTh label="Qty" columnKey="qty" onSort={onEditSort} icon={editIcon} className="p-1.5" />
+                      <SortableTh label="Total" columnKey="total" onSort={onEditSort} icon={editIcon} className="p-1.5" align="right" />
                     </tr>
                   </thead>
                   <tbody>
-                    {editItems.map((item) => (
+                    {sortedEditItems.map((item) => (
                       <tr key={item.productId} className="border-t">
                         <td className="p-1.5">{item.productName}</td>
                         <td className="p-1.5">

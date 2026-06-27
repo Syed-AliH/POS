@@ -1,4 +1,4 @@
-import { and, eq, like, or } from 'drizzle-orm';
+import { and, eq, like, or, sql } from 'drizzle-orm';
 import { v4 as uuid } from 'uuid';
 import {
   categories,
@@ -13,6 +13,7 @@ import {
 } from '@mama-babi/db-schema';
 import { generateBarcode } from '@mama-babi/barcode';
 import type { AdvancedProductSearchInput, ApiResult, Category, Product, ProductHistory, ProductInput } from '@shared/types';
+import { filterProductsByAdvancedSearch } from '@shared/productSearch';
 import { getDb } from '../db';
 import { requireRole, requireSession } from '../session';
 import { logAudit } from '../services/audit';
@@ -46,7 +47,9 @@ export function handleProductSearch(query: string): ApiResult<Product[]> {
   try {
     requireSession();
     const db = getDb();
-    const q = `%${query}%`;
+    const term = query.trim();
+    if (!term) return { success: true, data: [] };
+    const pattern = `%${term.toLowerCase()}%`;
     const rows = db
       .select()
       .from(products)
@@ -54,7 +57,11 @@ export function handleProductSearch(query: string): ApiResult<Product[]> {
         and(
           eq(products.isDeleted, false),
           eq(products.status, 'active'),
-          or(like(products.name, q), like(products.sku, q), like(products.barcode, q)),
+          or(
+            sql`lower(${products.name}) like ${pattern}`,
+            sql`lower(${products.sku}) like ${pattern}`,
+            sql`lower(${products.barcode}) like ${pattern}`,
+          ),
         ),
       )
       .limit(50)
@@ -63,6 +70,22 @@ export function handleProductSearch(query: string): ApiResult<Product[]> {
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Search failed' };
   }
+}
+
+function productNameExists(
+  db: ReturnType<typeof getDb>,
+  name: string,
+  excludeId?: string,
+): boolean {
+  const trimmed = name.trim();
+  if (!trimmed) return false;
+  const conditions = [
+    eq(products.isDeleted, false),
+    sql`lower(${products.name}) = lower(${trimmed})`,
+  ];
+  if (excludeId) conditions.push(sql`${products.id} != ${excludeId}`);
+  const row = db.select({ id: products.id }).from(products).where(and(...conditions)).get();
+  return !!row;
 }
 
 export function handleProductList(params?: { status?: string; limit?: number }): ApiResult<Product[]> {
@@ -127,12 +150,16 @@ export function handleBarcodeLookup(barcode: string): ApiResult<Product | null> 
 export function handleProductCreate(input: ProductInput): ApiResult<Product> {
   try {
     requireRole('super_admin', 'manager');
-    if (!input.name?.trim()) return { success: false, error: 'Product name is required' };
+    const name = input.name?.trim() ?? '';
+    if (!name) return { success: false, error: 'Product name is required' };
     if (!input.categoryId) return { success: false, error: 'Category is required' };
     if (!input.retailPrice || input.retailPrice <= 0) {
       return { success: false, error: 'Retail price must be greater than 0' };
     }
     const db = getDb();
+    if (productNameExists(db, name)) {
+      return { success: false, error: `A product named "${name}" already exists` };
+    }
     const now = new Date().toISOString();
     const id = uuid();
     const sku = generateCategorySku(input.categoryId);
@@ -140,7 +167,7 @@ export function handleProductCreate(input: ProductInput): ApiResult<Product> {
 
     const row = {
       id,
-      name: input.name,
+      name,
       sku,
       barcode,
       categoryId: input.categoryId ?? null,
@@ -174,6 +201,15 @@ export function handleProductUpdate(id: string, input: Partial<ProductInput>): A
     const db = getDb();
     const existing = db.select().from(products).where(eq(products.id, id)).get();
     if (!existing) return { success: false, error: 'Product not found' };
+
+    if (input.name !== undefined) {
+      const name = input.name.trim();
+      if (!name) return { success: false, error: 'Product name is required' };
+      if (productNameExists(db, name, id)) {
+        return { success: false, error: `A product named "${name}" already exists` };
+      }
+      input = { ...input, name };
+    }
 
     const now = new Date().toISOString();
     const updates = { ...input, updatedAt: now };
@@ -255,7 +291,11 @@ export function handleCategoryList(): ApiResult<Category[]> {
   try {
     requireSession();
     const db = getDb();
-    const rows = db.select().from(categories).where(eq(categories.isDeleted, false)).all();
+    let rows = db.select().from(categories).where(eq(categories.isDeleted, false)).all();
+    if (rows.length === 0) {
+      handleCategoryCreate('General', '#3B82F6', 'GEN');
+      rows = db.select().from(categories).where(eq(categories.isDeleted, false)).all();
+    }
     return {
       success: true,
       data: rows.map((r) => ({ id: r.id, name: r.name, color: r.color, skuPrefix: r.skuPrefix })),
@@ -269,22 +309,14 @@ export function handleProductAdvancedSearch(input: AdvancedProductSearchInput): 
   try {
     requireSession();
     const db = getDb();
-    let rows = db.select().from(products).where(and(eq(products.isDeleted, false), eq(products.status, 'active'))).all();
+    const rows = db
+      .select()
+      .from(products)
+      .where(and(eq(products.isDeleted, false), eq(products.status, 'active')))
+      .all()
+      .map(mapProduct);
 
-    if (input.sku?.trim()) {
-      const s = input.sku.trim().toLowerCase();
-      rows = rows.filter((r) => r.sku.toLowerCase().startsWith(s) || r.barcode.startsWith(s));
-    }
-    if (input.master?.trim()) {
-      const m = input.master.trim().toLowerCase();
-      rows = rows.filter((r) => r.name.toLowerCase().startsWith(m));
-    }
-    if (input.refine?.trim()) {
-      const f = input.refine.trim().toLowerCase();
-      rows = rows.filter((r) => r.name.toLowerCase().includes(f));
-    }
-
-    return { success: true, data: rows.slice(0, 50).map(mapProduct) };
+    return { success: true, data: filterProductsByAdvancedSearch(rows, input) };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Search failed' };
   }
@@ -408,6 +440,90 @@ export function handleProductImportCsv(csvContent: string): ApiResult<{ imported
     }
 
     logAudit('products', 'import_csv', undefined, undefined, { imported, errorCount: errors.length });
+    return { success: true, data: { imported, errors } };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Import failed' };
+  }
+}
+
+type ImportRow = {
+  name: string;
+  category: string;
+  cost_price?: string | number;
+  retail_price: string | number;
+  sale_price?: string | number;
+};
+
+export function handleProductImportRows(
+  rows: ImportRow[],
+): ApiResult<{ imported: number; errors: string[] }> {
+  try {
+    requireRole('super_admin', 'manager');
+    if (!rows.length) return { success: false, error: 'No rows found in file' };
+
+    const db = getDb();
+    const errors: string[] = [];
+    let imported = 0;
+    const categoryCache = new Map<string, string>(); // name.lower → id
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 2;
+
+      const name = String(row.name ?? '').trim();
+      if (!name) { errors.push(`Row ${rowNum}: Name is required`); continue; }
+
+      const retailPrice = parseFloat(String(row.retail_price ?? '0'));
+      if (!retailPrice || retailPrice <= 0) {
+        errors.push(`Row ${rowNum} "${name}": Valid Retail Price is required`);
+        continue;
+      }
+
+      const categoryName = String(row.category ?? '').trim();
+      if (!categoryName) { errors.push(`Row ${rowNum} "${name}": Category is required`); continue; }
+
+      let categoryId = categoryCache.get(categoryName.toLowerCase());
+      if (!categoryId) {
+        const existing = db.select({ id: categories.id })
+          .from(categories)
+          .where(sql`lower(${categories.name}) = lower(${categoryName})`)
+          .get();
+        if (existing) {
+          categoryId = existing.id;
+        } else {
+          const now = new Date().toISOString();
+          const catId = uuid();
+          const prefix = deriveSkuPrefix(categoryName).slice(0, 4);
+          db.insert(categories).values({
+            id: catId,
+            name: categoryName,
+            color: '#6366f1',
+            skuPrefix: prefix,
+            deviceId: 'local-device',
+            branchId: 'main',
+            createdAt: now,
+            updatedAt: now,
+          }).run();
+          categoryId = catId;
+        }
+        categoryCache.set(categoryName.toLowerCase(), categoryId);
+      }
+
+      const result = handleProductCreate({
+        name,
+        categoryId,
+        costPrice: parseFloat(String(row.cost_price ?? '0')) || 0,
+        retailPrice,
+        salePrice: row.sale_price ? parseFloat(String(row.sale_price)) || undefined : undefined,
+        taxRate: 0,
+        stockQty: 0,
+      });
+
+      if (result.success) imported++;
+      else errors.push(`Row ${rowNum} "${name}": ${result.error}`);
+    }
+
+    logAudit('products', 'import_excel', undefined, undefined, { imported, errorCount: errors.length });
     return { success: true, data: { imported, errors } };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Import failed' };

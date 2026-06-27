@@ -28,9 +28,8 @@ function calcLineTotal(unitPrice: number, qty: number, discountPercent: number):
   return subtotal - subtotal * (discountPercent / 100);
 }
 
-function calcTax(amount: number, taxRate: number, inclusive: boolean): number {
-  if (inclusive) return amount - amount / (1 + taxRate / 100);
-  return amount * (taxRate / 100);
+function calcTax(_amount: number, _taxRate: number, _inclusive: boolean): number {
+  return 0;
 }
 
 export function buildSaleSummary(saleId: string): SaleSummary | null {
@@ -187,7 +186,7 @@ export function handleSaleCreate(input: CreateSaleInput): ApiResult<SaleSummary>
       }
     }
 
-    const totalAmount = inclusive ? subtotal - discountAmount : subtotal - discountAmount + taxAmount;
+    const totalAmount = subtotal - discountAmount;
 
     if (input.paymentMethod === 'wallet' && input.status !== 'held') {
       if (!input.giftCardCode) return { success: false, error: 'Gift card code required' };
@@ -481,7 +480,7 @@ export function handleSaleUpdate(input: UpdateSaleInput): ApiResult<SaleSummary>
 
     const discountAmount =
       sale.subtotal > 0 ? (sale.discountAmount * subtotal) / sale.subtotal : sale.discountAmount;
-    const totalAmount = inclusive ? subtotal - discountAmount : subtotal - discountAmount + taxAmount;
+    const totalAmount = subtotal - discountAmount;
     const amountTendered = input.amountTendered ?? sale.amountTendered;
     const changeGiven =
       sale.paymentMethod === 'cash' && amountTendered != null

@@ -135,18 +135,11 @@ export const useCartStore = create<CartState>((set, get) => ({
 
   getSubtotal: () => get().items.reduce((sum, i) => sum + i.lineTotal, 0),
 
-  getTax: (taxInclusive) => {
-    const items = get().items;
-    if (taxInclusive) {
-      return items.reduce((sum, i) => sum + (i.lineTotal - i.lineTotal / (1 + i.taxRate / 100)), 0);
-    }
-    return items.reduce((sum, i) => sum + i.lineTotal * (i.taxRate / 100), 0);
-  },
+  getTax: (_taxInclusive?: boolean) => 0,
 
-  getTotal: (taxInclusive) => {
+  getTotal: (_taxInclusive?: boolean) => {
     const subtotal = get().getSubtotal();
     const discount = get().discountAmount;
-    if (taxInclusive) return subtotal - discount;
-    return subtotal - discount + get().getTax(taxInclusive);
+    return subtotal - discount;
   },
 }));

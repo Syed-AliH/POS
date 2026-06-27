@@ -25,6 +25,7 @@ import type {
   LabelTemplateSummary,
   LoginInput,
   LoyaltyRule,
+  LoyaltyRuleInput,
   PrinterInfo,
   PrintLabelsInput,
   Product,
@@ -86,6 +87,7 @@ export interface MamaBabiAPI {
     archive: (id: string) => Promise<ApiResult<Product>>;
     barcodeLookup: (barcode: string) => Promise<ApiResult<Product | null>>;
     importCsv: (csvContent: string) => Promise<ApiResult<{ imported: number; errors: string[] }>>;
+    importRows: (rows: Array<{ name: string; category: string; cost_price?: number; retail_price: number; sale_price?: number }>) => Promise<ApiResult<{ imported: number; errors: string[] }>>;
     seedDemo: () => Promise<ApiResult<{ added: number; skipped: number }>>;
   };
   categories: {
@@ -199,6 +201,7 @@ export interface MamaBabiAPI {
     create: (input: CustomerInput) => Promise<ApiResult<Customer>>;
     update: (id: string, input: Partial<CustomerInput>) => Promise<ApiResult<Customer>>;
     loyaltyRules: () => Promise<ApiResult<LoyaltyRule[]>>;
+    saveLoyaltyRule: (input: LoyaltyRuleInput) => Promise<ApiResult<LoyaltyRule>>;
   };
   promotions: {
     list: () => Promise<ApiResult<Promotion[]>>;
@@ -290,6 +293,7 @@ export function createApi(): MamaBabiAPI {
       archive: (id) => invoke(IPC_CHANNELS.PRODUCT_ARCHIVE, id),
       barcodeLookup: (barcode) => invoke(IPC_CHANNELS.PRODUCT_BARCODE_LOOKUP, barcode),
       importCsv: (csv) => invoke(IPC_CHANNELS.PRODUCT_IMPORT_CSV, csv),
+      importRows: (rows) => invoke(IPC_CHANNELS.PRODUCT_IMPORT_ROWS, rows),
       seedDemo: () => invoke(IPC_CHANNELS.PRODUCT_SEED_DEMO),
     },
     categories: {
@@ -395,6 +399,7 @@ export function createApi(): MamaBabiAPI {
       create: (input) => invoke(IPC_CHANNELS.CUSTOMER_CREATE, input),
       update: (id, input) => invoke(IPC_CHANNELS.CUSTOMER_UPDATE, id, input),
       loyaltyRules: () => invoke(IPC_CHANNELS.LOYALTY_RULES),
+      saveLoyaltyRule: (input) => invoke(IPC_CHANNELS.LOYALTY_RULES_UPDATE, input),
     },
     promotions: {
       list: () => invoke(IPC_CHANNELS.PROMOTION_LIST),

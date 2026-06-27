@@ -5,6 +5,7 @@ export async function healthRoutes(app: FastifyInstance) {
   app.get('/health', async () => ({
     status: 'ok',
     service: 'mama-babi-api',
+    build: process.env.API_BUILD_STAMP ?? 'unknown',
     timestamp: new Date().toISOString(),
   }));
 

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { Search } from 'lucide-react';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
-import { useAuthStore } from '@renderer/stores/authStore';
+import { SortableTh } from '@renderer/components/SortableTh';
+import { sortByKey, useTableSort } from '@renderer/lib/useTableSort';
 import { focusElement, registerPageShortcuts } from '@renderer/lib/shortcuts';
 import { WorkflowStepper } from '@renderer/components/WorkflowStepper';
 import { Modal } from '@renderer/components/Modal';
@@ -16,6 +16,9 @@ import type { ReceiptPreview as ReceiptPreviewData, ReturnSummary, SaleSummary }
 const api = getApi();
 
 type LookupMode = 'saleNumber' | 'customerName' | 'customerPhone';
+type SaleLookupSortKey = 'sale' | 'date' | 'time' | 'amount' | 'customer' | 'phone';
+type ReturnItemSortKey = 'item' | 'sold' | 'returnQty' | 'restock';
+type ReturnHistorySortKey = 'returnNum' | 'date' | 'time' | 'sale' | 'refund' | 'method';
 
 function normalizePhone(phone: string): string {
   return phone.replace(/[\s\-()]/g, '');
@@ -48,15 +51,11 @@ const STEPS = [
 export function ReturnsPage() {
   const [searchParams] = useSearchParams();
   const location = useLocation();
-  const navigate = useNavigate();
-  const { session } = useAuthStore();
-  const isCashier = session?.role === 'cashier';
 
   const [lookupMode, setLookupMode] = useState<LookupMode>('saleNumber');
   const [searchQuery, setSearchQuery] = useState('');
   const [sale, setSale] = useState<SaleSummary | null>(null);
   const [allSales, setAllSales] = useState<SaleSummary[]>([]);
-  const [searched, setSearched] = useState(false);
   const [receiptPreview, setReceiptPreview] = useState<ReceiptPreviewData | null>(null);
   const [reason, setReason] = useState('');
   const [refundMethod, setRefundMethod] = useState<'cash' | 'store_credit' | 'loyalty'>('cash');
@@ -67,10 +66,17 @@ export function ReturnsPage() {
   const [successReturn, setSuccessReturn] = useState<ReturnSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [showReceiptSearch, setShowReceiptSearch] = useState(false);
-  const [startDate, setStartDate] = useState(() => localCalendarDate());
+  const [startDate, setStartDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 6);
+    return localCalendarDate(d);
+  });
   const [endDate, setEndDate] = useState(() => localCalendarDate());
   const searchRef = useRef<HTMLInputElement>(null);
   const submitRef = useRef<() => void>(() => undefined);
+  const { onSort: onSaleSort, icon: saleSortIcon, sortKey: saleSortKey, sortDir: saleSortDir } = useTableSort<SaleLookupSortKey>('date', 'desc');
+  const { onSort: onItemSort, icon: itemSortIcon, sortKey: itemSortKey, sortDir: itemSortDir } = useTableSort<ReturnItemSortKey>('item');
+  const { onSort: onReturnSort, icon: returnSortIcon, sortKey: returnSortKey, sortDir: returnSortDir } = useTableSort<ReturnHistorySortKey>('date', 'desc');
 
   const activeMode = LOOKUP_MODES.find((m) => m.id === lookupMode)!;
 
@@ -86,6 +92,41 @@ export function ReturnsPage() {
     const phoneQ = normalizePhone(searchQuery);
     return allSales.filter((s) => s.customerPhone && normalizePhone(s.customerPhone).includes(phoneQ));
   }, [allSales, searchQuery, lookupMode]);
+
+  const sortedFilteredSales = useMemo(
+    () => sortByKey(filteredSales, saleSortKey, saleSortDir, {
+      sale: (s) => s.saleNumber,
+      date: (s) => s.createdAt,
+      time: (s) => s.createdAt,
+      amount: (s) => s.totalAmount,
+      customer: (s) => s.customerName ?? '',
+      phone: (s) => s.customerPhone ?? '',
+    }),
+    [filteredSales, saleSortKey, saleSortDir],
+  );
+
+  const sortedReturnItems = useMemo(() => {
+    if (!sale) return [];
+    const items = sale.items.filter((i) => i.saleItemId);
+    return sortByKey(items, itemSortKey, itemSortDir, {
+      item: (i) => i.productName,
+      sold: (i) => i.quantity,
+      returnQty: (i) => returnQtys[i.saleItemId!] ?? 0,
+      restock: (i) => (restockFlags[i.saleItemId!] ?? true) ? 1 : 0,
+    });
+  }, [sale, itemSortKey, itemSortDir, returnQtys, restockFlags]);
+
+  const sortedReturns = useMemo(
+    () => sortByKey(returns, returnSortKey, returnSortDir, {
+      returnNum: (r) => r.returnNumber,
+      date: (r) => r.createdAt,
+      time: (r) => r.createdAt,
+      sale: (r) => r.saleNumber,
+      refund: (r) => r.totalRefund,
+      method: (r) => r.refundMethod,
+    }),
+    [returns, returnSortKey, returnSortDir],
+  );
 
   const refundPreview = useMemo(() => {
     if (!sale) return 0;
@@ -122,8 +163,6 @@ export function ReturnsPage() {
   };
 
   const loadAllSales = async () => {
-    // Cashiers cannot browse all sales — they must look up a specific invoice
-    if (isCashier) return;
     setLoading(true);
     const result = await api.sales.list({
       status: 'completed',
@@ -166,7 +205,7 @@ export function ReturnsPage() {
   const handleLookup = async (query?: string) => {
     const q = (query ?? searchQuery).trim();
     if (!q) {
-      if (!isCashier) await loadAllSales();
+      await loadAllSales();
       return;
     }
 
@@ -176,23 +215,23 @@ export function ReturnsPage() {
       setLoading(false);
       if (result.success && result.data) {
         await selectSale(result.data);
-        setSearched(true);
       } else {
         toast.error(result.error ?? 'Sale not found');
       }
       return;
     }
 
-    // For cashier: search by name/phone hits the API with a text filter
-    if (isCashier) {
+    // Name/phone search uses API (sale # is handled above)
+    if (lookupMode !== 'saleNumber') {
       setLoading(true);
       const result = await api.sales.list({
         status: 'completed',
         limit: 50,
         search: q,
+        startDate,
+        endDate,
       });
       setLoading(false);
-      setSearched(true);
       if (result.success) {
         const matches = result.data ?? [];
         setAllSales(matches);
@@ -200,6 +239,8 @@ export function ReturnsPage() {
           await selectSale(matches[0]);
         } else if (!matches.length) {
           toast.error('No matching sales found');
+        } else {
+          toast.info(`${matches.length} sales match — click a row to select`);
         }
       }
       return;
@@ -250,8 +291,6 @@ export function ReturnsPage() {
       setSearchQuery('');
       setReceiptPreview(null);
       setReason('');
-      setAllSales([]);
-      setSearched(false);
       loadReturns();
       loadAllSales();
       toast.success(`Return ${result.data.returnNumber} — PKR ${result.data.totalRefund.toFixed(2)}`);
@@ -267,8 +306,6 @@ export function ReturnsPage() {
   const handleModeChange = (mode: LookupMode) => {
     setLookupMode(mode);
     setSearchQuery('');
-    setAllSales([]);
-    setSearched(false);
     focusElement(searchRef, true);
   };
 
@@ -282,14 +319,11 @@ export function ReturnsPage() {
             <h2 className="text-2xl font-bold">Returns</h2>
             <p className="text-sm text-slate-500">Return policy: {returnPolicyDays} days from purchase</p>
           </div>
-          {!isCashier && (
-            <div className="flex gap-2 items-center flex-wrap">
-              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="px-3 py-2 border rounded-lg text-sm" />
-              <span className="text-slate-400 text-sm">to</span>
-              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="px-3 py-2 border rounded-lg text-sm" />
-              <Button variant="ghost" onClick={() => navigate('/sales')}>View Sales History</Button>
-            </div>
-          )}
+          <div className="flex gap-2 items-center flex-wrap">
+            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="px-3 py-2 border rounded-lg text-sm" />
+            <span className="text-slate-400 text-sm">to</span>
+            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="px-3 py-2 border rounded-lg text-sm" />
+          </div>
         </div>
 
         <div className="panel p-4 mb-6">
@@ -329,39 +363,29 @@ export function ReturnsPage() {
               </div>
             )}
 
-            {/* Cashier mode: show prompt until a search is made */}
-            {isCashier && !searched && !sale && (
-              <div className="flex-1 flex flex-col items-center justify-center gap-3 py-10 text-slate-400">
-                <Search className="h-10 w-10 opacity-40" />
-                <p className="text-sm font-medium">Enter an invoice number or customer phone to look up a sale</p>
-                <p className="text-xs">You cannot browse all sales — enter a specific invoice # or phone number</p>
-              </div>
-            )}
-
-            {/* Full list (managers) or search results (cashiers after search) */}
-            {(!isCashier || searched) && !sale && (
+            {!sale && (
               <div className="flex-1 overflow-y-auto">
                 <table className="w-full text-sm">
                   <thead className="table-head">
                     <tr className="text-left border-b">
-                      <th className="p-2 pl-3">Sale #</th>
-                      <th className="p-2">Date</th>
-                      <th className="p-2">Time</th>
-                      <th className="p-2 text-right">Amount</th>
-                      <th className="p-2">Customer</th>
-                      <th className="p-2 pr-3">Phone</th>
+                      <SortableTh label="Sale #" columnKey="sale" onSort={onSaleSort} icon={saleSortIcon} className="p-2 pl-3" />
+                      <SortableTh label="Date" columnKey="date" onSort={onSaleSort} icon={saleSortIcon} className="p-2" />
+                      <SortableTh label="Time" columnKey="time" onSort={onSaleSort} icon={saleSortIcon} className="p-2" />
+                      <SortableTh label="Amount" columnKey="amount" onSort={onSaleSort} icon={saleSortIcon} className="p-2" align="right" />
+                      <SortableTh label="Customer" columnKey="customer" onSort={onSaleSort} icon={saleSortIcon} className="p-2" />
+                      <SortableTh label="Phone" columnKey="phone" onSort={onSaleSort} icon={saleSortIcon} className="p-2 pr-3" />
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredSales.length === 0 ? (
+                    {sortedFilteredSales.length === 0 ? (
                       <tr>
                         <td colSpan={6} className="p-8 text-center text-slate-400">
                           {loading
-                            ? 'Looking up…'
-                            : 'No sales found — try a different invoice # or phone number'}
+                            ? 'Loading sales…'
+                            : 'No sales found — try a different date range or search'}
                         </td>
                       </tr>
-                    ) : filteredSales.map((row) => (
+                    ) : sortedFilteredSales.map((row) => (
                       <tr
                         key={row.id}
                         onClick={() => selectSale(row)}
@@ -379,16 +403,11 @@ export function ReturnsPage() {
                     ))}
                   </tbody>
                 </table>
-                {filteredSales.length > 0 && !isCashier && (
+                {sortedFilteredSales.length > 0 && (
                   <p className="text-xs text-slate-400 px-3 py-2 border-t">
-                    {filteredSales.length} sale{filteredSales.length !== 1 ? 's' : ''}
+                    {sortedFilteredSales.length} sale{sortedFilteredSales.length !== 1 ? 's' : ''}
                     {searchQuery.trim() ? ' matching filter' : ` for ${startDate === endDate ? startDate : `${startDate} → ${endDate}`}`}
                     {' '}— click a row to view receipt
-                  </p>
-                )}
-                {filteredSales.length > 1 && isCashier && (
-                  <p className="text-xs text-slate-400 px-3 py-2 border-t">
-                    {filteredSales.length} sales found — click a row to select
                   </p>
                 )}
               </div>
@@ -416,14 +435,14 @@ export function ReturnsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-slate-500 border-b">
-                    <th className="p-2">Item</th>
-                    <th className="p-2">Sold</th>
-                    <th className="p-2">Return qty</th>
-                    <th className="p-2">Restock</th>
+                    <SortableTh label="Item" columnKey="item" onSort={onItemSort} icon={itemSortIcon} className="p-2" />
+                    <SortableTh label="Sold" columnKey="sold" onSort={onItemSort} icon={itemSortIcon} className="p-2" />
+                    <SortableTh label="Return qty" columnKey="returnQty" onSort={onItemSort} icon={itemSortIcon} className="p-2" />
+                    <SortableTh label="Restock" columnKey="restock" onSort={onItemSort} icon={itemSortIcon} className="p-2" />
                   </tr>
                 </thead>
                 <tbody>
-                  {sale.items.map((item) => item.saleItemId && (
+                  {sortedReturnItems.map((item) => item.saleItemId && (
                     <tr key={item.saleItemId} className="border-t">
                       <td className="p-2">{item.productName}</td>
                       <td className="p-2">{item.quantity}</td>
@@ -465,8 +484,7 @@ export function ReturnsPage() {
           )}
         </div>
 
-        {!isCashier && (
-          <div className="panel">
+        <div className="panel">
             <h3 className="p-4 font-semibold border-b">
               Recent Returns
               <span className="text-sm font-normal text-slate-500 ml-2">
@@ -475,12 +493,19 @@ export function ReturnsPage() {
             </h3>
             <table className="w-full text-sm">
               <thead className="table-head">
-                <tr><th className="p-3 text-left">Return #</th><th className="p-3">Date</th><th className="p-3">Time</th><th className="p-3">Sale #</th><th className="p-3">Refund</th><th className="p-3">Method</th></tr>
+                <tr>
+                  <SortableTh label="Return #" columnKey="returnNum" onSort={onReturnSort} icon={returnSortIcon} className="p-3" />
+                  <SortableTh label="Date" columnKey="date" onSort={onReturnSort} icon={returnSortIcon} className="p-3" />
+                  <SortableTh label="Time" columnKey="time" onSort={onReturnSort} icon={returnSortIcon} className="p-3" />
+                  <SortableTh label="Sale #" columnKey="sale" onSort={onReturnSort} icon={returnSortIcon} className="p-3" />
+                  <SortableTh label="Refund" columnKey="refund" onSort={onReturnSort} icon={returnSortIcon} className="p-3" />
+                  <SortableTh label="Method" columnKey="method" onSort={onReturnSort} icon={returnSortIcon} className="p-3" />
+                </tr>
               </thead>
               <tbody>
-                {returns.length === 0 ? (
+                {sortedReturns.length === 0 ? (
                   <tr><td colSpan={6} className="p-8 text-center text-slate-400">No returns for the selected date</td></tr>
-                ) : returns.map((r) => (
+                ) : sortedReturns.map((r) => (
                   <tr key={r.id} className="border-t">
                     <td className="p-3 font-mono">{r.returnNumber}</td>
                     <td className="p-3 text-slate-500 whitespace-nowrap text-xs">{formatDateOnly(r.createdAt)}</td>
@@ -493,7 +518,6 @@ export function ReturnsPage() {
               </tbody>
             </table>
           </div>
-        )}
       </div>
 
       <Modal open={!!successReturn} title="Return processed" onClose={() => setSuccessReturn(null)}

@@ -17,3 +17,5 @@ coverage/
 .turbo/
 *.tsbuildinfo
 out/
+apps/desktop/api-bundle/
+apps/desktop/resources/secrets.json

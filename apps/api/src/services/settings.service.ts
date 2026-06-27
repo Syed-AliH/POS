@@ -72,3 +72,9 @@ export async function incrementGrnCounter(db: PostgresClient): Promise<string> {
   const next = await incrementCounter(db, 'grn_counter');
   return `GRN-${year}-${String(next).padStart(4, '0')}`;
 }
+
+export async function incrementReturnCounter(db: PostgresClient): Promise<string> {
+  const year = new Date().getFullYear();
+  const next = await incrementCounter(db, 'return_counter');
+  return `RT-${year}-${String(next).padStart(6, '0')}`;
+}

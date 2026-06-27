@@ -1,8 +1,17 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "rootDir": "src",
     "outDir": "dist",
-    "lib": ["ES2022"]
+    "lib": ["ES2022"],
+    "noEmit": false,
+    "module": "CommonJS",
+    "moduleResolution": "Node10"
   },
-  "include": ["src/**/*.ts"]
+  "include": [
+    "src/index.ts",
+    "src/client.ts",
+    "src/sync-sku-prefixes.ts",
+    "src/schema/**/*.ts"
+  ]
 }
