@@ -38,7 +38,7 @@ const api = getApi();
 const GRN_ROUTE = '/grn';
 
 type Tab = 'create' | 'records';
-type LineSortKey = 'product' | 'qty' | 'cost' | 'retail' | 'margin' | 'total';
+type LineSortKey = 'sku' | 'product' | 'qty' | 'cost' | 'retail' | 'margin' | 'total';
 type RecordSortKey = 'grn' | 'vendor' | 'payment' | 'created' | 'received' | 'total' | 'status';
 
 function lineMarginPct(unitCost: number, unitRetail: number): number {
@@ -103,21 +103,22 @@ function grnItemsToDraftLines(items: GrnSummary['items']): GrnDraftLine[] {
   }));
 }
 
-function sortDraftLines(
-  rows: Array<{
-    idx: number;
-    line: GrnDraftLine;
-    productName: string;
-    retail: number;
-    margin: number;
-    total: number;
-  }>,
+function sortDraftLines<T extends {
+  productName: string;
+  productSku: string;
+  retail: number;
+  margin: number;
+  total: number;
+  line: GrnDraftLine;
+}>(
+  rows: T[],
   lineSortKey: LineSortKey,
   lineSortDir: 'asc' | 'desc',
 ) {
   rows.sort((a, b) => {
     let cmp = 0;
-    if (lineSortKey === 'product') cmp = a.productName.localeCompare(b.productName);
+    if (lineSortKey === 'sku') cmp = a.productSku.localeCompare(b.productSku);
+    else if (lineSortKey === 'product') cmp = a.productName.localeCompare(b.productName);
     else if (lineSortKey === 'qty') cmp = a.line.qty - b.line.qty;
     else if (lineSortKey === 'cost') cmp = a.line.unitCost - b.line.unitCost;
     else if (lineSortKey === 'retail') cmp = a.retail - b.retail;
@@ -126,6 +127,38 @@ function sortDraftLines(
     return lineSortDir === 'asc' ? cmp : -cmp;
   });
   return rows;
+}
+
+function sortRecordItems<T extends {
+  productName: string;
+  productSku: string;
+  qty: number;
+  unitCost: number;
+  unitRetail: number;
+  lineTotal: number;
+}>(
+  items: T[],
+  lineSortKey: LineSortKey,
+  lineSortDir: 'asc' | 'desc',
+) {
+  const rows = items.map((item) => ({
+    item,
+    productName: item.productName,
+    productSku: item.productSku,
+    retail: item.unitRetail,
+    margin: lineMarginPct(item.unitCost, item.unitRetail),
+    total: item.lineTotal,
+    line: {
+      productId: '',
+      productName: item.productName,
+      productSku: item.productSku,
+      qty: item.qty,
+      unitCost: item.unitCost,
+      unitRetail: item.unitRetail,
+      retailInput: String(item.unitRetail),
+    } satisfies GrnDraftLine,
+  }));
+  return sortDraftLines(rows, lineSortKey, lineSortDir).map((r) => r.item);
 }
 
 export function GrnPage() {
@@ -230,6 +263,13 @@ export function GrnPage() {
     });
     return sortDraftLines(rows, editLineSortKey, editLineSortDir);
   }, [editLines, products, editingRecord, editLineSortKey, editLineSortDir]);
+
+  const sortedViewItems = useMemo(() => {
+    if (!editingRecord) return [];
+    const editable = editingRecord.status === 'draft' || editingRecord.status === 'finalized';
+    if (editable) return [];
+    return sortRecordItems(editingRecord.items, editLineSortKey, editLineSortDir);
+  }, [editingRecord, editLineSortKey, editLineSortDir]);
 
   const toggleLineSort = (key: LineSortKey) => {
     if (lineSortKey === key) setLineSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -855,7 +895,13 @@ export function GrnPage() {
               <table className="w-full text-sm">
                 <thead className="table-head">
                   <tr>
-                    <th className="min-w-[220px] p-2 pl-3 text-left">
+                    <th className="w-12 p-2 text-center">SR</th>
+                    <th className="min-w-[120px] p-2 text-left">
+                      <button type="button" onClick={() => toggleLineSort('sku')} className="font-medium hover:text-primary-700 dark:hover:text-primary-400">
+                        SKU{lineSortIcon('sku')}
+                      </button>
+                    </th>
+                    <th className="min-w-[180px] p-2 pl-1 text-left">
                       <button type="button" onClick={() => toggleLineSort('product')} className="font-medium hover:text-primary-700 dark:hover:text-primary-400">
                         Product{lineSortIcon('product')}
                       </button>
@@ -891,17 +937,18 @@ export function GrnPage() {
                 <tbody>
                   {sortedLines.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="p-12 text-center text-slate-400">
+                      <td colSpan={9} className="p-12 text-center text-slate-400">
                         Search or press F1 to add products to this GRN
                       </td>
                     </tr>
-                  ) : sortedLines.map(({ idx, line, productName, productSku, retail, margin }) => {
+                  ) : sortedLines.map(({ idx, line, productName, productSku, retail, margin }, srIndex) => {
                     const previewRetail = retail;
                     return (
                       <tr key={line.productId} className="border-t border-slate-100 dark:border-slate-800">
-                        <td className="p-2 pl-3">
+                        <td className="p-2 text-center text-slate-500">{srIndex + 1}</td>
+                        <td className="p-2 font-mono text-xs text-slate-600 dark:text-slate-400">{productSku || '—'}</td>
+                        <td className="p-2 pl-1">
                           <div className="font-medium">{productName}</div>
-                          <div className="text-xs text-slate-400">{productSku || line.productId}</div>
                         </td>
                         <td className="p-2">
                           <input
@@ -960,7 +1007,7 @@ export function GrnPage() {
                 {lines.length > 0 && (
                   <tfoot>
                     <tr className="border-t-2 border-slate-200 bg-slate-50 font-semibold dark:border-slate-700 dark:bg-slate-800/80">
-                      <td className="p-2 pl-3">Total</td>
+                      <td colSpan={3} className="p-2 pl-3">Total</td>
                       <td className="p-2 text-center">{lineTotals.qtyTotal}</td>
                       <td className="p-2 text-center" title="Total cost">
                         {lineTotals.costTotal.toFixed(2)}
@@ -1153,7 +1200,13 @@ export function GrnPage() {
                 <table className="w-full text-sm">
                   <thead className="table-head">
                     <tr>
-                      <th className="min-w-[220px] p-2 pl-3 text-left">
+                      <th className="w-12 p-2 text-center">SR</th>
+                      <th className="min-w-[120px] p-2 text-left">
+                        <button type="button" onClick={() => toggleEditLineSort('sku')} className="font-medium hover:text-primary-700 dark:hover:text-primary-400">
+                          SKU{editLineSortIcon('sku')}
+                        </button>
+                      </th>
+                      <th className="min-w-[180px] p-2 pl-1 text-left">
                         <button type="button" onClick={() => toggleEditLineSort('product')} className="font-medium hover:text-primary-700 dark:hover:text-primary-400">
                           Product{editLineSortIcon('product')}
                         </button>
@@ -1188,11 +1241,12 @@ export function GrnPage() {
                   </thead>
                   <tbody>
                     {canEditRecord ? (
-                      sortedEditLines.map(({ idx, line, productName, productSku, retail, margin }) => (
+                      sortedEditLines.map(({ idx, line, productName, productSku, retail, margin }, srIndex) => (
                         <tr key={line.productId} className="border-t border-slate-100 dark:border-slate-800">
-                          <td className="p-2 pl-3">
+                          <td className="p-2 text-center text-slate-500">{srIndex + 1}</td>
+                          <td className="p-2 font-mono text-xs text-slate-600 dark:text-slate-400">{productSku || '—'}</td>
+                          <td className="p-2 pl-1">
                             <div className="font-medium">{productName}</div>
-                            <div className="text-xs text-slate-400">{productSku || line.productId}</div>
                           </td>
                           <td className="p-2">
                             <input type="number" min={1} value={line.qty} onChange={(e) => updateEditLine(idx, { qty: parseInt(e.target.value, 10) || 1 })} className="w-full min-w-[4rem] rounded border px-2 py-1 dark:border-slate-700 dark:bg-slate-900" />
@@ -1225,11 +1279,13 @@ export function GrnPage() {
                         </tr>
                       ))
                     ) : (
-                      editingRecord.items.map((item) => {
+                      sortedViewItems.map((item, srIndex) => {
                         const margin = lineMarginPct(item.unitCost, item.unitRetail);
                         return (
                           <tr key={item.id} className="border-t border-slate-100 dark:border-slate-800">
-                            <td className="p-2 pl-3">{item.productName} <span className="text-slate-400 text-xs">({item.productSku})</span></td>
+                            <td className="p-2 text-center text-slate-500">{srIndex + 1}</td>
+                            <td className="p-2 font-mono text-xs text-slate-600 dark:text-slate-400">{item.productSku}</td>
+                            <td className="p-2 pl-1">{item.productName}</td>
                             <td className="p-2 text-center">{item.qty}</td>
                             <td className="p-2 text-center">{item.unitCost.toFixed(2)}</td>
                             <td className="p-2 text-center">{item.unitRetail.toFixed(2)}</td>
@@ -1243,7 +1299,7 @@ export function GrnPage() {
                   {(canEditRecord ? editLines.length > 0 : (editingRecord?.items.length ?? 0) > 0) && (
                     <tfoot>
                       <tr className="border-t-2 border-slate-200 bg-slate-50 font-semibold dark:border-slate-700 dark:bg-slate-800/80">
-                        <td className="p-1.5">Total</td>
+                        <td colSpan={3} className="p-1.5">Total</td>
                         <td className="p-1.5 text-center">{(canEditRecord ? editLineTotals : recordLineTotals)!.qtyTotal}</td>
                         <td className="p-1.5 text-center">{(canEditRecord ? editLineTotals : recordLineTotals)!.costTotal.toFixed(2)}</td>
                         <td className="p-1.5 text-center">{(canEditRecord ? editLineTotals : recordLineTotals)!.retailTotal.toFixed(2)}</td>

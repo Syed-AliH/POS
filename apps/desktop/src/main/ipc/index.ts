@@ -11,6 +11,7 @@ import { hasCloudHandler, invokeCloud } from '../cloud/client';
 import { isCloudMode } from '../cloud/config';
 import { withCloud } from './cloud-proxy';
 import { registerAppConfigHandlers } from './appConfig';
+import { registerUpdaterHandlers } from './updater';
 import {
   handleGetSession,
   handleLogin,
@@ -185,7 +186,8 @@ export function registerIpcHandlers(): void {
     withCloud(IPC_CHANNELS.CATEGORY_UPDATE, () => handleCategoryUpdate(id, input), [id, input]));
   ipcMain.handle(IPC_CHANNELS.PRODUCT_ADVANCED_SEARCH, (_e, input) =>
     withCloud(IPC_CHANNELS.PRODUCT_ADVANCED_SEARCH, () => handleProductAdvancedSearch(input), [input]));
-  ipcMain.handle(IPC_CHANNELS.PRODUCT_HISTORY, (_e, productId: string) => handleProductHistory(productId));
+  ipcMain.handle(IPC_CHANNELS.PRODUCT_HISTORY, (_e, productId: string) =>
+    withCloud(IPC_CHANNELS.PRODUCT_HISTORY, () => handleProductHistory(productId), [productId]));
   ipcMain.handle(IPC_CHANNELS.PRODUCT_ARCHIVE, (_e, id: string) => handleProductArchive(id));
   ipcMain.handle(IPC_CHANNELS.PRODUCT_SEED_DEMO, () => handleProductSeedDemo());
 
@@ -407,4 +409,5 @@ export function registerIpcHandlers(): void {
     withCloud(IPC_CHANNELS.LABEL_TEMPLATE_SET_DEFAULT, () => handleLabelTemplateSetDefault(id), [id]));
 
   registerAppConfigHandlers();
+  registerUpdaterHandlers();
 }

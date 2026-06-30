@@ -8,6 +8,7 @@ import {
   normalizeLabelLayout,
   normalizeLabelRollConfig,
   SAMPLE_LABEL_PRODUCT,
+  SAMPLE_LABEL_PRODUCT_2,
   type LabelRollConfig,
 } from '@mama-babi/printer';
 import { Button, PageHeader } from '@mama-babi/ui';
@@ -471,9 +472,9 @@ export function LabelTemplateConfigPage() {
               layout={layout!}
               products={[
                 SAMPLE_LABEL_PRODUCT,
-                { ...SAMPLE_LABEL_PRODUCT, name: 'Cotton Onesie Set', sku: 'BB-ONS-012' },
-                { ...SAMPLE_LABEL_PRODUCT, name: 'Baby Wipes 80pk', sku: 'BB-WIP-080' },
-                { ...SAMPLE_LABEL_PRODUCT, name: 'Teething Ring', sku: 'BB-TEE-001' },
+                SAMPLE_LABEL_PRODUCT_2,
+                { ...SAMPLE_LABEL_PRODUCT, name: 'Stacking Blocks 12pc', sku: 'SKU-TO-0003' },
+                { ...SAMPLE_LABEL_PRODUCT_2, name: 'Shape Sorter', sku: 'SKU-TO-0004' },
               ]}
               previewRows={2}
             />

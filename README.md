@@ -239,6 +239,7 @@ All business routes require a valid JWT except health and login.
 | [docs/05-api-ipc-reference.md](docs/05-api-ipc-reference.md) | IPC channel list |
 | [docs/07-roles-permissions.md](docs/07-roles-permissions.md) | Role matrix |
 | [DEPLOY.md](DEPLOY.md) | Production deployment guide |
+| [docs/AUTO-UPDATE.md](docs/AUTO-UPDATE.md) | GitHub Releases auto-update workflow |
 
 ---
 

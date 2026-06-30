@@ -32,6 +32,7 @@ import {
   isBarcodeBarWidthAuto,
   resolveLabelFontFamily,
   SAMPLE_LABEL_PRODUCT,
+  SAMPLE_LABEL_PRODUCT_2,
   type LabelElement,
   type LabelFieldType,
 } from '@mama-babi/printer';
@@ -47,14 +48,13 @@ import {
   LABEL_FIELD_META,
 } from '@renderer/components/designer/LabelCanvasPreview';
 import { LabelDesignerCanvas } from '@renderer/components/designer/LabelDesignerCanvas';
-import { useDebouncedTemplateSave } from '@renderer/hooks/useDebouncedTemplateSave';
 import { useLabelDefaultsStore } from '@renderer/stores/labelDefaultsStore';
 import { useLabelTemplatesStore } from '@renderer/stores/labelTemplatesStore';
 import type { LabelTemplateSummary } from '@shared/types';
 
 const api = getApi();
 
-const BATCH_SAMPLES = [SAMPLE_LABEL_PRODUCT, SAMPLE_LABEL_PRODUCT];
+const BATCH_SAMPLES = [SAMPLE_LABEL_PRODUCT, SAMPLE_LABEL_PRODUCT_2];
 
 export function LabelDesignerPage() {
   const [templates, setTemplates] = useState<LabelTemplateSummary[]>([]);
@@ -332,24 +332,11 @@ export function LabelDesignerPage() {
     return null;
   }, [draft, setLastTemplateId, storeName, upsertTemplateInStore]);
 
-  useDebouncedTemplateSave(dirty, handleSave);
-
-  useEffect(() => {
-    const flushOnLeave = () => {
-      if (dirty) void handleSave({ silent: true });
-    };
-    window.addEventListener('beforeunload', flushOnLeave);
-    return () => {
-      window.removeEventListener('beforeunload', flushOnLeave);
-      if (dirty) void handleSave({ silent: true });
-    };
-  }, [dirty, handleSave]);
-
   const handleTestPrint = async () => {
     if (!draft) return;
     if (dirty) {
-      const saved = await handleSave({ silent: true });
-      if (!saved) return;
+      setMessage('Save your design first, then print a test label.');
+      return;
     }
     setPrinting(true);
     try {
@@ -711,12 +698,16 @@ export function LabelDesignerPage() {
                   <div>
                     <label className="text-xs text-slate-500">Font size</label>
                     <input
-                      type="range"
-                      min={6}
-                      max={16}
+                      type="number"
+                      min={1}
+                      step={1}
                       value={selectedEl.fontSize}
-                      onChange={(e) => updateElement(selectedEl.id, { fontSize: Number(e.target.value) })}
-                      className="block w-32 mt-1"
+                      onChange={(e) => {
+                        const next = Number(e.target.value);
+                        if (!Number.isFinite(next)) return;
+                        updateElement(selectedEl.id, { fontSize: Math.max(1, next) });
+                      }}
+                      className="form-input w-full mt-1 h-9 text-sm"
                     />
                   </div>
                 )}

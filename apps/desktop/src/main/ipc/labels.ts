@@ -1,12 +1,35 @@
 import { eq } from 'drizzle-orm';
 import { products } from '@mama-babi/db-schema';
-import type { ApiResult, LabelTemplateSummary } from '@shared/types';
+import { IPC_CHANNELS } from '@shared/ipc-channels';
+import type { ApiResult, LabelTemplateSummary, Product } from '@shared/types';
+import { invokeCloud } from '../cloud/client';
+import { isCloudMode } from '../cloud/config';
 import { getDb } from '../db';
 import { requireRole } from '../session';
 import { logAudit } from '../services/audit';
 import { listLabelTemplates, getLabelTemplateById } from '../services/labelTemplates';
 import { printLabelsFromTemplate } from '../services/labelPrintTemplate';
 import { normalizeBarcodeForPrint } from '@mama-babi/printer';
+
+type LabelPrintProduct = { name: string; sku: string; barcode: string; price: number };
+
+async function loadProductForLabel(productId: string): Promise<Product | null> {
+  if (isCloudMode()) {
+    const result = await invokeCloud(IPC_CHANNELS.PRODUCT_GET, [productId]) as ApiResult<Product>;
+    return result.success && result.data ? result.data : null;
+  }
+  const row = getDb().select().from(products).where(eq(products.id, productId)).get();
+  return row ?? null;
+}
+
+function toLabelPrintProduct(product: Product): LabelPrintProduct {
+  return {
+    name: product.name,
+    sku: product.sku,
+    barcode: normalizeBarcodeForPrint(product.barcode ?? ''),
+    price: product.salePrice ?? product.retailPrice,
+  };
+}
 
 export function handleLabelTemplates(): ApiResult<LabelTemplateSummary[]> {
   try {
@@ -39,28 +62,23 @@ export async function handleLabelPrintBatch(input: {
     const template = getLabelTemplateById(input.templateId);
     if (!template) return { success: false, error: 'Template not found' };
 
-    const db = getDb();
-    const labelProducts: Array<{ name: string; sku: string; barcode: string; price: number }> = [];
+    const labelProducts: LabelPrintProduct[] = [];
     const notFound: string[] = [];
+    const productCache = new Map<string, Product | null>();
 
     for (const item of input.items) {
-      const product = db
-        .select()
-        .from(products)
-        .where(eq(products.id, item.productId))
-        .get();
+      let product = productCache.get(item.productId);
+      if (product === undefined) {
+        product = await loadProductForLabel(item.productId);
+        productCache.set(item.productId, product);
+      }
       if (!product) {
         notFound.push(item.productId);
         continue;
       }
 
       const copies = Math.max(1, item.copies);
-      const labelProduct = {
-        name: product.name,
-        sku: product.sku,
-        barcode: normalizeBarcodeForPrint(product.barcode ?? ''),
-        price: product.salePrice ?? product.retailPrice,
-      };
+      const labelProduct = toLabelPrintProduct(product);
       for (let i = 0; i < copies; i++) {
         labelProducts.push({ ...labelProduct });
       }
@@ -75,7 +93,7 @@ export async function handleLabelPrintBatch(input: {
       return {
         success: false,
         error: notFound.length
-          ? `Products not found in database (${notFound.length} IDs missing). Refresh the product list and try again.`
+          ? `Products not found (${notFound.length} missing). Refresh the product list and try again.`
           : 'No valid products',
       };
     }

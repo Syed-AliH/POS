@@ -3,6 +3,7 @@ import {
   normalizeBarcodeForPrint,
   normalizeLabelRollConfig,
   resolveBarcodePrintFormat,
+  resolveBarcodePrintMetrics,
   SAMPLE_LABEL_PRODUCT,
   type LabelLayout,
   type LabelProduct,
@@ -69,11 +70,19 @@ export async function printLabelsBatch(
 
   const barcodeAudit = products.map((p) => {
     const normalized = normalizeBarcodeForPrint(p.barcode);
+    const format = resolveBarcodePrintFormat(p.barcode);
+    const barcodeEl = layout.elements?.find((e) => e.type === 'barcode' && e.visible);
+    const metrics = barcodeEl
+      ? resolveBarcodePrintMetrics(barcodeEl, widthMm, heightMm, p.barcode)
+      : null;
     return {
       sku: p.sku,
       raw: p.barcode,
       normalized,
-      format: resolveBarcodePrintFormat(p.barcode),
+      format,
+      barWidth: metrics?.barWidth,
+      svgWidthPx: metrics?.svgWidthPx,
+      maxWidthPx: metrics?.maxWidthPx,
     };
   });
   const normalizedSet = new Set<string>();

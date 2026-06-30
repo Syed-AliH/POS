@@ -1,5 +1,9 @@
 import JsBarcode from 'jsbarcode';
-import { normalizeBarcodeForPrint, resolveBarcodePrintFormat } from '@mama-babi/printer';
+import {
+  barcodeDesignerMinBarWidth,
+  normalizeBarcodeForPrint,
+  resolveBarcodePrintFormat,
+} from '@mama-babi/printer';
 import { DOMImplementation, XMLSerializer, type Document } from '@xmldom/xmldom';
 
 function normalizeBarcodeValue(value: string, format: string): string {
@@ -14,6 +18,11 @@ function clearSvgChildren(svg: Element): void {
   while (svg.firstChild) {
     svg.removeChild(svg.firstChild);
   }
+}
+
+function parseBarcodeSvgWidth(svg: string): number | null {
+  const match = svg.match(/\bwidth="([0-9.]+)"/);
+  return match ? Number.parseFloat(match[1]) : null;
 }
 
 /** JsBarcode must create bar nodes on the same document as the root SVG. */
@@ -33,12 +42,7 @@ function withBarcodeDocument<T>(doc: Document, fn: () => T): T {
   }
 }
 
-/** Render barcode SVG markup in Node — embedded directly in print HTML. */
-export function renderBarcodeSvgMarkup(
-  value: string,
-  height: number,
-  barWidth: number,
-): string {
+function renderBarcodeSvgAtWidth(value: string, height: number, barWidth: number): string {
   if (!value.trim()) return '';
 
   const format = resolveBarcodePrintFormat(value);
@@ -52,11 +56,11 @@ export function renderBarcodeSvgMarkup(
   svg.setAttribute('shape-rendering', 'crispEdges');
 
   return withBarcodeDocument(doc, () => {
-    for (const format of candidates) {
+    for (const candidate of candidates) {
       clearSvgChildren(svg);
       try {
-        JsBarcode(svg as unknown as SVGSVGElement, normalizeBarcodeValue(value, format), {
-          format,
+        JsBarcode(svg as unknown as SVGSVGElement, normalizeBarcodeValue(value, candidate), {
+          format: candidate,
           width: barWidth,
           height,
           displayValue: false,
@@ -74,4 +78,38 @@ export function renderBarcodeSvgMarkup(
     }
     return '';
   });
+}
+
+/** Render barcode SVG markup in Node — embedded directly in print HTML. */
+export function renderBarcodeSvgMarkup(
+  value: string,
+  height: number,
+  barWidth: number,
+  maxWidthPx?: number,
+): string {
+  const svg = renderBarcodeSvgAtWidth(value, height, barWidth);
+  if (!svg || maxWidthPx == null) return svg;
+
+  const actualW = parseBarcodeSvgWidth(svg);
+  if (actualW == null || actualW <= maxWidthPx) return svg;
+
+  const floor = barcodeDesignerMinBarWidth();
+  let lo = floor;
+  let hi = barWidth;
+  let best = svg;
+
+  for (let i = 0; i < 24 && hi - lo > 0.04; i++) {
+    const mid = Math.round(((lo + hi) / 2) * 10) / 10;
+    const candidate = renderBarcodeSvgAtWidth(value, height, mid);
+    const width = parseBarcodeSvgWidth(candidate);
+    if (!candidate || width == null) break;
+    if (width <= maxWidthPx) {
+      best = candidate;
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+
+  return best;
 }

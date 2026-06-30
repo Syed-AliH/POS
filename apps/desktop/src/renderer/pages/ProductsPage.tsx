@@ -8,19 +8,23 @@ import { toast } from '@renderer/stores/toastStore';
 import { newProductFormDefaults, useProductDefaultsStore } from '@renderer/stores/productDefaultsStore';
 import {
   downloadExcelTemplate,
+  downloadProductsCsv,
+  downloadProductsExcel,
   mapProductImportRows,
+  mapProductsToExportRows,
   parseExcelFile,
   PRODUCT_IMPORT_HEADERS,
 } from '@renderer/lib/excelImport';
 import { importProductsViaApi } from '@renderer/lib/productImport';
 import { SortableTh } from '@renderer/components/SortableTh';
 import { sortByKey, useTableSort } from '@renderer/lib/useTableSort';
-import { formatDateTime } from '@shared/datetime';
+import { formatDateTime, parseTimestamp } from '@shared/datetime';
 import type { Category, Product, ProductHistory, ProductInput } from '@shared/types';
 
 const api = getApi();
 
-type SortKey = 'name' | 'sku' | 'category' | 'price' | 'stock' | 'status';
+type SortKey = 'name' | 'sku' | 'category' | 'price' | 'stock' | 'status' | 'createdAt';
+type AddedDateFilter = 'all' | 'today' | '7d' | '30d';
 type HistoryTab = 'purchases' | 'sales' | 'returns';
 type ProductHistSortKey = 'date' | 'reference' | 'qty' | 'total';
 
@@ -62,6 +66,29 @@ function resolveMarkupToPrice(value: string, cost: number): string {
   return formatPriceValue(price);
 }
 
+function productCreatedTime(p: Product): number {
+  if (!p.createdAt) return 0;
+  const t = parseTimestamp(p.createdAt).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
+function matchesAddedDateFilter(p: Product, filter: AddedDateFilter): boolean {
+  if (filter === 'all') return true;
+  const ms = productCreatedTime(p);
+  if (!ms) return false;
+  const start = new Date();
+  if (filter === 'today') {
+    start.setHours(0, 0, 0, 0);
+  } else if (filter === '7d') {
+    start.setDate(start.getDate() - 7);
+    start.setHours(0, 0, 0, 0);
+  } else if (filter === '30d') {
+    start.setDate(start.getDate() - 30);
+    start.setHours(0, 0, 0, 0);
+  }
+  return ms >= start.getTime();
+}
+
 export function ProductsPage() {
   const navigate = useNavigate();
   const [products, setProducts] = useState<Product[]>([]);
@@ -70,6 +97,7 @@ export function ProductsPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState('');
+  const [addedDateFilter, setAddedDateFilter] = useState<AddedDateFilter>('all');
   const [sortKey, setSortKey] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -82,6 +110,7 @@ export function ProductsPage() {
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<{ imported: number; errors: string[] } | null>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [detailProduct, setDetailProduct] = useState<Product | null>(null);
   const [history, setHistory] = useState<ProductHistory | null>(null);
   const [historyTab, setHistoryTab] = useState<HistoryTab>('purchases');
@@ -123,7 +152,8 @@ export function ProductsPage() {
         p.barcode.includes(search);
       const matchesStatus = statusFilter === 'all' || p.status === statusFilter;
       const matchesCategory = !categoryFilter || p.categoryId === categoryFilter;
-      return matchesSearch && matchesStatus && matchesCategory;
+      const matchesAdded = matchesAddedDateFilter(p, addedDateFilter);
+      return matchesSearch && matchesStatus && matchesCategory && matchesAdded;
     });
 
     rows.sort((a, b) => {
@@ -134,10 +164,59 @@ export function ProductsPage() {
       else if (sortKey === 'price') cmp = (a.salePrice ?? a.retailPrice) - (b.salePrice ?? b.retailPrice);
       else if (sortKey === 'stock') cmp = a.stockQty - b.stockQty;
       else if (sortKey === 'status') cmp = a.status.localeCompare(b.status);
+      else if (sortKey === 'createdAt') cmp = productCreatedTime(a) - productCreatedTime(b);
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return rows;
-  }, [products, search, statusFilter, categoryFilter, sortKey, sortDir, categories]);
+  }, [products, search, statusFilter, categoryFilter, addedDateFilter, sortKey, sortDir, categories]);
+
+  const selectedProducts = useMemo(
+    () => filtered.filter((p) => selectedIds.has(p.id)),
+    [filtered, selectedIds],
+  );
+
+  const allFilteredSelected = filtered.length > 0 && filtered.every((p) => selectedIds.has(p.id));
+  const someFilteredSelected = filtered.some((p) => selectedIds.has(p.id));
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAllFiltered = () => {
+    if (allFilteredSelected) {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const p of filtered) next.delete(p.id);
+        return next;
+      });
+    } else {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const p of filtered) next.add(p.id);
+        return next;
+      });
+    }
+  };
+
+  const exportSelected = (format: 'excel' | 'csv') => {
+    if (!selectedProducts.length) {
+      toast.error('Select one or more products to export');
+      return;
+    }
+    const rows = mapProductsToExportRows(selectedProducts);
+    const stamp = new Date().toISOString().slice(0, 10);
+    if (format === 'excel') {
+      downloadProductsExcel(`products-export-${stamp}.xlsx`, rows);
+    } else {
+      downloadProductsCsv(`products-export-${stamp}.csv`, rows);
+    }
+    toast.success(`Exported ${rows.length} product(s)`);
+  };
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -320,6 +399,20 @@ export function ProductsPage() {
               ⬇ Template
             </Button>
             <Button variant="ghost" onClick={() => { setImportOpen(true); setImportResult(null); }}>⬆ Import Excel</Button>
+            <Button
+              variant="ghost"
+              disabled={!selectedProducts.length}
+              onClick={() => exportSelected('excel')}
+            >
+              ⬇ Export Excel{selectedProducts.length ? ` (${selectedProducts.length})` : ''}
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={!selectedProducts.length}
+              onClick={() => exportSelected('csv')}
+            >
+              ⬇ Export CSV{selectedProducts.length ? ` (${selectedProducts.length})` : ''}
+            </Button>
             <Button variant="secondary" onClick={startNewProduct}>+ Add Product</Button>
           </div>
         </div>
@@ -409,6 +502,37 @@ export function ProductsPage() {
             <option value="active">Active</option>
             <option value="archived">Archived</option>
           </select>
+          <select
+            value={addedDateFilter}
+            onChange={(e) => setAddedDateFilter(e.target.value as AddedDateFilter)}
+            className="px-3 py-2 border rounded-lg text-sm"
+            title="Filter by date added"
+          >
+            <option value="all">Added: any time</option>
+            <option value="today">Added: today</option>
+            <option value="7d">Added: last 7 days</option>
+            <option value="30d">Added: last 30 days</option>
+          </select>
+          <select
+            value={sortKey === 'createdAt' ? `createdAt-${sortDir}` : ''}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (!v) {
+                setSortKey('name');
+                setSortDir('asc');
+                return;
+              }
+              const [key, dir] = v.split('-') as [SortKey, 'asc' | 'desc'];
+              setSortKey(key);
+              setSortDir(dir);
+            }}
+            className="px-3 py-2 border rounded-lg text-sm"
+            title="Sort by date added"
+          >
+            <option value="">Sort: default</option>
+            <option value="createdAt-desc">Added: newest first</option>
+            <option value="createdAt-asc">Added: oldest first</option>
+          </select>
           <input placeholder="Category name" value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className="w-32 px-3 py-2 border rounded-lg text-sm" />
           <input placeholder="Prefix" value={newCategoryPrefix} onChange={(e) => setNewCategoryPrefix(e.target.value.toUpperCase())} className="w-16 px-2 py-2 border rounded-lg text-sm" maxLength={4} />
           <Button size="sm" variant="ghost" onClick={handleAddCategory}>+ Cat</Button>
@@ -418,18 +542,44 @@ export function ProductsPage() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50">
               <tr className="text-left text-slate-500">
+                <th className="w-10 p-3">
+                  <input
+                    type="checkbox"
+                    checked={allFilteredSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = someFilteredSelected && !allFilteredSelected;
+                    }}
+                    onChange={toggleSelectAllFiltered}
+                    aria-label="Select all visible products"
+                    className="h-4 w-4 rounded border-slate-300"
+                  />
+                </th>
                 <th className="p-3 cursor-pointer" onClick={() => toggleSort('name')}>Name{sortIcon('name')}</th>
                 <th className="p-3 cursor-pointer" onClick={() => toggleSort('sku')}>SKU{sortIcon('sku')}</th>
                 <th className="p-3 cursor-pointer" onClick={() => toggleSort('category')}>Category{sortIcon('category')}</th>
                 <th className="p-3 text-right cursor-pointer" onClick={() => toggleSort('price')}>Price{sortIcon('price')}</th>
                 <th className="p-3 text-right cursor-pointer" onClick={() => toggleSort('stock')}>Stock{sortIcon('stock')}</th>
+                <th className="p-3 cursor-pointer whitespace-nowrap" onClick={() => toggleSort('createdAt')}>Added{sortIcon('createdAt')}</th>
                 <th className="p-3 cursor-pointer" onClick={() => toggleSort('status')}>Status{sortIcon('status')}</th>
                 <th className="p-3"></th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((p) => (
-                <tr key={p.id} className="border-t hover:bg-slate-50 cursor-pointer" onClick={() => openDetail(p)}>
+                <tr
+                  key={p.id}
+                  className={`border-t hover:bg-slate-50 cursor-pointer ${selectedIds.has(p.id) ? 'bg-primary-50/50 dark:bg-primary-950/20' : ''}`}
+                  onClick={() => openDetail(p)}
+                >
+                  <td className="p-3" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(p.id)}
+                      onChange={() => toggleSelect(p.id)}
+                      aria-label={`Select ${p.name}`}
+                      className="h-4 w-4 rounded border-slate-300"
+                    />
+                  </td>
                   <td className="p-3 font-medium">{p.name}</td>
                   <td className="p-3 text-slate-500">{p.sku}</td>
                   <td className="p-3">{categoryName(p.categoryId)}</td>
@@ -437,6 +587,7 @@ export function ProductsPage() {
                   <td className={`p-3 text-right ${p.stockQty < 0 ? 'text-red-600 font-semibold' : p.stockQty === 0 ? 'text-amber-600' : ''}`}>
                     {p.stockQty}
                   </td>
+                  <td className="p-3 whitespace-nowrap text-xs text-slate-500">{formatDateTime(p.createdAt)}</td>
                   <td className="p-3"><span className="text-xs px-2 py-0.5 rounded bg-slate-100">{p.status}</span></td>
                   <td className="p-3" onClick={(e) => e.stopPropagation()}>
                     <button className="text-primary-600 text-sm" onClick={() => startEdit(p)}>Edit</button>

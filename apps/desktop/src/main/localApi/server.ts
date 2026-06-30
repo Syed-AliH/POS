@@ -6,6 +6,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
 import { BUNDLED_API_PORT, BUNDLED_API_URL } from '@shared/deployment';
 import { isBundledDeployment } from '../cloud/config';
+import { resolveSecretsPath } from '../runtimePaths';
 
 interface ApiSecrets {
   DATABASE_URL: string;
@@ -27,15 +28,7 @@ function monorepoRootFromMain(): string {
 }
 
 function getSecretsPath(): string {
-  if (app.isPackaged) {
-    return join(process.resourcesPath, 'secrets.json');
-  }
-  const candidates = [
-    join(process.cwd(), 'resources/secrets.json'),
-    join(process.cwd(), 'apps/desktop/resources/secrets.json'),
-    join(__dirname, '../../../resources/secrets.json'),
-  ];
-  return candidates.find((p) => existsSync(p)) ?? candidates[0];
+  return resolveSecretsPath();
 }
 
 export function loadApiSecrets(): ApiSecrets {
@@ -112,6 +105,8 @@ function killProcessOnPort(port: number): void {
   }
 }
 
+const REQUIRED_API_CAPABILITIES = ['product-history'] as const;
+
 async function runningApiBuild(entry: string): Promise<string | null> {
   try {
     const res = await fetch(`${BUNDLED_API_URL}/api/v1/health`);
@@ -121,6 +116,22 @@ async function runningApiBuild(entry: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+async function runningApiCapabilities(): Promise<string[] | null> {
+  try {
+    const res = await fetch(`${BUNDLED_API_URL}/api/v1/health`);
+    if (!res.ok) return null;
+    const json = (await res.json()) as { capabilities?: string[] };
+    return Array.isArray(json.capabilities) ? json.capabilities : null;
+  } catch {
+    return null;
+  }
+}
+
+function apiCapabilitiesSatisfied(caps: string[] | null): boolean {
+  if (!caps) return false;
+  return REQUIRED_API_CAPABILITIES.every((c) => caps.includes(c));
 }
 
 async function waitForHealth(timeoutMs = 30_000): Promise<void> {
@@ -156,13 +167,15 @@ export async function startBundledApiIfNeeded(): Promise<void> {
 
   const buildStamp = String(statSync(entry).mtimeMs);
   const runningBuild = await runningApiBuild(entry);
+  const runningCaps = await runningApiCapabilities();
+  const capsOk = apiCapabilitiesSatisfied(runningCaps);
 
-  if (runningBuild === buildStamp) {
+  if (runningBuild === buildStamp && capsOk) {
     console.log('[localApi] API already running on', BUNDLED_API_URL);
     return;
   }
 
-  if (runningBuild != null) {
+  if (runningBuild != null || !capsOk) {
     console.log('[localApi] Restarting API — build changed or stale instance detected');
     killProcessOnPort(BUNDLED_API_PORT);
     await new Promise((r) => setTimeout(r, 600));

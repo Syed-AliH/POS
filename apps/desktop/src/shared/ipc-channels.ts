@@ -147,6 +147,9 @@ export const IPC_CHANNELS = {
   APP_GET_CONFIG: 'app:get-config',
   APP_SAVE_CONFIG: 'app:save-config',
   APP_PING_SERVER: 'app:ping-server',
+  APP_UPDATE_CHECK: 'app:update-check',
+  APP_UPDATE_INSTALL: 'app:update-install',
+  APP_UPDATE_STATUS: 'app:update-status',
 
   RECEIPT_TEMPLATES: 'template:receipt-list',
   RECEIPT_TEMPLATE_UPDATE: 'template:receipt-update',

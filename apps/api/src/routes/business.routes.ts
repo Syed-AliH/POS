@@ -74,6 +74,11 @@ export async function businessRoutes(app: FastifyInstance) {
     return products.barcodeLookup(app.db, code);
   });
 
+  app.get('/products/:id/history', { preHandler: anyUser }, async (request) => {
+    const { id } = request.params as { id: string };
+    return products.getProductHistory(app.db, id);
+  });
+
   app.get('/products/:id', { preHandler: anyUser }, async (request) => {
     const { id } = request.params as { id: string };
     return products.getProduct(app.db, id);

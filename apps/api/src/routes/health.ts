@@ -6,6 +6,12 @@ export async function healthRoutes(app: FastifyInstance) {
     status: 'ok',
     service: 'mama-babi-api',
     build: process.env.API_BUILD_STAMP ?? 'unknown',
+    /** Bump when adding routes the desktop app depends on (used to detect stale local API). */
+    capabilities: [
+      'product-history',
+      'returns',
+      'owner-dashboard',
+    ],
     timestamp: new Date().toISOString(),
   }));
 

@@ -1,7 +1,7 @@
 import { and, eq, ilike, or, sql } from 'drizzle-orm';
 import { v4 as uuid } from 'uuid';
 import { generateBarcode, deriveSkuPrefix, formatCategorySku, nextSkuSequence } from '@mama-babi/barcode';
-import { categories, products } from '@mama-babi/db-pg';
+import { categories, grnHeaders, grnLines, products, returnItems, returns, saleItems, sales, vendors } from '@mama-babi/db-pg';
 import type { PostgresClient } from '@mama-babi/db-pg';
 import type { ApiResult } from '../types';
 import { getSetting } from './settings.service';
@@ -445,6 +445,86 @@ export async function updateCategory(
       parentId: existing.parentId,
       color: input.color ?? existing.color,
       skuPrefix,
+    },
+  };
+}
+
+export interface ProductHistoryEntry {
+  date: string;
+  type: 'purchase' | 'sale' | 'return';
+  reference: string;
+  vendorOrCustomer: string | null;
+  qty: number;
+  unitCostOrPrice: number;
+  total: number;
+}
+
+export async function getProductHistory(
+  db: PostgresClient,
+  productId: string,
+): Promise<ApiResult<{ productId: string; purchases: ProductHistoryEntry[]; sales: ProductHistoryEntry[]; returns: ProductHistoryEntry[] }>> {
+  const [product] = await db.select().from(products).where(eq(products.id, productId)).limit(1);
+  if (!product) return { success: false, error: 'Product not found' };
+
+  const lineRows = await db.select().from(grnLines).where(eq(grnLines.productId, productId));
+  const purchases: ProductHistoryEntry[] = [];
+
+  for (const line of lineRows) {
+    const [grn] = await db.select().from(grnHeaders).where(eq(grnHeaders.id, line.grnId)).limit(1);
+    if (!grn || grn.status !== 'finalized') continue;
+    const [vendor] = await db.select().from(vendors).where(eq(vendors.id, grn.vendorId)).limit(1);
+    purchases.push({
+      date: grn.updatedAt ?? line.updatedAt ?? line.createdAt,
+      type: 'purchase',
+      reference: grn.grnNumber,
+      vendorOrCustomer: vendor?.name ?? null,
+      qty: line.qty,
+      unitCostOrPrice: line.unitCost,
+      total: line.lineTotal,
+    });
+  }
+  purchases.sort((a, b) => b.date.localeCompare(a.date));
+
+  const saleRows = await db.select().from(saleItems).where(eq(saleItems.productId, productId));
+  const salesHistory: ProductHistoryEntry[] = [];
+  for (const item of saleRows) {
+    const [sale] = await db.select().from(sales).where(eq(sales.id, item.saleId)).limit(1);
+    if (!sale || sale.status === 'held' || sale.status === 'voided') continue;
+    salesHistory.push({
+      date: sale.createdAt ?? item.createdAt,
+      type: 'sale',
+      reference: sale.saleNumber ?? '',
+      vendorOrCustomer: null,
+      qty: item.quantity,
+      unitCostOrPrice: item.unitPrice,
+      total: item.lineTotal,
+    });
+  }
+  salesHistory.sort((a, b) => b.date.localeCompare(a.date));
+
+  const returnRows = await db.select().from(returnItems).where(eq(returnItems.productId, productId));
+  const returnsHistory: ProductHistoryEntry[] = [];
+  for (const ri of returnRows) {
+    const [ret] = await db.select().from(returns).where(eq(returns.id, ri.returnId)).limit(1);
+    returnsHistory.push({
+      date: ret?.createdAt ?? ri.createdAt,
+      type: 'return',
+      reference: ret?.returnNumber ?? '',
+      vendorOrCustomer: null,
+      qty: ri.qtyReturned,
+      unitCostOrPrice: ri.unitRefund,
+      total: ri.qtyReturned * ri.unitRefund,
+    });
+  }
+  returnsHistory.sort((a, b) => b.date.localeCompare(a.date));
+
+  return {
+    success: true,
+    data: {
+      productId,
+      purchases,
+      sales: salesHistory.slice(0, 50),
+      returns: returnsHistory.slice(0, 50),
     },
   };
 }

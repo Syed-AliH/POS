@@ -221,6 +221,8 @@ export function normalizeBarcodeForPrint(value: string): string {
   }
 
   // CODE128 — preserve full code (digits or alphanumeric) for unique internal barcodes
+  const compact = trimmed.replace(/\s/g, '');
+  if (compact.length > 0 && /[A-Za-z]/.test(compact)) return trimmed;
   return digits.length > 0 ? digits : trimmed;
 }
 
@@ -229,8 +231,12 @@ export function code128ModuleCount(value: string): number {
   const trimmed = value.trim();
   if (!trimmed) return 95;
   if (/^\d+$/.test(trimmed)) {
-    // Start C(11) + data ceil(n/2)*11 + checksum(11) + stop(13)
-    return 35 + 11 * Math.ceil(trimmed.length / 2);
+    const n = trimmed.length;
+    const pairs = Math.floor(n / 2);
+    // Start C(11) + pairs*11 + checksum(11) + stop(13); odd lengths add a code-set switch + one char in B (~22).
+    let modules = 35 + 11 * pairs;
+    if (n % 2 === 1) modules += 22;
+    return modules;
   }
   // Code set B: start(11) + n*11 + checksum(11) + stop(13)
   return 35 + 11 * trimmed.length;

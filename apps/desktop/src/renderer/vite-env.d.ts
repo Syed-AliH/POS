@@ -1,5 +1,7 @@
 /// <reference types="vite/client" />
 
+import type { UpdateStatusPayload } from '@shared/update';
+
 interface Window {
   electron: {
     ipcRenderer: {
@@ -7,6 +9,11 @@ interface Window {
     };
     shortcuts?: {
       onKey: (callback: (key: string) => void) => () => void;
+    };
+    updater?: {
+      onStatus: (callback: (status: UpdateStatusPayload) => void) => () => void;
+      checkForUpdates: () => Promise<UpdateStatusPayload>;
+      installUpdate: () => Promise<{ success: boolean }>;
     };
   };
   showShortcutHelp?: () => void;

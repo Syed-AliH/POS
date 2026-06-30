@@ -397,10 +397,18 @@ export interface LabelProduct {
 }
 
 export const SAMPLE_LABEL_PRODUCT: LabelProduct = {
-  name: 'Organic Baby Formula 400g',
-  sku: 'BB-FORM-400',
-  barcode: '8901234567890',
-  price: 1250,
+  name: 'Wooden Puzzle 1902-9W',
+  sku: 'SKU-TO-0001',
+  barcode: '8901234567',  // 10 digits → CODE128, matches generated product barcodes
+  price: 940,
+};
+
+/** Second slot for 2-up label designer / roll previews. */
+export const SAMPLE_LABEL_PRODUCT_2: LabelProduct = {
+  name: 'Wooden Numeric 1902-8W',
+  sku: 'SKU-TO-0002',
+  barcode: '6291108734',  // 10 digits → CODE128
+  price: 940,
 };
 
 export type LabelFieldType = 'name' | 'price' | 'sku' | 'barcode' | 'storeName' | 'customText';
@@ -505,6 +513,7 @@ export {
   calcBarcodeSlotPositionPx,
   resolveBarcodePrintMetrics,
   resolveBarcodeHeightPx,
+  LABEL_DESIGNER_REFERENCE_BARCODE,
 } from './labelRender';
 
 export {

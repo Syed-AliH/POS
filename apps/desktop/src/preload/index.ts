@@ -1,4 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { UpdateStatusPayload } from '@shared/update';
+import { IPC_CHANNELS } from '@shared/ipc-channels';
 
 contextBridge.exposeInMainWorld('electron', {
   ipcRenderer: {
@@ -10,5 +12,14 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('pos:shortcut', handler);
       return () => ipcRenderer.removeListener('pos:shortcut', handler);
     },
+  },
+  updater: {
+    onStatus: (callback: (status: UpdateStatusPayload) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, status: UpdateStatusPayload) => callback(status);
+      ipcRenderer.on(IPC_CHANNELS.APP_UPDATE_STATUS, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.APP_UPDATE_STATUS, handler);
+    },
+    checkForUpdates: () => ipcRenderer.invoke(IPC_CHANNELS.APP_UPDATE_CHECK) as Promise<UpdateStatusPayload>,
+    installUpdate: () => ipcRenderer.invoke(IPC_CHANNELS.APP_UPDATE_INSTALL) as Promise<{ success: boolean }>,
   },
 });

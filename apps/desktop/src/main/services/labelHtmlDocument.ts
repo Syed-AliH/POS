@@ -170,6 +170,7 @@ export function buildLabelHtmlDocument(
   }
   .label-barcode {
     line-height: 0;
+    overflow: hidden;
   }
 </style>
 </head>

@@ -154,6 +154,8 @@ const handlers: Partial<Record<string, CloudHandler>> = {
     apiFetch('PATCH', `/api/v1/products/${id}`, input),
   [IPC_CHANNELS.PRODUCT_BARCODE_LOOKUP]: async (barcode: unknown) =>
     apiFetch('GET', `/api/v1/products/barcode/${encodeURIComponent(String(barcode))}`),
+  [IPC_CHANNELS.PRODUCT_HISTORY]: async (productId: unknown) =>
+    apiFetch('GET', `/api/v1/products/${encodeURIComponent(String(productId))}/history`),
 
   [IPC_CHANNELS.CATEGORY_LIST]: async () => apiFetch('GET', '/api/v1/categories'),
   [IPC_CHANNELS.CATEGORY_CREATE]: async (name: unknown, color?: unknown, skuPrefix?: unknown) =>

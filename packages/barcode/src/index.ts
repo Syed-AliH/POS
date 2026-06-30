@@ -5,9 +5,14 @@ export function generateSku(prefix = 'MB'): string {
   return `${prefix}-${String(skuCounter).padStart(6, '0')}`;
 }
 
+/**
+ * Generate a unique 10-digit numeric barcode.
+ * 10 digits is not a valid EAN/UPC length, so JsBarcode always renders it
+ * as CODE128 — giving a consistent barcode type for all products.
+ */
 export function generateBarcode(): string {
-  const base = Date.now().toString().slice(-11);
-  return `89${base.padStart(11, '0').slice(0, 11)}`;
+  const base = Date.now().toString().slice(-8);
+  return `89${base.padStart(8, '0').slice(0, 8)}`;  // "89" + 8 digits = 10 digits
 }
 
 /** Derive a short category prefix: one word → first two letters (Toys → TO); two+ words → first letter of each (Stuff Toys → ST). */

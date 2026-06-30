@@ -1,13 +1,13 @@
 import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
-import updaterPkg from 'electron-updater';
-const { autoUpdater } = updaterPkg;
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { getCloudApiUrl, getUpdateFeedUrl, isBundledDeployment, isCloudMode } from './cloud/config';
+import { getCloudApiUrl, isBundledDeployment, isCloudMode } from './cloud/config';
 import { startBundledApiIfNeeded, stopBundledApi } from './localApi/server';
 import { purgeLocalBusinessData } from './cloud/purgeLocal';
 import { getDbPath, initDatabase } from './db';
 import { registerIpcHandlers } from './ipc';
+import { ensureRuntimeConfigMigrated } from './runtimePaths';
+import { initAutoUpdater } from './updater/autoUpdater';
 import { seedLabelTemplatesIfEmpty } from './services/labelTemplates';
 import { seedReceiptTemplatesIfEmpty } from './services/receiptTemplates';
 import { seedDemoProductsIfEmpty } from './services/demoProducts';
@@ -97,6 +97,8 @@ app.whenReady().then(async () => {
     app.setAppUserModelId('com.mamababi.pos');
   }
 
+  ensureRuntimeConfigMigrated();
+
   if (isBundledDeployment()) {
     try {
       await startBundledApiIfNeeded();
@@ -163,52 +165,3 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   stopBundledApi();
 });
-
-// ─── Auto-updater (only active in packaged builds with an update URL configured) ─
-function initAutoUpdater(): void {
-  if (!app.isPackaged) return;
-
-  const feedUrl = getUpdateFeedUrl();
-  if (!feedUrl) return;
-
-  autoUpdater.setFeedURL({ provider: 'generic', url: feedUrl });
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
-
-  autoUpdater.on('update-available', (info) => {
-    const win = BrowserWindow.getAllWindows()[0];
-    if (!win) return;
-    dialog.showMessageBox(win, {
-      type: 'info',
-      title: 'Update Available',
-      message: `Version ${String(info.version)} is available.`,
-      detail: 'Would you like to download it now? The app will update when you restart.',
-      buttons: ['Download', 'Later'],
-      defaultId: 0,
-    }).then(({ response }) => {
-      if (response === 0) autoUpdater.downloadUpdate();
-    }).catch(() => undefined);
-  });
-
-  autoUpdater.on('update-downloaded', () => {
-    const win = BrowserWindow.getAllWindows()[0];
-    if (!win) return;
-    dialog.showMessageBox(win, {
-      type: 'info',
-      title: 'Update Ready',
-      message: 'Update downloaded. Restart now to apply it?',
-      buttons: ['Restart Now', 'Later'],
-      defaultId: 0,
-    }).then(({ response }) => {
-      if (response === 0) autoUpdater.quitAndInstall();
-    }).catch(() => undefined);
-  });
-
-  autoUpdater.on('error', (err) => {
-    console.error('[updater] Auto-update error:', err.message);
-  });
-
-  // Check for updates 10 seconds after launch, then every 4 hours
-  setTimeout(() => { autoUpdater.checkForUpdates().catch(() => undefined); }, 10_000);
-  setInterval(() => { autoUpdater.checkForUpdates().catch(() => undefined); }, 4 * 60 * 60 * 1000);
-}

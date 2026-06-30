@@ -150,6 +150,7 @@ export function LabelCanvasPreview({
                   displayValue={false}
                   barWidth={metrics.barWidth}
                   margin={0}
+                  maxWidthPx={maxWidthPx}
                 />
               </div>
             );

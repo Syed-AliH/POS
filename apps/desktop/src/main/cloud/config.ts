@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isValidApiUrl } from '@shared/apiUrl';
 import { BUNDLED_API_URL, isBundledMode } from '@shared/deployment';
+import { resolveConfigPath } from '../runtimePaths';
 
 interface RuntimeConfig {
   deploymentMode?: string;
@@ -20,7 +21,7 @@ function loadRuntimeConfig(): RuntimeConfig {
   const candidates: string[] = [];
 
   if (app.isPackaged) {
-    // Production: config.json lives next to app.asar in the resources directory
+    candidates.push(resolveConfigPath());
     candidates.push(join(process.resourcesPath, 'config.json'));
   } else {
     // Development: search relative to source file and cwd

@@ -10,6 +10,7 @@ import { initShortcutBridge, registerGlobalShortcuts, setActiveRoute } from '../
 import { flattenNavForShortcuts, Sidebar } from './layout/Sidebar';
 import { ShortcutHelp } from './ShortcutHelp';
 import { ToastHost } from './ToastHost';
+import { UpdateNotifier } from './UpdateNotifier';
 
 const WORKFLOW_HINTS: Record<string, string> = {
   '/checkout': 'F1 search · F4 charge · F2 hold · F3 resume',
@@ -158,6 +159,7 @@ export function Layout() {
 
       <ShortcutHelp />
       <ToastHost />
+      <UpdateNotifier />
     </div>
   );
 }

@@ -70,6 +70,83 @@ export const PRODUCT_IMPORT_HEADERS: SheetHeader[] = [
   { key: 'sale_price', label: 'Sale Price', sample: '' },
 ];
 
+/** Product / GRN export column layout (SKU, Product Name, Qty, Cost Price, Retail Price). */
+export const PRODUCT_EXPORT_HEADERS: SheetHeader[] = [
+  { key: 'sku', label: 'SKU' },
+  { key: 'product_name', label: 'Product Name' },
+  { key: 'qty', label: 'Qty' },
+  { key: 'cost_price', label: 'Cost Price' },
+  { key: 'retail_price', label: 'Retail Price' },
+];
+
+export type ProductExportRow = {
+  sku: string;
+  product_name: string;
+  qty: number;
+  cost_price: number;
+  retail_price: number;
+};
+
+export function mapProductsToExportRows(
+  products: Array<{ sku: string; name: string; stockQty: number; costPrice: number; retailPrice: number }>,
+): ProductExportRow[] {
+  return products.map((p) => ({
+    sku: p.sku,
+    product_name: p.name,
+    qty: p.stockQty,
+    cost_price: p.costPrice,
+    retail_price: p.retailPrice,
+  }));
+}
+
+function exportRowsToSheetData(rows: ProductExportRow[]): Record<string, string | number>[] {
+  return rows.map((r) => ({
+    SKU: r.sku,
+    'Product Name': r.product_name,
+    Qty: r.qty,
+    'Cost Price': r.cost_price,
+    'Retail Price': r.retail_price,
+  }));
+}
+
+/** Download selected products as Excel (.xlsx) with standard export columns. */
+export function downloadProductsExcel(filename: string, rows: ProductExportRow[]): void {
+  if (!rows.length) return;
+
+  const ws = XLSX.utils.json_to_sheet(exportRowsToSheetData(rows), {
+    header: PRODUCT_EXPORT_HEADERS.map((h) => h.label),
+  });
+  ws['!cols'] = PRODUCT_EXPORT_HEADERS.map((h) => ({ wch: Math.max(h.label.length + 2, 14) }));
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Products');
+  XLSX.writeFile(wb, filename);
+}
+
+function escapeCsvCell(value: string | number): string {
+  const s = String(value);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+/** Download selected products as CSV with standard export columns. */
+export function downloadProductsCsv(filename: string, rows: ProductExportRow[]): void {
+  if (!rows.length) return;
+
+  const header = PRODUCT_EXPORT_HEADERS.map((h) => h.label).join(',');
+  const body = rows.map((r) =>
+    [r.sku, r.product_name, r.qty, r.cost_price, r.retail_price].map(escapeCsvCell).join(','),
+  );
+  const content = [header, ...body].join('\n');
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 /** GRN import template definition */
 export const GRN_IMPORT_HEADERS: SheetHeader[] = [
   { key: 'sku', label: 'SKU', sample: 'SKU-GRO-0001' },

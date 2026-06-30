@@ -11,6 +11,7 @@ import {
   barcodeModuleMinWidth,
   barcodeDesignerMinBarWidth,
   isBarcodeBarWidthAuto,
+  resolveBarcodeBarWidthFromHeight,
 } from './labelFonts';
 
 /** 203 DPI thermal print density — matches Gainscha dot pitch. */
@@ -407,6 +408,51 @@ export function calcBarcodeSlotPositionPx(
   return { leftPx: Math.round(leftPx), topPx: Math.round(anchorY) };
 }
 
+/** Barcode used in Label Designer test print — batch labels lock to this module width. */
+export const LABEL_DESIGNER_REFERENCE_BARCODE = '8901234567'; // 10-digit CODE128, matches generated barcodes
+
+/** Parse rendered JsBarcode SVG width attribute (print pixels). */
+export function parseBarcodeSvgWidthMarkup(svg: string): number | null {
+  const match = svg.match(/\bwidth="([0-9.]+)"/);
+  return match ? Number.parseFloat(match[1]) : null;
+}
+
+/**
+ * Scale CODE128 bar width down so every barcode prints at the same total width as the
+ * designer reference (10-digit sample at the template bar width).
+ * Without this, longer numeric codes (e.g. 13 digits) render wider and look stretched.
+ */
+function normalizeCode128BarWidthToReference(
+  barWidth: number,
+  modules: number,
+  referenceBarWidth: number,
+): number {
+  const refNorm = normalizeBarcodeForPrint(LABEL_DESIGNER_REFERENCE_BARCODE);
+  const refModules = barcodeModuleCountForFormat('CODE128', refNorm);
+  const targetWidthPx = refModules * referenceBarWidth;
+  const currentWidthPx = modules * barWidth;
+  if (currentWidthPx <= targetWidthPx) return barWidth;
+  const scanMin = barcodeModuleMinWidth('CODE128');
+  const scaled = targetWidthPx / modules;
+  return Math.max(scanMin, Math.min(barWidth, Math.round(scaled * 100) / 100));
+}
+
+function resolveAutoBarcodeBarWidth(
+  _height: number,
+  maxWidthPx: number,
+  format: string,
+  normalizedValue: string,
+): number {
+  const modules = barcodeModuleCountForFormat(format, normalizedValue);
+  const scanMin = barcodeModuleMinWidth(format);
+  // Default compact widths: EAN formats use 2.0 (reliable on thermal printers);
+  // CODE128 uses 1.6 (thin, compact, consistent across all barcode lengths).
+  const isEan = format === 'EAN13' || format === 'EAN8' || format === 'UPC';
+  const defaultBarWidth = isEan ? 2.0 : 1.6;
+  const maxBarWidth = Math.floor((maxWidthPx / modules) * 10) / 10;
+  return Math.max(scanMin, Math.min(defaultBarWidth, maxBarWidth));
+}
+
 export function resolveBarcodePrintMetrics(
   el: LabelElement,
   labelWidthMm: number,
@@ -421,19 +467,23 @@ export function resolveBarcodePrintMetrics(
   format: string;
 } {
   const normalizedValue = normalizeBarcodeForPrint(barcodeValue);
-  const format = resolveBarcodePrintFormat(barcodeValue);
+  const format = resolveBarcodePrintFormat(normalizedValue);
   const maxWidthPx = labelElementMaxWidthPx(el, labelWidthMm);
   const height = resolveBarcodeHeightPx(el, labelHeightMm);
   const autoFill = isBarcodeBarWidthAuto(el.barcodeBarWidth);
   const preferred = resolveBarcodeBarWidth(el, labelWidthMm);
-  const barWidth = resolveUniformBarcodeBarWidth(
-    format,
-    maxWidthPx,
-    preferred,
-    normalizedValue,
-    autoFill,
-  );
+  let barWidth = autoFill
+    ? resolveAutoBarcodeBarWidth(height, maxWidthPx, format, normalizedValue)
+    : resolveUniformBarcodeBarWidth(format, maxWidthPx, preferred, normalizedValue, false);
+
   const modules = barcodeModuleCountForFormat(format, normalizedValue);
+  if (format === 'CODE128') {
+    const referenceBarWidth = autoFill
+      ? resolveAutoBarcodeBarWidth(height, maxWidthPx, 'CODE128', LABEL_DESIGNER_REFERENCE_BARCODE)
+      : preferred;
+    barWidth = normalizeCode128BarWidthToReference(barWidth, modules, referenceBarWidth);
+  }
+
   const maxBarWidth = maxWidthPx / modules;
   return {
     height,
@@ -592,7 +642,7 @@ export function buildLabelSlotInnerHtml(
   currency: string,
   widthMm: number,
   heightMm: number,
-  renderBarcodeSvg?: (value: string, height: number, barWidth: number) => string,
+  renderBarcodeSvg?: (value: string, height: number, barWidth: number, maxWidthPx?: number) => string,
   options?: { omitBarcodes?: boolean },
 ): string {
   const showGraphic = layout.showBarcodeGraphic ?? layout.showBarcode ?? false;
@@ -608,10 +658,17 @@ export function buildLabelSlotInnerHtml(
       const css = labelStyleToCss(
         labelBarcodeLayoutStyle(el, widthMm, metrics.normalizedValue, metrics.height, metrics.barWidth),
       );
-      const svg = renderBarcodeSvg?.(metrics.normalizedValue, metrics.height, metrics.barWidth) ?? '';
+      const svg =
+        renderBarcodeSvg?.(
+          metrics.normalizedValue,
+          metrics.height,
+          metrics.barWidth,
+          metrics.maxWidthPx,
+        ) ?? '';
       if (svg) {
+        const svgWidthPx = parseBarcodeSvgWidthMarkup(svg) ?? metrics.svgWidthPx;
         parts.push(
-          `<div class="label-barcode" style="${css}" data-product-sku="${escapeHtml(product.sku)}" data-barcode-format="${escapeHtml(metrics.format)}" data-barcode-value="${escapeHtml(metrics.normalizedValue)}" data-barcode-rendered="${escapeHtml(metrics.normalizedValue)}">${svg}</div>`,
+          `<div class="label-barcode" style="${css};width:${svgWidthPx}px;max-width:${svgWidthPx}px;height:${metrics.height}px;max-height:${metrics.height}px" data-product-sku="${escapeHtml(product.sku)}" data-barcode-format="${escapeHtml(metrics.format)}" data-barcode-value="${escapeHtml(metrics.normalizedValue)}" data-barcode-rendered="${escapeHtml(metrics.normalizedValue)}">${svg}</div>`,
         );
       } else {
         parts.push(

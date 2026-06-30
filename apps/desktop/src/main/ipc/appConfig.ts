@@ -1,9 +1,10 @@
 import { app, ipcMain } from 'electron';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { IPC_CHANNELS } from '@shared/ipc-channels';
 import { apiUrlValidationError, isValidApiUrl } from '@shared/apiUrl';
 import { _resetConfigCache, getCloudApiUrl } from '../cloud/config';
+import { getUserConfigPath, resolveConfigPath } from '../runtimePaths';
 
 interface AppConfig {
   deploymentMode?: string;
@@ -14,21 +15,13 @@ interface AppConfig {
 
 function getConfigPath(): string {
   if (app.isPackaged) {
-    return join(process.resourcesPath, 'config.json');
+    return getUserConfigPath();
   }
-  const candidates = [
-    join(process.cwd(), 'resources/config.json'),
-    join(process.cwd(), 'apps/desktop/resources/config.json'),
-    join(__dirname, '../../../resources/config.json'),
-  ];
-  for (const p of candidates) {
-    if (existsSync(p)) return p;
-  }
-  return candidates[0];
+  return resolveConfigPath();
 }
 
 function readConfig(): AppConfig {
-  const path = getConfigPath();
+  const path = app.isPackaged ? resolveConfigPath() : getConfigPath();
   if (existsSync(path)) {
     try {
       return JSON.parse(readFileSync(path, 'utf-8')) as AppConfig;
@@ -76,7 +69,9 @@ export function registerAppConfigHandlers(): void {
 
       const current = readConfig();
       const merged: AppConfig = { ...current, ...updates };
-      writeFileSync(getConfigPath(), JSON.stringify(merged, null, 2), 'utf-8');
+      const target = getConfigPath();
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, JSON.stringify(merged, null, 2), 'utf-8');
       _resetConfigCache();
       return { success: true };
     } catch (err) {
