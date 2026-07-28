@@ -3,7 +3,7 @@ import type { ReceiptSale, ReceiptTemplateConfig } from '@mama-babi/printer';
 import { requireSession, requireRole } from '../session';
 import { isCloudMode } from '../cloud/config';
 import { fetchCloudSale } from '../cloud/client';
-import { printReceiptToDevice, printTestReceipt, formatZReport } from '../services/printer';
+import { printTestReceipt, formatZReport } from '../services/printer';
 import { enqueueReceipt } from '../print/receiptQueue';
 import { printTestLabelFromTemplate } from '../services/labelPrintTemplate';
 import { sendLabelPrinterCommand } from '../services/labelPrinterCommands';

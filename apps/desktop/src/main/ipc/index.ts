@@ -11,7 +11,7 @@ import { hasCloudHandler, invokeCloud } from '../cloud/client';
 import { isCloudMode } from '../cloud/config';
 import { withCloud } from './cloud-proxy';
 import { registerAppConfigHandlers } from './appConfig';
-import { getProductSearchPayload, invalidateProductSearchCache } from '../services/productSearchCache';
+import { applyStockDeltas, getProductSearchPayload, invalidateProductSearchCache } from '../services/productSearchCache';
 import { registerDatabaseHandlers } from './database';
 import { registerUpdaterHandlers } from './updater';
 import {
@@ -232,8 +232,14 @@ export function registerIpcHandlers(): void {
     );
     // A sale only moves stock, so adjust the cached figures rather than throwing the
     // whole catalogue away and re-downloading it on the next keystroke.
-    if (result?.success && result.data && result.data.status !== 'held') {
-      applyStockDeltas(result.data.items.map((i) => ({ productId: i.productId, delta: -i.quantity })));
+    // Bookkeeping only: the sale is already committed, so a failure here must never
+    // turn a successful sale into a rejected IPC call.
+    try {
+      if (result?.success && result.data && result.data.status !== 'held') {
+        applyStockDeltas((result.data.items ?? []).map((i) => ({ productId: i.productId, delta: -i.quantity })));
+      }
+    } catch (err) {
+      console.warn('[sale:create] stock cache update failed', err);
     }
     return result;
   });

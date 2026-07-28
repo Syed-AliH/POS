@@ -6,7 +6,13 @@
     "moduleResolution": "bundler",
     "types": ["node"],
     "noEmit": false,
-    "outDir": "./out/types"
+    "outDir": "./out/types",
+    // Without these, every `@shared/*` import in the main process was unresolved and
+    // this project's type check was effectively blind.
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["src/shared/*"]
+    }
   },
   "include": [
     "electron.vite.config.ts",

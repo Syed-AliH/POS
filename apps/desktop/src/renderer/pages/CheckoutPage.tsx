@@ -353,6 +353,7 @@ export function CheckoutPage() {
     }
 
     setProcessing(true);
+    try {
     const result = await timeAsync('bill.update', () => api.sales.update({
       saleId: editingSale.id,
       items: items.map((i) => ({
@@ -390,7 +391,13 @@ export function CheckoutPage() {
     } else {
       toast.error(result.error ?? 'Bill update failed');
     }
-    setProcessing(false);
+    } catch (err) {
+      toast.error(
+        `Bill may have been updated but the app hit an error: ${err instanceof Error ? err.message : 'unknown'}. Check Sales History.`,
+      );
+    } finally {
+      setProcessing(false);
+    }
   };
 
   const handleCharge = async (options?: { forcePrint?: boolean }) => {
@@ -414,6 +421,7 @@ export function CheckoutPage() {
     }
 
     mark('charge.buttonToCartCleared');
+    try {
     const result = await timeAsync('sale.save', () => api.sales.create({
       // unitPrice is sent so the sale records exactly the price shown in the cart —
       // a resumed hold keeps its saved prices even if the product was re-priced since.
@@ -434,22 +442,35 @@ export function CheckoutPage() {
       const sale = result.data;
       const soldQty = items.map((i) => ({ productId: i.productId, quantity: i.quantity }));
 
-      // Nothing below needs to block the cashier: the sale is committed.
-      // Pass the summary we already have so the print path doesn't re-fetch the sale.
+      // Receipt first and unawaited — the sale is committed, so nothing here may
+      // delay the printer or the cart clearing.
       if (options?.forcePrint || autoPrintRef.current) void api.print.receipt(sale.id, sale);
-      if (promoCodeId) void api.promoCodes.redeem(promoCodeId);
 
       resetAfterSale();
       measure('charge.buttonToCartCleared');
       focusElement(searchRef, true);
 
-      // We know exactly what was sold, so adjust the cached stock figures instead of
-      // re-downloading the whole catalogue after every sale.
-      applySoldToCatalogue(soldQty);
+      // Bookkeeping only. A failure here must not look like a failed sale.
+      try {
+        if (promoCodeId) void api.promoCodes.redeem(promoCodeId);
+        // We know exactly what was sold, so adjust the cached stock figures instead
+        // of re-downloading the whole catalogue after every sale.
+        applySoldToCatalogue(soldQty);
+      } catch (err) {
+        console.warn('[checkout] post-sale bookkeeping failed', err);
+      }
     } else {
       toast.error(result.error ?? 'Sale failed');
     }
-    setProcessing(false);
+    } catch (err) {
+      // The sale may well have been written — say so instead of silently hanging.
+      toast.error(
+        `Sale may have been saved but the app hit an error: ${err instanceof Error ? err.message : 'unknown'}. Check Sales History before retrying.`,
+      );
+    } finally {
+      // Whatever happened, the button must never stay stuck on "Processing…".
+      setProcessing(false);
+    }
   };
 
   useEffect(() => { handleChargeRef.current = handleCharge; }, [handleCharge]);

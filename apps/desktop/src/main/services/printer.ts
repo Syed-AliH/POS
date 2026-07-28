@@ -3,6 +3,7 @@ import {
   type ReceiptSale,
   type ReceiptTemplateConfig,
 } from '@mama-babi/printer';
+import { getAllSettings } from './settings';
 import { isLikelyLabelPrinterName } from './printerDevices';
 import { printReceiptWysiwyg } from './receiptPrintWysiwyg';
 import { getPrintContext, invalidatePrintContext } from '../print/printContext';
