@@ -225,6 +225,8 @@ export interface ReceiptSale {
     quantity: number;
     unitPrice: number;
     lineTotal: number;
+    /** Per-line discount percentage applied to this item (0 when none). */
+    discountPercent?: number;
   }>;
   subtotal: number;
   discountAmount: number;
@@ -240,8 +242,8 @@ export const SAMPLE_RECEIPT_SALE: ReceiptSale = {
   createdAt: new Date().toISOString(),
   cashierName: 'Demo Cashier',
   items: [
-    { productName: 'Organic Baby Formula 400g', quantity: 2, unitPrice: 1250, lineTotal: 2500 },
-    { productName: 'Cotton Onesie Set', quantity: 1, unitPrice: 890, lineTotal: 890 },
+    { productName: 'Organic Baby Formula 400g', quantity: 2, unitPrice: 1250, lineTotal: 2500, discountPercent: 0 },
+    { productName: 'Cotton Onesie Set', quantity: 1, unitPrice: 890, lineTotal: 890, discountPercent: 10 },
   ],
   subtotal: 3390,
   discountAmount: 100,
@@ -345,10 +347,15 @@ export function formatReceipt(
     for (const item of sale.items) {
       lines.push(item.productName.slice(0, width));
       lines.push(pad(`  ${item.quantity} x ${fmt(item.unitPrice)}`, fmt(item.lineTotal)));
+      if (item.discountPercent && item.discountPercent > 0) {
+        lines.push(`  Discount: ${item.discountPercent}%`);
+      }
     }
     lines.push(dash);
   }
 
+  const totalQuantity = sale.items.reduce((sum, i) => sum + i.quantity, 0);
+  lines.push(pad('Total items:', String(totalQuantity)));
   if (sections.showSubtotal) lines.push(pad('Subtotal:', fmt(sale.subtotal)));
   if (sections.showDiscount && sale.discountAmount > 0) lines.push(pad('Discount:', `-${fmt(sale.discountAmount)}`));
   if (sections.showTax) lines.push(pad('Tax:', fmt(sale.taxAmount)));
@@ -434,6 +441,8 @@ export interface LabelElement {
   /** Base64 data URL of uploaded font file (.ttf, etc.). */
   customFontDataUrl?: string;
   customFontFormat?: 'truetype' | 'opentype' | 'woff' | 'woff2';
+  /** Extra space between characters (designer units, same scale as fontSize). */
+  letterSpacing?: number;
 }
 
 export interface LabelLayout {
@@ -487,9 +496,11 @@ export {
   labelElementAlignTransform,
   labelElementStyle,
   labelFontSizePx,
+  labelLetterSpacingPx,
   labelElementPrintStyle,
   labelPreviewBarcodeHeightPx,
   labelPreviewFontSizePx,
+  labelPreviewLetterSpacingPx,
   labelStyleToCss,
   labelTsplFontHeightDots,
   labelTsplFontKey,

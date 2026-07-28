@@ -5,6 +5,7 @@ import {
   clampLabelPositionPercent,
   labelBarcodeLayoutStyle,
   labelPreviewFontSizePx,
+  labelPreviewLetterSpacingPx,
   labelPreviewMaxWidthPx,
   mmToPx,
   normalizeBarcodeForPrint,
@@ -162,6 +163,7 @@ export function LabelCanvasPreview({
 
           const fontSizePx = labelPreviewFontSizePx(el.fontSize, scale);
           const maxWidthPx = labelPreviewMaxWidthPx(el, widthMm, scale);
+          const letterSpacingPx = labelPreviewLetterSpacingPx(el.letterSpacing, scale);
           const transform =
             align === 'center' ? 'translateX(-50%)' : align === 'right' ? 'translateX(-100%)' : undefined;
 
@@ -192,6 +194,7 @@ export function LabelCanvasPreview({
                 overflow: 'hidden',
                 textOverflow: 'clip',
                 boxSizing: 'border-box',
+                ...(letterSpacingPx != null ? { letterSpacing: `${letterSpacingPx}px` } : {}),
               }}
             >
               <span className="block truncate">{text}</span>

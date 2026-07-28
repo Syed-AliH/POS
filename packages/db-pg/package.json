@@ -26,6 +26,7 @@
     "seed": "tsx src/seed.ts",
     "reset": "tsx src/reset.ts",
     "bootstrap": "tsx src/bootstrap-from-local.ts",
+    "restore-json": "tsx src/restore-json.ts",
     "enable-rls": "tsx src/enable-rls.ts",
     "typecheck": "tsc --noEmit"
   },

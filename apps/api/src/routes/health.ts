@@ -21,10 +21,12 @@ export async function healthRoutes(app: FastifyInstance) {
       return { status: 'ok', database: 'connected' };
     } catch (err) {
       reply.code(503);
+      const raw = err instanceof Error ? err.message : 'Unknown database error';
       return {
         status: 'error',
         database: 'disconnected',
-        error: err instanceof Error ? err.message : 'Unknown database error',
+        // Driver errors can embed the whole connection string — strip the password.
+        error: raw.replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s@]*@/gi, '$1***@'),
       };
     }
   });

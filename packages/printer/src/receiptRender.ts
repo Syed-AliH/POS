@@ -238,9 +238,14 @@ export function buildReceiptPrintHtml(
   if (hasItems) {
     const itemRows = sale.items
       .map((item) => {
+        const discountRow =
+          item.discountPercent && item.discountPercent > 0
+            ? `<div class="row small muted"><span>${escapeHtml(labels.discount)} ${item.discountPercent}%</span><span></span></div>`
+            : '';
         return `<div class="item">
           <div class="break item-name">${escapeHtml(item.productName)}</div>
           <div class="row small"><span>${item.quantity} × ${escapeHtml(fmtMoney(currency, item.unitPrice))}</span><span>${escapeHtml(fmtMoney(currency, item.lineTotal))}</span></div>
+          ${discountRow}
         </div>`;
       })
       .join('');
@@ -252,6 +257,8 @@ export function buildReceiptPrintHtml(
   }
 
   if (hasTotals) {
+    const totalQuantity = sale.items.reduce((sum, i) => sum + i.quantity, 0);
+    parts.push(`<div class="row"><span>Total items</span><span>${totalQuantity}</span></div>`);
     if (sections.showSubtotal) {
       parts.push(`<div class="row"><span>${escapeHtml(labels.subtotal)}</span><span>${escapeHtml(fmtMoney(currency, sale.subtotal))}</span></div>`);
     }

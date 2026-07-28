@@ -3,7 +3,7 @@ import { v4 as uuid } from 'uuid';
 import { customers, inventoryMovements, products, saleItems, sales, users } from '@mama-babi/db-pg';
 import type { PostgresClient } from '@mama-babi/db-pg';
 import { coerceReportDateRange, isoRangeBounds } from '../lib/reportDateRange';
-import { getSetting, incrementSaleCounter, getAllSettings } from './settings.service';
+import { getSetting, nextSaleNumber, getAllSettings } from './settings.service';
 
 function calcLineTotal(unitPrice: number, qty: number, discountPercent: number): number {
   const subtotal = unitPrice * qty;
@@ -13,6 +13,99 @@ function calcLineTotal(unitPrice: number, qty: number, discountPercent: number):
 function calcTax(amount: number, taxRate: number, inclusive: boolean): number {
   if (inclusive) return amount - amount / (1 + taxRate / 100);
   return amount * (taxRate / 100);
+}
+
+type SaleRow = typeof sales.$inferSelect;
+
+/**
+ * Builds summaries for a page of sales in a fixed number of queries.
+ *
+ * The database is remote, so each round trip costs ~120ms regardless of how little
+ * it returns. Doing this per sale (4+ queries each) made the sales list take seconds;
+ * this version is 3 sequential steps no matter how many sales are on the page.
+ */
+export async function buildSaleSummaries(db: PostgresClient, rows: SaleRow[]) {
+  if (!rows.length) return [];
+
+  const saleIds = rows.map((r) => r.id);
+  const cashierIds = [...new Set(rows.map((r) => r.cashierId).filter(Boolean))];
+  const customerIds = [...new Set(rows.map((r) => r.customerId).filter((id): id is string => !!id))];
+
+  const [items, cashierRows, customerRows] = await Promise.all([
+    db.select().from(saleItems).where(inArray(saleItems.saleId, saleIds)),
+    cashierIds.length
+      ? db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, cashierIds))
+      : Promise.resolve([]),
+    customerIds.length
+      ? db
+          .select({ id: customers.id, name: customers.name, phone: customers.phone })
+          .from(customers)
+          .where(inArray(customers.id, customerIds))
+      : Promise.resolve([]),
+  ]);
+
+  const productIds = [...new Set(items.map((i) => i.productId))];
+  const productInfo = productIds.length
+    ? await db
+        .select({ id: products.id, barcode: products.barcode, costPrice: products.costPrice })
+        .from(products)
+        .where(inArray(products.id, productIds))
+    : [];
+
+  const cashierById = new Map(cashierRows.map((c) => [c.id, c.name]));
+  const customerById = new Map(customerRows.map((c) => [c.id, c]));
+  const barcodeById = new Map(productInfo.map((p) => [p.id, p.barcode]));
+  const costById = new Map(productInfo.map((p) => [p.id, p.costPrice]));
+
+  const itemsBySale = new Map<string, typeof items>();
+  for (const item of items) {
+    const list = itemsBySale.get(item.saleId);
+    if (list) list.push(item);
+    else itemsBySale.set(item.saleId, [item]);
+  }
+
+  return rows.map((sale) => {
+    const customer = sale.customerId ? customerById.get(sale.customerId) : undefined;
+    const productRows = (itemsBySale.get(sale.id) ?? []).map((item) => {
+      const unitCost = costById.get(item.productId) ?? 0;
+      return {
+        saleItemId: item.id,
+        productId: item.productId,
+        productName: item.productName,
+        productSku: item.productSku,
+        barcode: barcodeById.get(item.productId) ?? '',
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        unitCost,
+        lineCost: unitCost * item.quantity,
+        discountPercent: item.discountPercent,
+        taxRate: item.taxRate,
+        lineTotal: item.lineTotal,
+      };
+    });
+
+    return {
+      id: sale.id,
+      saleNumber: sale.saleNumber,
+      cashierId: sale.cashierId,
+      cashierName: cashierById.get(sale.cashierId) ?? 'Unknown',
+      customerId: sale.customerId,
+      customerName: customer?.name ?? null,
+      customerPhone: customer?.phone ?? null,
+      subtotal: sale.subtotal,
+      discountAmount: sale.discountAmount,
+      discountReason: sale.discountReason,
+      taxAmount: sale.taxAmount,
+      totalAmount: sale.totalAmount,
+      paymentMethod: sale.paymentMethod,
+      amountTendered: sale.amountTendered,
+      changeGiven: sale.changeGiven,
+      status: sale.status,
+      heldKey: sale.heldKey,
+      createdAt: sale.createdAt,
+      items: productRows,
+    };
+  });
 }
 
 export async function buildSaleSummary(db: PostgresClient, saleId: string) {
@@ -25,23 +118,36 @@ export async function buildSaleSummary(db: PostgresClient, saleId: string) {
     : undefined;
   const items = await db.select().from(saleItems).where(eq(saleItems.saleId, saleId));
 
-  const productRows = await Promise.all(
-    items.map(async (item) => {
-      const [product] = await db.select().from(products).where(eq(products.id, item.productId)).limit(1);
-      return {
-        saleItemId: item.id,
-        productId: item.productId,
-        productName: item.productName,
-        productSku: item.productSku,
-        barcode: product?.barcode ?? '',
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        discountPercent: item.discountPercent,
-        taxRate: item.taxRate,
-        lineTotal: item.lineTotal,
-      };
-    }),
-  );
+  // One query for all line-item barcodes/costs instead of one per line.
+  const itemProductIds = [...new Set(items.map((i) => i.productId))];
+  const productInfoRows = itemProductIds.length
+    ? await db
+        .select({ id: products.id, barcode: products.barcode, costPrice: products.costPrice })
+        .from(products)
+        .where(inArray(products.id, itemProductIds))
+    : [];
+  const barcodeById = new Map(productInfoRows.map((p) => [p.id, p.barcode]));
+  const costById = new Map(productInfoRows.map((p) => [p.id, p.costPrice]));
+
+  const productRows = items.map((item) => {
+    // Cost isn't stored per line, so we report the product's current cost price —
+    // same basis as the estimated-cost figure on the reports/owner dashboard.
+    const unitCost = costById.get(item.productId) ?? 0;
+    return {
+      saleItemId: item.id,
+      productId: item.productId,
+      productName: item.productName,
+      productSku: item.productSku,
+      barcode: barcodeById.get(item.productId) ?? '',
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      unitCost,
+      lineCost: unitCost * item.quantity,
+      discountPercent: item.discountPercent,
+      taxRate: item.taxRate,
+      lineTotal: item.lineTotal,
+    };
+  });
 
   return {
     id: sale.id,
@@ -53,6 +159,7 @@ export async function buildSaleSummary(db: PostgresClient, saleId: string) {
     customerPhone: customer?.phone ?? null,
     subtotal: sale.subtotal,
     discountAmount: sale.discountAmount,
+    discountReason: sale.discountReason,
     taxAmount: sale.taxAmount,
     totalAmount: sale.totalAmount,
     paymentMethod: sale.paymentMethod,
@@ -102,14 +209,15 @@ export async function createSale(
   db: PostgresClient,
   sessionId: string,
   input: {
-    items: Array<{ productId: string; quantity: number; discountPercent?: number }>;
+    items: Array<{ productId: string; quantity: number; discountPercent?: number; unitPrice?: number }>;
     customerId?: string;
     customerName?: string;
     customerPhone?: string;
-    paymentMethod: 'cash' | 'card' | 'bank_transfer' | 'wallet';
+    paymentMethod: 'cash' | 'card' | 'bank_transfer' | 'wallet' | 'online';
     amountTendered?: number;
     discountAmount?: number;
     discountReason?: string;
+    adjustmentAmount?: number;
     status?: 'completed' | 'held';
     heldKey?: string;
     notes?: string;
@@ -121,10 +229,22 @@ export async function createSale(
   }
   if (!input.items.length) return { success: false, error: 'Cart is empty' };
 
-  const inclusive = (await getSetting(db, 'tax_inclusive')) === 'true';
+  // The database is remote (~120ms per round trip), so the reads that do not depend
+  // on each other are issued together and the writes are batched into one transaction.
+  const productIds = [...new Set(input.items.map((i) => i.productId))];
+  const [settings, productList, cashierRow] = await Promise.all([
+    getAllSettings(db),
+    db
+      .select()
+      .from(products)
+      .where(and(inArray(products.id, productIds), eq(products.isDeleted, false))),
+    db.select({ id: users.id, name: users.name }).from(users).where(eq(users.id, sessionId)).limit(1),
+  ]);
+
+  const inclusive = settings['tax_inclusive'] === 'true';
   const now = new Date().toISOString();
-  const deviceId = (await getSetting(db, 'device_id')) ?? 'cloud';
-  const branchId = (await getSetting(db, 'branch_id')) ?? 'main';
+  const deviceId = settings['device_id'] ?? 'cloud';
+  const branchId = settings['branch_id'] ?? 'main';
 
   let customerId: string | null = null;
   try {
@@ -134,21 +254,18 @@ export async function createSale(
   }
 
   const saleId = uuid();
-  const saleNumber = input.status === 'held' ? `HOLD-${Date.now()}` : await incrementSaleCounter(db);
+  const productMap = new Map(productList.map((p) => [p.id, p]));
 
   let subtotal = 0;
   let taxAmount = 0;
   const lineItems: Array<typeof saleItems.$inferInsert> = [];
 
   for (const item of input.items) {
-    const [product] = await db
-      .select()
-      .from(products)
-      .where(and(eq(products.id, item.productId), eq(products.isDeleted, false)))
-      .limit(1);
+    const product = productMap.get(item.productId);
     if (!product) return { success: false, error: `Product not found: ${item.productId}` };
 
-    const unitPrice = product.salePrice ?? product.retailPrice;
+    // A resumed hold keeps the price it was saved at; a fresh line uses the current price.
+    const unitPrice = item.unitPrice ?? product.salePrice ?? product.retailPrice;
     const discountPercent = item.discountPercent ?? 0;
     const lineTotal = calcLineTotal(unitPrice, item.quantity, discountPercent);
     const lineTax = calcTax(lineTotal, product.taxRate, inclusive);
@@ -174,8 +291,20 @@ export async function createSale(
     });
   }
 
-  const discountAmount = input.discountAmount ?? 0;
-  const totalAmount = inclusive ? subtotal - discountAmount : subtotal - discountAmount + taxAmount;
+  // Positive adjustment = surcharge (raises total), negative = extra discount.
+  const adjustment = input.adjustmentAmount ?? 0;
+  const discountAmount = (input.discountAmount ?? 0) - adjustment;
+  let discountReason = input.discountReason ?? null;
+  if (adjustment !== 0) {
+    const label = adjustment < 0
+      ? `Adjustment discount (${Math.abs(adjustment).toFixed(2)})`
+      : `Surcharge (${adjustment.toFixed(2)})`;
+    discountReason = discountReason ? `${discountReason}; ${label}` : label;
+  }
+  const totalAmount = Math.max(
+    0,
+    inclusive ? subtotal - discountAmount : subtotal - discountAmount + taxAmount,
+  );
 
   if (input.paymentMethod === 'cash' && input.amountTendered != null && input.amountTendered < totalAmount) {
     return { success: false, error: 'Insufficient amount tendered' };
@@ -186,7 +315,12 @@ export async function createSale(
       ? Math.max(0, input.amountTendered - totalAmount)
       : null;
 
+  let saleNumber = '';
   await db.transaction(async (tx) => {
+    const txDb = tx as unknown as PostgresClient;
+    // Allocated inside the transaction so a failed sale cannot burn a receipt number.
+    saleNumber = input.status === 'held' ? `HOLD-${Date.now()}` : await nextSaleNumber(txDb);
+
     await tx.insert(sales).values({
       id: saleId,
       saleNumber,
@@ -194,7 +328,7 @@ export async function createSale(
       customerId,
       subtotal,
       discountAmount,
-      discountReason: input.discountReason ?? null,
+      discountReason,
       taxAmount,
       totalAmount,
       paymentMethod: input.paymentMethod,
@@ -209,46 +343,334 @@ export async function createSale(
       updatedAt: now,
     });
 
-    for (const line of lineItems) {
-      await tx.insert(saleItems).values(line);
-    }
+    if (lineItems.length) await tx.insert(saleItems).values(lineItems);
 
     if (input.status !== 'held') {
+      // Quantities per product, so a cart with the same product on two lines
+      // decrements once with the combined amount.
+      const qtyByProduct = new Map<string, number>();
       for (const item of input.items) {
-        const [product] = await tx.select().from(products).where(eq(products.id, item.productId)).limit(1);
-        if (!product) continue;
-        await tx
-          .update(products)
-          .set({ stockQty: product.stockQty - item.quantity, updatedAt: now })
-          .where(eq(products.id, item.productId));
+        qtyByProduct.set(item.productId, (qtyByProduct.get(item.productId) ?? 0) + item.quantity);
+      }
 
-        await tx.insert(inventoryMovements).values({
+      // One statement for every line instead of one round trip per line. Still a
+      // relative decrement, so it stays safe against concurrent sales.
+      await applyStockDeltas(tx, [...qtyByProduct].map(([id, qty]) => ({ id, delta: -qty })), now);
+
+      await tx.insert(inventoryMovements).values(
+        [...qtyByProduct].map(([productId, qty]) => ({
           id: uuid(),
-          productId: item.productId,
+          productId,
           type: 'sale',
-          qtyChange: -item.quantity,
+          qtyChange: -qty,
           referenceId: saleId,
           notes: `Sale ${saleNumber}`,
           deviceId,
           branchId,
           createdAt: now,
           updatedAt: now,
-        });
-      }
+        })),
+      );
+    }
+
+    // Superseding the hold belongs to the same commit as the sale that replaces it.
+    if (input.heldSaleId && input.status !== 'held') {
+      await tx
+        .update(sales)
+        .set({ status: 'voided', notes: `Converted to ${saleNumber}`, updatedAt: now })
+        .where(and(eq(sales.id, input.heldSaleId), eq(sales.status, 'held')));
     }
   });
 
-  if (input.heldSaleId && input.status !== 'held') {
-    const [held] = await db.select().from(sales).where(eq(sales.id, input.heldSaleId)).limit(1);
-    if (held && held.status === 'held') {
-      await db
-        .update(sales)
-        .set({ status: 'voided', notes: `Converted to ${saleNumber}`, updatedAt: new Date().toISOString() })
-        .where(eq(sales.id, input.heldSaleId));
-    }
+  // Built from what we already have rather than re-reading the sale (5 more round trips).
+  const customerRow = customerId
+    ? { name: input.customerName?.trim() || null, phone: input.customerPhone?.trim() || null }
+    : null;
+  return {
+    success: true,
+    data: {
+      id: saleId,
+      saleNumber,
+      cashierId: sessionId,
+      cashierName: cashierRow[0]?.name ?? 'Unknown',
+      customerId,
+      customerName: customerRow?.name ?? null,
+      customerPhone: customerRow?.phone ?? null,
+      subtotal,
+      discountAmount,
+      discountReason,
+      taxAmount,
+      totalAmount,
+      paymentMethod: input.paymentMethod,
+      amountTendered: input.amountTendered ?? null,
+      changeGiven,
+      status: input.status ?? 'completed',
+      heldKey: input.heldKey ?? null,
+      createdAt: now,
+      items: lineItems.map((line) => {
+        const product = productMap.get(line.productId);
+        const unitCost = product?.costPrice ?? 0;
+        return {
+          saleItemId: line.id as string,
+          productId: line.productId,
+          productName: line.productName,
+          productSku: line.productSku,
+          barcode: product?.barcode ?? '',
+          quantity: line.quantity,
+          unitPrice: line.unitPrice,
+          unitCost,
+          lineCost: unitCost * line.quantity,
+          discountPercent: line.discountPercent ?? 0,
+          taxRate: line.taxRate ?? 0,
+          lineTotal: line.lineTotal,
+        };
+      }),
+    },
+  };
+}
+
+/** Applies relative stock changes for many products in a single statement. */
+async function applyStockDeltas(
+  tx: { execute: (q: ReturnType<typeof sql>) => Promise<unknown> },
+  deltas: Array<{ id: string; delta: number }>,
+  now: string,
+) {
+  if (!deltas.length) return;
+  const values = sql.join(
+    deltas.map((d) => sql`(${d.id}, ${d.delta}::int)`),
+    sql`, `,
+  );
+  await tx.execute(sql`
+    update products p
+       set stock_qty = p.stock_qty + v.delta,
+           updated_at = ${now}
+      from (values ${values}) as v(id, delta)
+     where p.id = v.id
+  `);
+}
+
+/**
+ * Edits a completed (already paid) bill in place: re-prices the lines, adjusts stock by the
+ * quantity delta and rewrites the totals. The sale number, status and payment method are kept,
+ * so the caller settles only the difference against the previous total.
+ */
+export async function updateSale(
+  db: PostgresClient,
+  input: {
+    saleId: string;
+    items: Array<{ productId: string; quantity: number; discountPercent?: number; unitPrice?: number }>;
+    customerId?: string;
+    customerName?: string;
+    customerPhone?: string;
+    amountTendered?: number;
+    discountAmount?: number;
+    discountReason?: string;
+  },
+) {
+  if (!input.items.length) return { success: false, error: 'Sale must have at least one item' };
+
+  // Independent reads, issued together — each costs a remote round trip.
+  const [[sale], settings, oldItems] = await Promise.all([
+    db.select().from(sales).where(eq(sales.id, input.saleId)).limit(1),
+    getAllSettings(db),
+    db.select().from(saleItems).where(eq(saleItems.saleId, input.saleId)),
+  ]);
+  if (!sale) return { success: false, error: 'Sale not found' };
+  if (sale.status !== 'completed') return { success: false, error: 'Only completed sales can be updated' };
+
+  const inclusive = settings['tax_inclusive'] === 'true';
+  const now = new Date().toISOString();
+  const deviceId = sale.deviceId;
+  const branchId = sale.branchId;
+
+  let customerId: string | null = sale.customerId;
+  try {
+    customerId = await findOrCreateCustomer(
+      db,
+      input.customerId ?? sale.customerId ?? undefined,
+      input.customerName,
+      input.customerPhone,
+    );
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Customer save failed' };
   }
 
-  const summary = await buildSaleSummary(db, saleId);
+  const oldQtyByProduct = new Map<string, number>();
+  // Price the bill was saved at, per product — editing must not silently re-price a line.
+  const savedPriceByProduct = new Map<string, number>();
+  for (const item of oldItems) {
+    oldQtyByProduct.set(item.productId, (oldQtyByProduct.get(item.productId) ?? 0) + item.quantity);
+    if (!savedPriceByProduct.has(item.productId)) savedPriceByProduct.set(item.productId, item.unitPrice);
+  }
+
+  const merged = new Map<string, { quantity: number; discountPercent: number; unitPrice?: number }>();
+  for (const item of input.items) {
+    if (item.quantity <= 0) continue;
+    const existing = merged.get(item.productId);
+    if (existing) existing.quantity += item.quantity;
+    else merged.set(item.productId, {
+      quantity: item.quantity,
+      discountPercent: item.discountPercent ?? 0,
+      unitPrice: item.unitPrice ?? savedPriceByProduct.get(item.productId),
+    });
+  }
+  if (!merged.size) return { success: false, error: 'Sale must have at least one item' };
+
+  const productList = await db
+    .select()
+    .from(products)
+    .where(and(inArray(products.id, [...merged.keys()]), eq(products.isDeleted, false)));
+  const productMap = new Map(productList.map((p) => [p.id, p]));
+
+  let subtotal = 0;
+  let taxAmount = 0;
+  const lineItems: Array<typeof saleItems.$inferInsert> = [];
+
+  for (const [productId, row] of merged) {
+    const product = productMap.get(productId);
+    if (!product) return { success: false, error: `Product not found: ${productId}` };
+
+    const unitPrice = row.unitPrice ?? product.salePrice ?? product.retailPrice;
+    const lineTotal = calcLineTotal(unitPrice, row.quantity, row.discountPercent);
+    subtotal += lineTotal;
+    taxAmount += calcTax(lineTotal, product.taxRate, inclusive);
+
+    lineItems.push({
+      id: uuid(),
+      saleId: input.saleId,
+      productId: product.id,
+      productName: product.name,
+      productSku: product.sku,
+      quantity: row.quantity,
+      unitPrice,
+      discountPercent: row.discountPercent,
+      taxRate: product.taxRate,
+      lineTotal,
+      deviceId,
+      branchId,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  const discountAmount =
+    input.discountAmount != null
+      ? input.discountAmount
+      : sale.subtotal > 0
+        ? (sale.discountAmount * subtotal) / sale.subtotal
+        : sale.discountAmount;
+  const discountReason = input.discountReason ?? sale.discountReason;
+  const totalAmount = Math.max(
+    0,
+    inclusive ? subtotal - discountAmount : subtotal - discountAmount + taxAmount,
+  );
+  const amountTendered = input.amountTendered ?? sale.amountTendered;
+  const changeGiven =
+    sale.paymentMethod === 'cash' && amountTendered != null
+      ? Math.max(0, amountTendered - totalAmount)
+      : sale.changeGiven;
+
+  const stockChanges: Array<{ id: string; delta: number }> = [];
+  const movements: Array<typeof inventoryMovements.$inferInsert> = [];
+  for (const productId of new Set([...oldQtyByProduct.keys(), ...merged.keys()])) {
+    const delta = (merged.get(productId)?.quantity ?? 0) - (oldQtyByProduct.get(productId) ?? 0);
+    if (delta === 0) continue;
+    stockChanges.push({ id: productId, delta: -delta });
+    movements.push({
+      id: uuid(),
+      productId,
+      type: 'adjustment',
+      qtyChange: -delta,
+      referenceId: input.saleId,
+      notes: `Sale edit ${sale.saleNumber}`,
+      deviceId,
+      branchId,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  await db.transaction(async (tx) => {
+    // One statement for all stock changes rather than one round trip per product.
+    await applyStockDeltas(tx, stockChanges, now);
+    if (movements.length) await tx.insert(inventoryMovements).values(movements);
+
+    await tx.delete(saleItems).where(eq(saleItems.saleId, input.saleId));
+    await tx.insert(saleItems).values(lineItems);
+
+    await tx
+      .update(sales)
+      .set({
+        customerId,
+        subtotal,
+        discountAmount,
+        discountReason,
+        taxAmount,
+        totalAmount,
+        amountTendered,
+        changeGiven,
+        updatedAt: now,
+      })
+      .where(eq(sales.id, input.saleId));
+  });
+
+  // Re-uses the bulk builder (2 round trips) instead of re-reading the sale row by row.
+  const [summary] = await buildSaleSummaries(db, [
+    {
+      ...sale,
+      customerId,
+      subtotal,
+      discountAmount,
+      discountReason,
+      taxAmount,
+      totalAmount,
+      amountTendered,
+      changeGiven,
+      updatedAt: now,
+    },
+  ]);
+  if (!summary) return { success: false, error: 'Failed to load sale' };
+  return { success: true, data: summary };
+}
+
+export async function voidSale(db: PostgresClient, id: string) {
+  const [sale] = await db.select().from(sales).where(eq(sales.id, id)).limit(1);
+  if (!sale) return { success: false, error: 'Sale not found' };
+  if (sale.status === 'voided') return { success: false, error: 'Already voided' };
+
+  const now = new Date().toISOString();
+  const items = await db.select().from(saleItems).where(eq(saleItems.saleId, id));
+
+  await db.transaction(async (tx) => {
+    await tx.update(sales).set({ status: 'voided', updatedAt: now }).where(eq(sales.id, id));
+
+    // Restock only sales that actually decremented inventory (completed ones).
+    if (sale.status === 'completed') {
+      const movements: Array<typeof inventoryMovements.$inferInsert> = [];
+      for (const item of items) {
+        await tx
+          .update(products)
+          .set({ stockQty: sql`${products.stockQty} + ${item.quantity}`, updatedAt: now })
+          .where(eq(products.id, item.productId));
+
+        movements.push({
+          id: uuid(),
+          productId: item.productId,
+          type: 'void',
+          qtyChange: item.quantity,
+          referenceId: id,
+          notes: `Void sale ${sale.saleNumber}`,
+          deviceId: sale.deviceId,
+          branchId: sale.branchId,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+      if (movements.length) await tx.insert(inventoryMovements).values(movements);
+    }
+  });
+
+  const summary = await buildSaleSummary(db, id);
   if (!summary) return { success: false, error: 'Failed to load sale' };
   return { success: true, data: summary };
 }
@@ -298,10 +720,7 @@ export async function listSales(
     .orderBy(desc(sales.createdAt))
     .limit(limit);
 
-  const summaries = (
-    await Promise.all(rows.map((r) => buildSaleSummary(db, r.id)))
-  ).filter(Boolean);
-  return { success: true as const, data: summaries as NonNullable<Awaited<ReturnType<typeof buildSaleSummary>>>[] };
+  return { success: true as const, data: await buildSaleSummaries(db, rows) };
 }
 
 export async function lookupSaleByNumber(db: PostgresClient, saleNumber: string) {

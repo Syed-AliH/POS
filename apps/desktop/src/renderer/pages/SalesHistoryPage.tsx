@@ -17,9 +17,45 @@ const api = getApi();
 type SaleSortKey = 'sale' | 'status' | 'customer' | 'date' | 'time' | 'total';
 type EditItemSortKey = 'item' | 'qty' | 'total';
 
+const STATUS_FILTERS = [
+  { value: 'completed', label: 'Completed' },
+  { value: 'held', label: 'Held' },
+  { value: 'voided', label: 'Voided' },
+  { value: 'all', label: 'All' },
+];
+
+function shiftedDate(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return localCalendarDate(d);
+}
+
+const DATE_PRESETS = [
+  { label: 'Today', range: () => ({ start: localCalendarDate(), end: localCalendarDate() }) },
+  { label: '7 days', range: () => ({ start: shiftedDate(-6), end: localCalendarDate() }) },
+  { label: '30 days', range: () => ({ start: shiftedDate(-29), end: localCalendarDate() }) },
+];
+
+const STATUS_BADGE: Record<string, string> = {
+  completed: 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300',
+  held: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
+  voided: 'bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400',
+  returned: 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300',
+};
+
+function StatusBadge({ status }: { status: string }) {
+  return (
+    <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium capitalize ${STATUS_BADGE[status] ?? STATUS_BADGE.voided}`}>
+      {status}
+    </span>
+  );
+}
+
 export function SalesHistoryPage() {
   const navigate = useNavigate();
   const restoreHeldSale = useCartStore((s) => s.restoreHeldSale);
+  const loadSaleForEdit = useCartStore((s) => s.loadSaleForEdit);
+  const [pendingEdit, setPendingEdit] = useState<SaleSummary | null>(null);
   const [sales, setSales] = useState<SaleSummary[]>([]);
   const [statusFilter, setStatusFilter] = useState('completed');
   const [search, setSearch] = useState('');
@@ -52,6 +88,11 @@ export function SalesHistoryPage() {
 
   const filtered = sales.filter((s) =>
     !search || s.saleNumber.toLowerCase().includes(search.toLowerCase()),
+  );
+
+  const filteredTotal = useMemo(
+    () => filtered.reduce((sum, s) => sum + (s.status === 'voided' ? 0 : s.totalAmount), 0),
+    [filtered],
   );
 
   const sortedSales = useMemo(
@@ -226,6 +267,29 @@ export function SalesHistoryPage() {
     }
   };
 
+  /** Opens a paid bill in Checkout so items can be added/removed, then settled by difference. */
+  const openInCheckout = async (sale: SaleSummary) => {
+    const full = await api.sales.get(sale.id);
+    if (!full.success || !full.data) { toast.error('Could not load bill'); return; }
+    let customer: Customer | null = null;
+    if (full.data.customerId) {
+      const c = await api.customers.get(full.data.customerId);
+      if (c.success && c.data) customer = c.data;
+    }
+    loadSaleForEdit(full.data, customer);
+    navigate('/checkout');
+  };
+
+  const handleEditInCheckout = (sale: SaleSummary) => {
+    const cart = useCartStore.getState();
+    // Loading a bill replaces the cart, so don't silently discard an in-progress sale.
+    if (cart.items.length && cart.editingSale?.id !== sale.id) {
+      setPendingEdit(sale);
+      return;
+    }
+    void openInCheckout(sale);
+  };
+
   const handleResumeHeld = async (sale: SaleSummary) => {
     const full = await api.sales.get(sale.id);
     if (!full.success || !full.data) { toast.error('Could not load held sale'); return; }
@@ -245,63 +309,120 @@ export function SalesHistoryPage() {
 
   return (
     <div className="page-shell">
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h2 className="text-2xl font-bold">Sales History</h2>
-          <p className="text-sm text-slate-500">Select a sale to view receipt, edit bill, or process a return</p>
+      <div className="mb-4">
+        <h2 className="text-2xl font-bold">Sales History</h2>
+        <p className="text-sm text-slate-500">Click a bill to edit it in Checkout</p>
+      </div>
+
+      <div className="panel mb-4 p-4">
+        <div className="flex flex-wrap items-end gap-4">
+          <div>
+            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Status</label>
+            <div className="flex gap-1">
+              {STATUS_FILTERS.map((f) => (
+                <button
+                  key={f.value}
+                  type="button"
+                  onClick={() => setStatusFilter(f.value)}
+                  className={`rounded-lg px-3 py-2 text-sm font-medium ${
+                    statusFilter === f.value
+                      ? 'bg-primary-600 text-white'
+                      : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Date range</label>
+            <div className="flex items-center gap-2">
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" />
+              <span className="text-slate-400">→</span>
+              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" />
+              {DATE_PRESETS.map((p) => (
+                <Button key={p.label} size="sm" variant="ghost" onClick={() => { const r = p.range(); setStartDate(r.start); setEndDate(r.end); }}>
+                  {p.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          <div className="ml-auto">
+            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Search</label>
+            <input
+              placeholder="Bill number…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && load()}
+              className="w-56 rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+            />
+          </div>
         </div>
-        <div className="flex gap-2 flex-wrap">
-          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="px-3 py-2 border rounded-lg text-sm" />
-          <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="px-3 py-2 border rounded-lg text-sm" />
-          <input placeholder="Search sale #…" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} className="px-3 py-2 border rounded-lg text-sm w-48" />
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="px-3 py-2 border rounded-lg text-sm">
-            <option value="completed">Completed</option>
-            <option value="held">Held</option>
-            <option value="voided">Voided</option>
-            <option value="all">All</option>
-          </select>
+
+        <div className="mt-3 flex flex-wrap items-center gap-4 border-t border-slate-100 pt-3 text-sm dark:border-slate-800">
+          <span className="text-slate-500">
+            <strong className="text-slate-800 dark:text-slate-100">{filtered.length}</strong> bills
+          </span>
+          <span className="text-slate-500">
+            <strong className="text-slate-800 dark:text-slate-100">PKR {filteredTotal.toFixed(2)}</strong>
+          </span>
         </div>
       </div>
 
       <div className="grid grid-cols-3 gap-6">
-        <div className="col-span-2 panel overflow-hidden">
+        <div className="col-span-2 panel max-h-[calc(100vh-320px)] overflow-auto">
           {loading ? (
             <div className="p-12 text-center text-slate-400">Loading sales…</div>
           ) : filtered.length === 0 ? (
             <div className="p-12 text-center">
-              <p className="text-slate-500 font-medium">No sales found for the selected date</p>
-              <p className="text-sm text-slate-400 mt-2">Change the date range above or complete a sale in Checkout</p>
+              <p className="text-slate-500 font-medium">No bills match these filters</p>
               <Button className="mt-4" onClick={() => navigate('/checkout')}>Go to Checkout</Button>
             </div>
           ) : (
             <table className="w-full text-sm">
-              <thead className="table-head">
+              <thead className="table-head sticky top-0 z-10">
                 <tr>
-                  <SortableTh label="Sale #" columnKey="sale" onSort={onSort} icon={icon} className="p-3" />
+                  <SortableTh label="Bill #" columnKey="sale" onSort={onSort} icon={icon} className="p-3" />
                   <SortableTh label="Status" columnKey="status" onSort={onSort} icon={icon} className="p-3" />
                   <SortableTh label="Customer" columnKey="customer" onSort={onSort} icon={icon} className="p-3" />
                   <SortableTh label="Date" columnKey="date" onSort={onSort} icon={icon} className="p-3" />
                   <SortableTh label="Time" columnKey="time" onSort={onSort} icon={icon} className="p-3" />
                   <SortableTh label="Total" columnKey="total" onSort={onSort} icon={icon} className="p-3" align="right" />
-                  <th className="p-3">Actions</th>
+                  <th className="p-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {sortedSales.map((s) => (
-                  <tr key={s.id} className={`border-t cursor-pointer row-hover ${selected?.id === s.id ? 'row-active' : ''}`} onClick={() => viewDetail(s.id)}>
-                    <td className="p-3 font-mono">{s.saleNumber}</td>
-                    <td className="p-3 capitalize">{s.status}</td>
-                    <td className="p-3 text-slate-600">{s.customerName ?? '—'}</td>
+                  <tr
+                    key={s.id}
+                    className={`border-t cursor-pointer row-hover ${selected?.id === s.id ? 'row-active' : ''}`}
+                    title={s.status === 'completed' ? 'Click to edit this bill in Checkout' : undefined}
+                    onClick={() => {
+                      if (s.status === 'completed') handleEditInCheckout(s);
+                      else if (s.status === 'held') handleResumeHeld(s);
+                      else viewDetail(s.id);
+                    }}
+                  >
+                    <td className="p-3">
+                      <div className="font-mono font-medium text-slate-900 dark:text-slate-100">{s.saleNumber}</div>
+                      <div className="text-xs text-slate-400">{s.items.length} item(s) · {s.paymentMethod}</div>
+                    </td>
+                    <td className="p-3"><StatusBadge status={s.status} /></td>
+                    <td className="p-3 text-slate-600 dark:text-slate-300">{s.customerName ?? '—'}</td>
                     <td className="p-3 text-slate-500 whitespace-nowrap">{formatDateOnly(s.createdAt)}</td>
                     <td className="p-3 text-slate-500 whitespace-nowrap">{formatTimeOnly(s.createdAt)}</td>
-                    <td className="p-3 text-right font-semibold">PKR {s.totalAmount.toFixed(2)}</td>
+                    <td className="p-3 text-right font-semibold tabular-nums">PKR {s.totalAmount.toFixed(2)}</td>
                     <td className="p-3" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex gap-1 flex-wrap">
+                      <div className="flex gap-1 flex-wrap justify-end">
                         {s.status === 'completed' && (
                           <>
-                            <Button variant="ghost" size="sm" onClick={() => viewDetail(s.id)}>Edit</Button>
+                            <Button size="sm" onClick={() => handleEditInCheckout(s)}>Edit</Button>
+                            <Button variant="ghost" size="sm" onClick={() => viewDetail(s.id)}>Receipt</Button>
                             <Button variant="ghost" size="sm" onClick={() => handleReprint(s.id)}>Print</Button>
-                            <Button variant="secondary" size="sm" onClick={() => startReturn(s.saleNumber)}>Return</Button>
+                            <Button variant="ghost" size="sm" onClick={() => startReturn(s.saleNumber)}>Return</Button>
                             <Button variant="danger" size="sm" onClick={() => setVoidId(s.id)}>Void</Button>
                           </>
                         )}
@@ -322,6 +443,41 @@ export function SalesHistoryPage() {
 
         {selected ? (
           <div className="space-y-4">
+            <div className="panel p-4">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="font-mono text-lg font-semibold text-slate-900 dark:text-slate-100">{selected.saleNumber}</p>
+                  <p className="text-xs text-slate-500">
+                    {formatDateOnly(selected.createdAt)} {formatTimeOnly(selected.createdAt)} · {selected.cashierName}
+                  </p>
+                </div>
+                <StatusBadge status={selected.status} />
+              </div>
+              <dl className="mt-3 grid grid-cols-2 gap-y-1 text-sm">
+                <dt className="text-slate-500">Customer</dt>
+                <dd className="text-right">{selected.customerName ?? '—'}</dd>
+                <dt className="text-slate-500">Payment</dt>
+                <dd className="text-right capitalize">{selected.paymentMethod}</dd>
+                <dt className="text-slate-500">Subtotal</dt>
+                <dd className="text-right tabular-nums">PKR {selected.subtotal.toFixed(2)}</dd>
+                {selected.discountAmount !== 0 && (
+                  <>
+                    <dt className="text-slate-500">{selected.discountAmount > 0 ? 'Discount' : 'Surcharge'}</dt>
+                    <dd className={`text-right tabular-nums ${selected.discountAmount > 0 ? 'text-green-700' : 'text-amber-700'}`}>
+                      {selected.discountAmount > 0 ? '-' : '+'} PKR {Math.abs(selected.discountAmount).toFixed(2)}
+                    </dd>
+                  </>
+                )}
+                {selected.discountReason && (
+                  <dd className="col-span-2 text-xs text-slate-400">{selected.discountReason}</dd>
+                )}
+                <dt className="border-t border-slate-100 pt-1 font-semibold dark:border-slate-800">Total paid</dt>
+                <dd className="border-t border-slate-100 pt-1 text-right font-bold text-primary-700 tabular-nums dark:border-slate-800 dark:text-primary-400">
+                  PKR {selected.totalAmount.toFixed(2)}
+                </dd>
+              </dl>
+            </div>
+
             {displayPreview && (
               <div>
                 {editDirty && selected.status === 'completed' && (
@@ -334,7 +490,7 @@ export function SalesHistoryPage() {
             {selected.status === 'completed' && (
               <div className="panel p-4 space-y-3">
                 <div className="flex justify-between items-center">
-                  <label className="text-xs font-medium text-slate-500 uppercase">Edit bill</label>
+                  <label className="text-xs font-medium text-slate-500 uppercase">Quick item edit</label>
                   <Button size="sm" variant="secondary" onClick={() => setShowProductSearch(true)}>Add product</Button>
                 </div>
                 <table className="w-full text-sm">
@@ -374,6 +530,7 @@ export function SalesHistoryPage() {
             <div className="flex flex-col gap-2">
               {selected.status === 'completed' && (
                 <>
+                  <Button size="sm" onClick={() => handleEditInCheckout(selected)}>Edit in Checkout</Button>
                   <Button size="sm" variant="secondary" onClick={() => startReturn(selected.saleNumber)}>Process Return</Button>
                   <Button size="sm" variant="secondary" onClick={() => handleReprint(selected.id)}>Reprint Receipt</Button>
                 </>
@@ -385,7 +542,7 @@ export function SalesHistoryPage() {
           </div>
         ) : (
           <div className="bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-dashed p-6 text-center text-slate-400 text-sm">
-            Select a sale to view receipt and edit the bill
+            Select a bill to preview its receipt
           </div>
         )}
       </div>
@@ -394,6 +551,24 @@ export function SalesHistoryPage() {
         footer={<ModalActions onCancel={() => setVoidId(null)} onConfirm={handleVoid} confirmLabel="Void sale" confirmVariant="danger" />}
       >
         <p className="text-slate-600">This cannot be undone. Manager role required.</p>
+      </Modal>
+
+      <Modal open={!!pendingEdit} title="Replace current cart?" onClose={() => setPendingEdit(null)}
+        footer={
+          <ModalActions
+            onCancel={() => setPendingEdit(null)}
+            onConfirm={() => {
+              const sale = pendingEdit;
+              setPendingEdit(null);
+              if (sale) void openInCheckout(sale);
+            }}
+            confirmLabel="Open bill"
+          />
+        }
+      >
+        <p className="text-slate-600">
+          Checkout has an unsaved cart. Opening bill {pendingEdit?.saleNumber} will replace it.
+        </p>
       </Modal>
 
       <ProductSearchModal

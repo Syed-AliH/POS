@@ -632,14 +632,34 @@ export function LabelDesignerPage() {
                   </div>
                 )}
                 {selectedEl.type === 'storeName' && (
-                  <div className="flex-1 min-w-[200px]">
-                    <label className="text-xs text-slate-500">Store name override</label>
-                    <input
-                      className="form-input w-full mt-1"
-                      value={draft.layout.storeName ?? ''}
-                      onChange={(e) => updateLayout({ storeName: e.target.value })}
-                    />
-                  </div>
+                  <>
+                    <div className="flex-1 min-w-[200px]">
+                      <label className="text-xs text-slate-500">Store name override</label>
+                      <input
+                        className="form-input w-full mt-1"
+                        value={draft.layout.storeName ?? ''}
+                        onChange={(e) => updateLayout({ storeName: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-500">Character spacing</label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.5}
+                        value={selectedEl.letterSpacing ?? 0}
+                        onChange={(e) => {
+                          const next = Number(e.target.value);
+                          if (!Number.isFinite(next)) return;
+                          const letterSpacing = Math.max(0, next);
+                          updateElement(selectedEl.id, {
+                            letterSpacing: letterSpacing > 0 ? letterSpacing : undefined,
+                          });
+                        }}
+                        className="form-input w-full mt-1 h-9 text-sm"
+                      />
+                    </div>
+                  </>
                 )}
                 {selectedEl.type === 'barcode' ? (
                   <>

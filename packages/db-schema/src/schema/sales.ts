@@ -12,7 +12,7 @@ export const sales = sqliteTable('sales', {
   taxAmount: real('tax_amount').notNull().default(0),
   totalAmount: real('total_amount').notNull().default(0),
   paymentMethod: text('payment_method', {
-    enum: ['cash', 'card', 'bank_transfer', 'wallet'],
+    enum: ['cash', 'card', 'bank_transfer', 'wallet', 'online'],
   }).notNull(),
   amountTendered: real('amount_tendered'),
   changeGiven: real('change_given'),

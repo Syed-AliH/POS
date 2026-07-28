@@ -8,6 +8,7 @@ const links = [
   { to: '/vendors', label: 'Vendors', desc: 'Supplier management' },
   { to: '/customers', label: 'Customers', desc: 'CRM & loyalty points' },
   { to: '/promotions', label: 'Promotions', desc: 'Discount rules' },
+  { to: '/promo-codes', label: 'Promo Codes', desc: 'Create & manage discount codes' },
   { to: '/labels', label: 'Labels', desc: 'Batch label printing' },
   { to: '/gift-cards', label: 'Gift Cards', desc: 'Issue & reload store credit' },
   { to: '/expenses', label: 'Expenses', desc: 'Petty cash tracking' },

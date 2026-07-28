@@ -3,23 +3,21 @@ import {
   type ReceiptSale,
   type ReceiptTemplateConfig,
 } from '@mama-babi/printer';
-import { getAllSettings } from './settings';
-import { getDefaultReceiptTemplate, receiptTemplateToConfig } from './receiptTemplates';
-import { isLikelyLabelPrinterName, resolveReceiptPrinterName } from './printerDevices';
+import { isLikelyLabelPrinterName } from './printerDevices';
 import { printReceiptWysiwyg } from './receiptPrintWysiwyg';
+import { getPrintContext, invalidatePrintContext } from '../print/printContext';
 
 export async function printReceiptToDevice(
   sale: ReceiptSale,
   templateOverride?: ReceiptTemplateConfig,
 ): Promise<{ printed: boolean; fallback?: string }> {
-  const settings = getAllSettings();
-  const template = templateOverride ?? (() => {
-    const tpl = getDefaultReceiptTemplate();
-    return tpl ? receiptTemplateToConfig(tpl) : undefined;
-  })();
+  // Settings, default template and printer name are cached across receipts.
+  const ctx = await getPrintContext();
+  const settings = ctx.settings;
+  const template = templateOverride ?? ctx.template;
 
   try {
-    const printerName = await resolveReceiptPrinterName(settings.receipt_printer);
+    const printerName = ctx.printerName;
 
     if (printerName && isLikelyLabelPrinterName(printerName)) {
       throw new Error(
@@ -31,6 +29,8 @@ export async function printReceiptToDevice(
     return { printed: result.printed };
   } catch (err) {
     console.warn('[print:receipt:error]', err);
+    // The cached printer may have been unplugged or renamed — re-resolve next time.
+    invalidatePrintContext();
     return {
       printed: false,
       fallback: err instanceof Error ? err.message : String(err),

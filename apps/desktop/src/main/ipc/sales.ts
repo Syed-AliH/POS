@@ -68,6 +68,7 @@ export function buildSaleSummary(saleId: string): SaleSummary | null {
     customerPhone: customer?.phone ?? null,
     subtotal: sale.subtotal,
     discountAmount: sale.discountAmount,
+    discountReason: sale.discountReason,
     taxAmount: sale.taxAmount,
     totalAmount: sale.totalAmount,
     paymentMethod: sale.paymentMethod,
@@ -117,7 +118,8 @@ export function handleSaleCreate(input: CreateSaleInput): ApiResult<SaleSummary>
 
       if (!product) return { success: false, error: `Product not found: ${item.productId}` };
 
-      const unitPrice = product.salePrice ?? product.retailPrice;
+      // A resumed hold keeps the price it was saved at; a fresh line uses the current price.
+      const unitPrice = item.unitPrice ?? product.salePrice ?? product.retailPrice;
       const discountPercent = item.discountPercent ?? 0;
       const lineTotal = calcLineTotal(unitPrice, item.quantity, discountPercent);
       const lineTax = calcTax(lineTotal, product.taxRate, inclusive);
@@ -146,7 +148,7 @@ export function handleSaleCreate(input: CreateSaleInput): ApiResult<SaleSummary>
     const promoInput = {
       items: input.items.map((item) => {
         const product = db.select().from(products).where(eq(products.id, item.productId)).get()!;
-        const unitPrice = product.salePrice ?? product.retailPrice;
+        const unitPrice = item.unitPrice ?? product.salePrice ?? product.retailPrice;
         return {
           productId: item.productId,
           quantity: item.quantity,
@@ -186,7 +188,17 @@ export function handleSaleCreate(input: CreateSaleInput): ApiResult<SaleSummary>
       }
     }
 
-    const totalAmount = subtotal - discountAmount;
+    const adjustment = input.adjustmentAmount ?? 0;
+    if (adjustment !== 0) {
+      // Positive adjustment = surcharge (raises total), negative = extra discount.
+      discountAmount -= adjustment;
+      const label = adjustment < 0
+        ? `Adjustment discount (${Math.abs(adjustment).toFixed(2)})`
+        : `Surcharge (${adjustment.toFixed(2)})`;
+      discountReason = discountReason ? `${discountReason}; ${label}` : label;
+    }
+
+    const totalAmount = Math.max(0, subtotal - discountAmount);
 
     if (input.paymentMethod === 'wallet' && input.status !== 'held') {
       if (!input.giftCardCode) return { success: false, error: 'Gift card code required' };
@@ -410,7 +422,14 @@ export function handleSaleUpdate(input: UpdateSaleInput): ApiResult<SaleSummary>
       oldQtyByProduct.set(item.productId, (oldQtyByProduct.get(item.productId) ?? 0) + item.quantity);
     }
 
-    const mergedInput = new Map<string, { quantity: number; discountPercent: number }>();
+    // Price the bill was saved at, per product — an edited bill must not silently
+    // re-price because the product's selling price changed since the sale.
+    const savedPriceByProduct = new Map<string, number>();
+    for (const item of oldItems) {
+      if (!savedPriceByProduct.has(item.productId)) savedPriceByProduct.set(item.productId, item.unitPrice);
+    }
+
+    const mergedInput = new Map<string, { quantity: number; discountPercent: number; unitPrice?: number }>();
     for (const item of input.items) {
       if (item.quantity <= 0) continue;
       const existing = mergedInput.get(item.productId);
@@ -420,6 +439,7 @@ export function handleSaleUpdate(input: UpdateSaleInput): ApiResult<SaleSummary>
         mergedInput.set(item.productId, {
           quantity: item.quantity,
           discountPercent: item.discountPercent ?? 0,
+          unitPrice: item.unitPrice ?? savedPriceByProduct.get(item.productId),
         });
       }
     }
@@ -454,7 +474,7 @@ export function handleSaleUpdate(input: UpdateSaleInput): ApiResult<SaleSummary>
         .get();
       if (!product) return { success: false, error: `Product not found: ${productId}` };
 
-      const unitPrice = product.salePrice ?? product.retailPrice;
+      const unitPrice = row.unitPrice ?? product.salePrice ?? product.retailPrice;
       const lineTotal = calcLineTotal(unitPrice, row.quantity, row.discountPercent);
       const lineTax = calcTax(lineTotal, product.taxRate, inclusive);
       subtotal += lineTotal;
@@ -479,8 +499,13 @@ export function handleSaleUpdate(input: UpdateSaleInput): ApiResult<SaleSummary>
     }
 
     const discountAmount =
-      sale.subtotal > 0 ? (sale.discountAmount * subtotal) / sale.subtotal : sale.discountAmount;
-    const totalAmount = subtotal - discountAmount;
+      input.discountAmount != null
+        ? input.discountAmount
+        : sale.subtotal > 0
+          ? (sale.discountAmount * subtotal) / sale.subtotal
+          : sale.discountAmount;
+    const discountReason = input.discountReason ?? sale.discountReason;
+    const totalAmount = Math.max(0, subtotal - discountAmount);
     const amountTendered = input.amountTendered ?? sale.amountTendered;
     const changeGiven =
       sale.paymentMethod === 'cash' && amountTendered != null
@@ -527,6 +552,7 @@ export function handleSaleUpdate(input: UpdateSaleInput): ApiResult<SaleSummary>
           customerId,
           subtotal,
           discountAmount,
+          discountReason,
           taxAmount,
           totalAmount,
           amountTendered,

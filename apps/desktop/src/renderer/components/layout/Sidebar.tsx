@@ -91,6 +91,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: 'Tools',
     items: [
       { to: '/promotions', label: 'Promotions', icon: Tag, roles: ['manager', 'super_admin'] },
+      { to: '/promo-codes', label: 'Promo Codes', icon: Tag, roles: ['manager', 'super_admin'] },
       { to: '/stocktake', label: 'Stocktake', icon: ClipboardList, roles: ['manager', 'super_admin'] },
     ],
   },

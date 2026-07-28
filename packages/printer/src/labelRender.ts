@@ -33,6 +33,20 @@ export function labelFontSizePx(fontSize: number): number {
   return (fontSize * LABEL_PRINT_PX_PER_MM) / LABEL_DESIGN_PX_PER_MM;
 }
 
+export function labelLetterSpacingPx(letterSpacing: number | undefined): number | undefined {
+  if (letterSpacing == null || letterSpacing <= 0) return undefined;
+  return (letterSpacing * LABEL_PRINT_PX_PER_MM) / LABEL_DESIGN_PX_PER_MM;
+}
+
+export function labelPreviewLetterSpacingPx(
+  letterSpacing: number | undefined,
+  previewScale: number,
+): number | undefined {
+  const px = labelLetterSpacingPx(letterSpacing);
+  if (px == null) return undefined;
+  return px * (previewScale / LABEL_PRINT_PX_PER_MM);
+}
+
 export function labelCanvasSizePx(widthMm: number, heightMm: number): { width: number; height: number } {
   return {
     width: Math.round(widthMm * LABEL_PRINT_PX_PER_MM),
@@ -523,6 +537,11 @@ export function labelTextPrintStyle(
     whiteSpace: 'nowrap',
     boxSizing: 'border-box',
   };
+
+  const letterSpacingPx = labelLetterSpacingPx(el.letterSpacing);
+  if (letterSpacingPx != null) {
+    style.letterSpacing = `${letterSpacingPx}px`;
+  }
 
   if (align === 'center') {
     style.left = `${el.x}%`;

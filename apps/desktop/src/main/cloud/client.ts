@@ -1,5 +1,6 @@
 import type { AdvancedProductSearchInput, ApiResult, LabelTemplateSummary, Product, ReceiptTemplate, UserSession } from '@shared/types';
 import { filterProductsByAdvancedSearch } from '@shared/productSearch';
+import { perfEnabled, timeAsync } from '@shared/perf';
 import { setSession } from '../session';
 import { IPC_CHANNELS } from '@shared/ipc-channels';
 import { getCloudApiUrl } from './config';
@@ -15,7 +16,22 @@ import {
 
 export { getCloudSession, getAuthToken } from './sessionStore';
 
-async function apiFetch<T>(
+/** Long enough for a slow Supabase round trip, short enough that a wedged call surfaces. */
+const REQUEST_TIMEOUT_MS = 30_000;
+
+export async function apiFetch<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  auth = true,
+): Promise<ApiResult<T>> {
+  if (!perfEnabled()) return apiFetchInner(method, path, body, auth);
+  // Strip ids from the path so timings aggregate per route, not per record.
+  const route = path.replace(/\/[0-9a-f]{8}-[0-9a-f-]{27}/gi, '/:id').split('?')[0];
+  return timeAsync(`api ${method} ${route}`, () => apiFetchInner<T>(method, path, body, auth));
+}
+
+async function apiFetchInner<T>(
   method: string,
   path: string,
   body?: unknown,
@@ -24,6 +40,8 @@ async function apiFetch<T>(
   const base = getCloudApiUrl();
   if (!base) return { success: false, error: 'Server not configured. Set API URL in config.json.' };
 
+  // Connection reuse and gzip negotiation are handled by undici's global dispatcher
+  // (keep-alive + accept-encoding are set automatically and cannot be overridden here).
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (auth && getAuthToken()) headers.Authorization = `Bearer ${getAuthToken()}`;
 
@@ -33,8 +51,13 @@ async function apiFetch<T>(
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      // A hung request must not wedge the till; the caller surfaces the error.
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (err) {
+    if (err instanceof DOMException && err.name === 'TimeoutError') {
+      return { success: false, error: 'The server took too long to respond. Please try again.' };
+    }
     const isNetworkErr =
       err instanceof TypeError &&
       (err.message.includes('fetch') || err.message.includes('network') || err.message.includes('ECONNREFUSED'));
@@ -131,6 +154,9 @@ const handlers: Partial<Record<string, CloudHandler>> = {
     apiFetch('GET', `/api/v1/products/search?q=${encodeURIComponent(String(query))}`),
   [IPC_CHANNELS.PRODUCT_ADVANCED_SEARCH]: async (input: unknown) => {
     const filters = (input ?? {}) as AdvancedProductSearchInput;
+    const remote = await apiFetch<Product[]>('POST', '/api/v1/products/search/advanced', filters);
+    if (remote.success) return remote;
+    // Fallback for older API builds without the advanced endpoint.
     const qs = new URLSearchParams({ status: 'active', limit: '500' });
     const list = await apiFetch<Product[]>('GET', `/api/v1/products?${qs}`);
     if (!list.success) return list;
@@ -154,6 +180,10 @@ const handlers: Partial<Record<string, CloudHandler>> = {
     apiFetch('PATCH', `/api/v1/products/${id}`, input),
   [IPC_CHANNELS.PRODUCT_BARCODE_LOOKUP]: async (barcode: unknown) =>
     apiFetch('GET', `/api/v1/products/barcode/${encodeURIComponent(String(barcode))}`),
+  [IPC_CHANNELS.PRODUCT_BULK_PRICE_INCREASE]: async (input: unknown) =>
+    apiFetch('POST', '/api/v1/products/bulk-price-increase', input),
+  [IPC_CHANNELS.PRODUCT_BULK_PRICE_REVERT]: async (input: unknown) =>
+    apiFetch('POST', '/api/v1/products/bulk-price-revert', input),
   [IPC_CHANNELS.PRODUCT_HISTORY]: async (productId: unknown) =>
     apiFetch('GET', `/api/v1/products/${encodeURIComponent(String(productId))}/history`),
 
@@ -198,6 +228,12 @@ const handlers: Partial<Record<string, CloudHandler>> = {
     return apiFetch('GET', `/api/v1/sales?${qs}`);
   },
   [IPC_CHANNELS.SALE_GET]: async (id: unknown) => apiFetch('GET', `/api/v1/sales/${id}`),
+  [IPC_CHANNELS.SALE_UPDATE]: async (input: unknown) => {
+    const { saleId, ...body } = (input ?? {}) as { saleId: string };
+    return apiFetch('PATCH', `/api/v1/sales/${saleId}`, body);
+  },
+  [IPC_CHANNELS.SALE_VOID]: async (id: unknown) =>
+    apiFetch('POST', `/api/v1/sales/${id}/void`, {}),
   [IPC_CHANNELS.SALE_DISCARD_HELD]: async (id: unknown) =>
     apiFetch('POST', `/api/v1/sales/${id}/discard-held`, {}),
   [IPC_CHANNELS.SALE_RESUME]: async (key: unknown) =>
@@ -227,6 +263,50 @@ const handlers: Partial<Record<string, CloudHandler>> = {
     return apiFetch('GET', `/api/v1/reports/profit?${qs}`);
   },
 
+  [IPC_CHANNELS.REPORT_DAILY_SALES]: async (params: unknown) => {
+    const p = (params ?? {}) as { startDate?: string; endDate?: string };
+    const qs = new URLSearchParams();
+    if (p.startDate) qs.set('startDate', p.startDate);
+    if (p.endDate) qs.set('endDate', p.endDate);
+    return apiFetch('GET', `/api/v1/reports/daily-sales?${qs}`);
+  },
+
+  [IPC_CHANNELS.REPORT_EOD]: async (params: unknown) => {
+    const p = (params ?? {}) as { startDate?: string; endDate?: string };
+    const qs = new URLSearchParams();
+    if (p.startDate) qs.set('startDate', p.startDate);
+    if (p.endDate) qs.set('endDate', p.endDate);
+    return apiFetch('GET', `/api/v1/reports/eod?${qs}`);
+  },
+
+  [IPC_CHANNELS.REPORT_SALES_BY_CATEGORY]: async (params: unknown) => {
+    const p = (params ?? {}) as { startDate?: string; endDate?: string };
+    const qs = new URLSearchParams();
+    if (p.startDate) qs.set('startDate', p.startDate);
+    if (p.endDate) qs.set('endDate', p.endDate);
+    return apiFetch('GET', `/api/v1/reports/sales-by-category?${qs}`);
+  },
+
+  [IPC_CHANNELS.REPORT_TOP_PRODUCTS]: async (params: unknown) => {
+    const p = (params ?? {}) as { startDate?: string; endDate?: string; limit?: number };
+    const qs = new URLSearchParams();
+    if (p.startDate) qs.set('startDate', p.startDate);
+    if (p.endDate) qs.set('endDate', p.endDate);
+    if (p.limit != null) qs.set('limit', String(p.limit));
+    return apiFetch('GET', `/api/v1/reports/top-products?${qs}`);
+  },
+
+  [IPC_CHANNELS.REPORT_PAYMENT_BREAKDOWN]: async (params: unknown) => {
+    const p = (params ?? {}) as { startDate?: string; endDate?: string };
+    const qs = new URLSearchParams();
+    if (p.startDate) qs.set('startDate', p.startDate);
+    if (p.endDate) qs.set('endDate', p.endDate);
+    return apiFetch('GET', `/api/v1/reports/payment-breakdown?${qs}`);
+  },
+
+  [IPC_CHANNELS.REPORT_INVENTORY_VALUATION]: async () =>
+    apiFetch('GET', '/api/v1/reports/inventory-valuation'),
+
   [IPC_CHANNELS.REPORT_INVENTORY]: async (params: unknown) => {
     const p = (params ?? {}) as { search?: string; categoryId?: string; stockFilter?: string };
     const qs = new URLSearchParams();
@@ -235,6 +315,18 @@ const handlers: Partial<Record<string, CloudHandler>> = {
     if (p.stockFilter) qs.set('stockFilter', p.stockFilter);
     return apiFetch('GET', `/api/v1/reports/inventory?${qs}`);
   },
+
+  [IPC_CHANNELS.PROMO_CODE_LIST]: async () => apiFetch('GET', '/api/v1/promo-codes'),
+  [IPC_CHANNELS.PROMO_CODE_CREATE]: async (input: unknown) =>
+    apiFetch('POST', '/api/v1/promo-codes', input),
+  [IPC_CHANNELS.PROMO_CODE_UPDATE]: async (id: unknown, input: unknown) =>
+    apiFetch('PATCH', `/api/v1/promo-codes/${id}`, input),
+  [IPC_CHANNELS.PROMO_CODE_DELETE]: async (id: unknown) =>
+    apiFetch('DELETE', `/api/v1/promo-codes/${id}`),
+  [IPC_CHANNELS.PROMO_CODE_VALIDATE]: async (input: unknown) =>
+    apiFetch('POST', '/api/v1/promo-codes/validate', input),
+  [IPC_CHANNELS.PROMO_CODE_REDEEM]: async (id: unknown) =>
+    apiFetch('POST', `/api/v1/promo-codes/${id}/redeem`, {}),
 
   [IPC_CHANNELS.CUSTOMER_SEARCH]: async (query: unknown) =>
     apiFetch('GET', `/api/v1/customers/search?q=${encodeURIComponent(String(query))}`),

@@ -11,6 +11,8 @@ import * as returns from '../services/returns.service';
 import * as reports from '../services/reports.service';
 import * as customers from '../services/customers.service';
 import * as templates from '../services/templates.service';
+import * as promoCodes from '../services/promoCodes.service';
+import * as eodReports from '../services/eodReports.service';
 import type { JwtUser } from '../types';
 
 const manager = [authenticate, requireRoles('super_admin', 'manager')];
@@ -50,6 +52,11 @@ export async function businessRoutes(app: FastifyInstance) {
   app.get('/products/search', { preHandler: anyUser }, async (request) => {
     const { q } = request.query as { q?: string };
     return products.searchProducts(app.db, q ?? '');
+  });
+
+  // Slim catalogue for the till's local search cache.
+  app.get('/products/search-payload', { preHandler: anyUser }, async () => {
+    return products.getProductSearchPayload(app.db);
   });
 
   app.post('/products/search/advanced', { preHandler: anyUser }, async (request) => {
@@ -120,6 +127,48 @@ export async function businessRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string };
     const body = request.body as Record<string, unknown>;
     return products.updateProduct(app.db, id, body as Parameters<typeof products.updateProduct>[2]);
+  });
+
+  app.post('/products/bulk-price-increase', { preHandler: manager }, async (request) => {
+    const user = request.user as JwtUser;
+    const body = z.object({
+      percent: z.number(),
+      productIds: z.array(z.string()).optional(),
+      categoryIds: z.array(z.string()).optional(),
+      applyToAll: z.boolean().optional(),
+    }).parse(request.body);
+    const result = await products.bulkIncreasePrice(app.db, body);
+    if (result.success) {
+      await logAuditEvent(app.db, {
+        userId: user.id,
+        module: 'products',
+        action: 'bulk-price-increase',
+        newValue: JSON.stringify(body),
+        ip: request.ip,
+      });
+    }
+    return result;
+  });
+
+  app.post('/products/bulk-price-revert', { preHandler: manager }, async (request) => {
+    const user = request.user as JwtUser;
+    const body = z.object({
+      mode: z.enum(['original', 'last']),
+      productIds: z.array(z.string()).optional(),
+      categoryIds: z.array(z.string()).optional(),
+      applyToAll: z.boolean().optional(),
+    }).parse(request.body);
+    const result = await products.bulkRevertPrice(app.db, body);
+    if (result.success) {
+      await logAuditEvent(app.db, {
+        userId: user.id,
+        module: 'products',
+        action: 'bulk-price-revert',
+        newValue: JSON.stringify(body),
+        ip: request.ip,
+      });
+    }
+    return result;
   });
 
   // Categories
@@ -276,6 +325,27 @@ export async function businessRoutes(app: FastifyInstance) {
     return sales.getSale(app.db, id);
   });
 
+  app.patch('/sales/:id', { preHandler: anyUser }, async (request) => {
+    const user = request.user as JwtUser;
+    const { id } = request.params as { id: string };
+    const body = request.body as Omit<Parameters<typeof sales.updateSale>[1], 'saleId'>;
+    const result = await sales.updateSale(app.db, { ...body, saleId: id });
+    if (result.success) {
+      await logAuditEvent(app.db, { userId: user.id, module: 'sales', action: 'update', recordId: id, ip: request.ip });
+    }
+    return result;
+  });
+
+  app.post('/sales/:id/void', { preHandler: manager }, async (request) => {
+    const user = request.user as JwtUser;
+    const { id } = request.params as { id: string };
+    const result = await sales.voidSale(app.db, id);
+    if (result.success) {
+      await logAuditEvent(app.db, { userId: user.id, module: 'sales', action: 'void', recordId: id, ip: request.ip });
+    }
+    return result;
+  });
+
   app.post('/sales/:id/discard-held', { preHandler: anyUser }, async (request) => {
     const { id } = request.params as { id: string };
     return sales.discardHeldSale(app.db, id);
@@ -320,6 +390,39 @@ export async function businessRoutes(app: FastifyInstance) {
     return result;
   });
 
+  app.get('/reports/daily-sales', { preHandler: manager }, async (request) => {
+    const q = request.query as { startDate?: string; endDate?: string };
+    return reports.getDailySales(app.db, { startDate: q.startDate, endDate: q.endDate });
+  });
+
+  app.get('/reports/eod', { preHandler: manager }, async (request) => {
+    const q = request.query as { startDate?: string; endDate?: string };
+    return reports.getEodReport(app.db, { startDate: q.startDate, endDate: q.endDate });
+  });
+
+  app.get('/reports/sales-by-category', { preHandler: manager }, async (request) => {
+    const q = request.query as { startDate?: string; endDate?: string };
+    return reports.getSalesByCategory(app.db, { startDate: q.startDate, endDate: q.endDate });
+  });
+
+  app.get('/reports/top-products', { preHandler: manager }, async (request) => {
+    const q = request.query as { startDate?: string; endDate?: string; limit?: string };
+    return reports.getTopProducts(app.db, {
+      startDate: q.startDate,
+      endDate: q.endDate,
+      limit: q.limit ? parseInt(q.limit, 10) : undefined,
+    });
+  });
+
+  app.get('/reports/payment-breakdown', { preHandler: manager }, async (request) => {
+    const q = request.query as { startDate?: string; endDate?: string };
+    return reports.getPaymentBreakdown(app.db, { startDate: q.startDate, endDate: q.endDate });
+  });
+
+  app.get('/reports/inventory-valuation', { preHandler: manager }, async () => {
+    return reports.getInventoryValuation(app.db);
+  });
+
   app.get('/reports/profit', { preHandler: manager }, async (request) => {
     const q = request.query as { startDate?: string; endDate?: string };
     return reports.getProfitReport(app.db, {
@@ -341,6 +444,98 @@ export async function businessRoutes(app: FastifyInstance) {
     });
   });
 
+  // ── Promo codes ───────────────────────────────────────────────────────────
+  const promoCodeBody = z.object({
+    code: z.string().min(1),
+    description: z.string().optional(),
+    type: z.enum(['percent', 'fixed']),
+    value: z.number().positive(),
+    startDate: z.string().optional(),
+    endDate: z.string().optional(),
+    minPurchase: z.number().optional(),
+    productIds: z.array(z.string()).optional(),
+    categoryIds: z.array(z.string()).optional(),
+    usageLimit: z.number().int().positive().optional(),
+    isActive: z.boolean().optional(),
+  });
+
+  app.get('/promo-codes', { preHandler: manager }, async () => promoCodes.listPromoCodes(app.db));
+
+  app.post('/promo-codes', { preHandler: manager }, async (request) => {
+    const user = request.user as JwtUser;
+    const body = promoCodeBody.parse(request.body);
+    const result = await promoCodes.createPromoCode(app.db, body);
+    if (result.success) {
+      await logAuditEvent(app.db, {
+        userId: user.id,
+        module: 'promo_codes',
+        action: 'create',
+        recordId: result.data.id,
+        newValue: JSON.stringify(body),
+        ip: request.ip,
+      });
+    }
+    return result;
+  });
+
+  app.patch('/promo-codes/:id', { preHandler: manager }, async (request) => {
+    const { id } = request.params as { id: string };
+    const body = promoCodeBody.partial().parse(request.body);
+    return promoCodes.updatePromoCode(app.db, id, body);
+  });
+
+  app.delete('/promo-codes/:id', { preHandler: manager }, async (request) => {
+    const { id } = request.params as { id: string };
+    return promoCodes.deletePromoCode(app.db, id);
+  });
+
+  app.post('/promo-codes/validate', { preHandler: anyUser }, async (request) => {
+    const body = z.object({
+      code: z.string().min(1),
+      subtotal: z.number(),
+      items: z.array(z.object({
+        productId: z.string(),
+        quantity: z.number(),
+        unitPrice: z.number(),
+        categoryId: z.string().nullable().optional(),
+      })),
+    }).parse(request.body);
+    return promoCodes.validatePromoCode(app.db, body);
+  });
+
+  app.post('/promo-codes/:id/redeem', { preHandler: anyUser }, async (request) => {
+    const { id } = request.params as { id: string };
+    return promoCodes.redeemPromoCode(app.db, id);
+  });
+
+  // ── End of Day reports (submitted by POS, viewed by admin on owner portal) ──
+  app.post('/eod-reports', { preHandler: anyUser }, async (request) => {
+    const user = request.user as JwtUser;
+    const body = z.object({
+      reportDate: z.string().min(1),
+      storeName: z.string().optional(),
+      cashierName: z.string().optional(),
+      openingCash: z.number(),
+      cardPayments: z.number(),
+      onlinePayments: z.number(),
+      totalCashCount: z.number(),
+      totalExpenses: z.number(),
+      dailySales: z.number(),
+      pdfBase64: z.string().min(1),
+    }).parse(request.body);
+    const result = await eodReports.createEodReport(app.db, { id: user.id, name: user.name }, body);
+    if (result.success) {
+      await logAuditEvent(app.db, {
+        userId: user.id,
+        module: 'eod_reports',
+        action: 'create',
+        recordId: result.data.id,
+        ip: request.ip,
+      });
+    }
+    return result;
+  });
+
   // Customers
   app.get('/customers/search', { preHandler: anyUser }, async (request) => {
     const { q } = request.query as { q?: string };
@@ -357,7 +552,7 @@ export async function businessRoutes(app: FastifyInstance) {
     return customers.getCustomer(app.db, id);
   });
 
-  app.post('/customers', { preHandler: manager }, async (request) => {
+  app.post('/customers', { preHandler: anyUser }, async (request) => {
     const user = request.user as JwtUser;
     const body = z.object({
       name: z.string().min(1),

@@ -4,6 +4,7 @@ import { Spinner } from '@mama-babi/ui';
 import { isBundledMode } from '@shared/deployment';
 import { isValidApiUrl } from '@shared/apiUrl';
 import { IPC_CHANNELS } from '@shared/ipc-channels';
+import { measure } from '@shared/perf';
 import { useAuthStore } from './stores/authStore';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Layout } from './components/Layout';
@@ -21,6 +22,7 @@ const VendorsPage = lazy(() => import('./pages/VendorsPage').then((m) => ({ defa
 const GrnPage = lazy(() => import('./pages/GrnPage').then((m) => ({ default: m.GrnPage })));
 const CustomersPage = lazy(() => import('./pages/CustomersPage').then((m) => ({ default: m.CustomersPage })));
 const PromotionsPage = lazy(() => import('./pages/PromotionsPage').then((m) => ({ default: m.PromotionsPage })));
+const PromoCodesPage = lazy(() => import('./pages/PromoCodesPage').then((m) => ({ default: m.PromoCodesPage })));
 const LabelsPage = lazy(() => import('./pages/LabelsPage').then((m) => ({ default: m.LabelsPage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })));
 const ReportsPage = lazy(() => import('./pages/ReportsPage').then((m) => ({ default: m.ReportsPage })));
@@ -61,6 +63,10 @@ export function App() {
   useEffect(() => {
     if (setupChecked && !needsSetup) init();
   }, [setupChecked, needsSetup, init]);
+
+  useEffect(() => {
+    if (setupChecked) measure('startup.renderer');
+  }, [setupChecked]);
 
   if (!setupChecked) {
     return <PageLoader />;
@@ -126,6 +132,7 @@ export function App() {
             <Route path="vendors" element={<ProtectedRoute roles={['manager', 'super_admin']}><VendorsPage /></ProtectedRoute>} />
             <Route path="customers" element={<ProtectedRoute roles={['manager', 'super_admin']}><CustomersPage /></ProtectedRoute>} />
             <Route path="promotions" element={<ProtectedRoute roles={['manager', 'super_admin']}><PromotionsPage /></ProtectedRoute>} />
+            <Route path="promo-codes" element={<ProtectedRoute roles={['manager', 'super_admin']}><PromoCodesPage /></ProtectedRoute>} />
             <Route path="labels" element={<ProtectedRoute roles={['manager', 'super_admin']}><LabelsPage /></ProtectedRoute>} />
             <Route path="label-designer" element={<ProtectedRoute roles={['manager', 'super_admin']}><LabelDesignerPage /></ProtectedRoute>} />
             <Route path="label-template-config" element={<ProtectedRoute roles={['manager', 'super_admin']}><LabelTemplateConfigPage /></ProtectedRoute>} />

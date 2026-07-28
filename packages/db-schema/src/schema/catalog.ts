@@ -71,6 +71,12 @@ export const products = sqliteTable('products', {
   costPrice: real('cost_price').notNull().default(0),
   retailPrice: real('retail_price').notNull().default(0),
   salePrice: real('sale_price'),
+  // Original selling price captured at creation — used by "reset to original price".
+  baseRetailPrice: real('base_retail_price'),
+  baseSalePrice: real('base_sale_price'),
+  // Selling price just before the last bulk price change — used by "undo last increase".
+  prevRetailPrice: real('prev_retail_price'),
+  prevSalePrice: real('prev_sale_price'),
   taxRate: real('tax_rate').notNull().default(0),
   stockQty: integer('stock_qty').notNull().default(0),
   reorderLevel: integer('reorder_level').notNull().default(0),
@@ -97,6 +103,24 @@ export const promotions = sqliteTable('promotions', {
   productIds: text('product_ids'),
   categoryIds: text('category_ids'),
   isStackable: integer('is_stackable', { mode: 'boolean' }).notNull().default(false),
+  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  ...syncColumns,
+  ...timestamps,
+});
+
+export const promoCodes = sqliteTable('promo_codes', {
+  id: text('id').primaryKey(),
+  code: text('code').notNull().unique(),
+  description: text('description'),
+  type: text('type').notNull(),
+  value: real('value').notNull(),
+  startDate: text('start_date'),
+  endDate: text('end_date'),
+  minPurchase: real('min_purchase'),
+  productIds: text('product_ids'),
+  categoryIds: text('category_ids'),
+  usageLimit: integer('usage_limit'),
+  usageCount: integer('usage_count').notNull().default(0),
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
   ...syncColumns,
   ...timestamps,

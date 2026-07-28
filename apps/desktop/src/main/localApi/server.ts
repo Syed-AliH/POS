@@ -6,6 +6,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
 import { BUNDLED_API_PORT, BUNDLED_API_URL } from '@shared/deployment';
 import { isBundledDeployment } from '../cloud/config';
+import { resolveDatabaseUrl } from '../services/dbCredentials';
 import { resolveSecretsPath } from '../runtimePaths';
 
 interface ApiSecrets {
@@ -151,10 +152,15 @@ async function waitForHealth(timeoutMs = 30_000): Promise<void> {
   throw new Error('Local API did not become ready in time.');
 }
 
-export async function startBundledApiIfNeeded(): Promise<void> {
+/** The connection URL from secrets.json/.env, before any admin password override. */
+export function getBaseDatabaseUrl(): string {
+  return loadApiSecrets().DATABASE_URL;
+}
+
+export async function startBundledApiIfNeeded(force = false): Promise<void> {
   if (!isBundledDeployment()) return;
 
-  if (apiProcess) return;
+  if (apiProcess && !force) return;
 
   const secrets = loadApiSecrets();
   const { entry, cwd } = resolveApiBundle();
@@ -170,12 +176,14 @@ export async function startBundledApiIfNeeded(): Promise<void> {
   const runningCaps = await runningApiCapabilities();
   const capsOk = apiCapabilitiesSatisfied(runningCaps);
 
-  if (runningBuild === buildStamp && capsOk) {
+  // A forced restart must always respawn — the running instance is holding the
+  // old database password, so "already running" is exactly what we're fixing.
+  if (!force && runningBuild === buildStamp && capsOk) {
     console.log('[localApi] API already running on', BUNDLED_API_URL);
     return;
   }
 
-  if (runningBuild != null || !capsOk) {
+  if (force || runningBuild != null || !capsOk) {
     console.log('[localApi] Restarting API — build changed or stale instance detected');
     killProcessOnPort(BUNDLED_API_PORT);
     await new Promise((r) => setTimeout(r, 600));
@@ -192,7 +200,7 @@ export async function startBundledApiIfNeeded(): Promise<void> {
       API_HOST: '127.0.0.1',
       PORT: String(BUNDLED_API_PORT),
       API_BUILD_STAMP: buildStamp,
-      DATABASE_URL: secrets.DATABASE_URL,
+      DATABASE_URL: resolveDatabaseUrl(secrets.DATABASE_URL),
       JWT_SECRET: secrets.JWT_SECRET,
       JWT_EXPIRES_IN: secrets.JWT_EXPIRES_IN ?? 'never',
       CORS_ORIGIN: secrets.CORS_ORIGIN ?? '*',
@@ -220,4 +228,17 @@ export function stopBundledApi(): void {
   if (!apiProcess) return;
   apiProcess.kill();
   apiProcess = null;
+}
+
+/**
+ * Restart the bundled API so it picks up new credentials. Safe to call when the
+ * API is not running or not in bundled mode — it becomes a no-op.
+ */
+export async function restartBundledApi(): Promise<void> {
+  if (!isBundledDeployment()) return;
+  stopBundledApi();
+  killProcessOnPort(BUNDLED_API_PORT);
+  // Give the socket time to release before the new process binds it.
+  await new Promise((r) => setTimeout(r, 800));
+  await startBundledApiIfNeeded(true);
 }

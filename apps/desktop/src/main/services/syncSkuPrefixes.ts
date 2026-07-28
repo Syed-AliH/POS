@@ -1,4 +1,4 @@
-import { deriveSkuPrefix, formatCategorySku, parseGenericSkuSequence } from '@mama-babi/barcode';
+import { assignUniqueSkuPrefixes, formatCategorySku, parseGenericSkuSequence } from '@mama-babi/barcode';
 import { eq } from 'drizzle-orm';
 import { categories, products } from '@mama-babi/db-schema';
 import { getDb } from '../db';
@@ -10,12 +10,13 @@ export function syncSkuPrefixesLocal(): { categoriesUpdated: number; productsUpd
   const cats = db.select().from(categories).where(eq(categories.isDeleted, false)).all();
   const allProducts = db.select().from(products).where(eq(products.isDeleted, false)).all();
 
-  const prefixByCategoryId = new Map<string, string>();
+  const prefixByCategoryId = assignUniqueSkuPrefixes(
+    cats.map((cat) => ({ id: cat.id, name: cat.name })),
+  );
   let categoriesUpdated = 0;
 
   for (const cat of cats) {
-    const newPrefix = deriveSkuPrefix(cat.name).slice(0, 4);
-    prefixByCategoryId.set(cat.id, newPrefix);
+    const newPrefix = prefixByCategoryId.get(cat.id) ?? 'GEN';
     if ((cat.skuPrefix ?? '').toUpperCase() !== newPrefix) {
       db.update(categories)
         .set({ skuPrefix: newPrefix, updatedAt: now })

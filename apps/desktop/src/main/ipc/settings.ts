@@ -1,6 +1,7 @@
 import type { ApiResult, PrinterInfo, SettingsUpdateInput } from '@shared/types';import { requireRole, requireSession } from '../session';
 import { getAllSettings, getSetting, setSetting } from '../services/settings';
 import { logAudit } from '../services/audit';
+import { invalidatePrintContext } from '../print/printContext';
 
 const EDITABLE_SETTINGS = new Set([
   'store_name',
@@ -46,6 +47,8 @@ export function handleSettingsSet(input: SettingsUpdateInput): ApiResult<Record<
       }
       setSetting(key, value);
     }
+    // Printer name / store details / receipt options are cached for printing.
+    invalidatePrintContext();
     logAudit('settings', 'update', undefined, undefined, input.settings);
     return { success: true, data: getAllSettings() };
   } catch (e) {

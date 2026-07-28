@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { getCloudApiUrl, isBundledDeployment, isCloudMode } from './cloud/config';
 import { startBundledApiIfNeeded, stopBundledApi } from './localApi/server';
+import { startBackupSchedule, stopBackupSchedule } from './services/backupSchedule';
 import { purgeLocalBusinessData } from './cloud/purgeLocal';
 import { getDbPath, initDatabase } from './db';
 import { registerIpcHandlers } from './ipc';
@@ -15,6 +16,8 @@ import { ensureAuthCredentials } from './services/ensureAuth';
 import { seedIfEmpty } from './services/seed';
 import { syncSkuPrefixesLocal } from './services/syncSkuPrefixes';
 import { ensureDefaultSettings } from './services/settings';
+import { installMainPerf } from './perf';
+import { mark, measure } from '@shared/perf';
 
 const isDev = !app.isPackaged;
 
@@ -93,6 +96,8 @@ function createWindow(): void {
 }
 
 app.whenReady().then(async () => {
+  installMainPerf();
+  mark('startup.main');
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.mamababi.pos');
   }
@@ -112,6 +117,9 @@ app.whenReady().then(async () => {
   }
 
   initDatabase();
+
+  // Six-hourly Postgres backups (no-op outside bundled mode).
+  startBackupSchedule();
 
   if (isCloudMode()) {
     if (isBundledDeployment()) {
@@ -151,6 +159,7 @@ app.whenReady().then(async () => {
   registerIpcHandlers();
   Menu.setApplicationMenu(null);
   createWindow();
+  measure('startup.main');
   initAutoUpdater();
 
   app.on('activate', () => {
@@ -163,5 +172,6 @@ app.on('window-all-closed', () => {
 });
 
 app.on('will-quit', () => {
+  stopBackupSchedule();
   stopBundledApi();
 });

@@ -1,4 +1,4 @@
-import { boolean, doublePrecision, integer, pgTable, text } from 'drizzle-orm/pg-core';
+import { boolean, doublePrecision, index, integer, pgTable, text } from 'drizzle-orm/pg-core';
 import { syncColumns, timestamps } from './base';
 
 export const sales = pgTable('sales', {
@@ -12,7 +12,7 @@ export const sales = pgTable('sales', {
   taxAmount: doublePrecision('tax_amount').notNull().default(0),
   totalAmount: doublePrecision('total_amount').notNull().default(0),
   paymentMethod: text('payment_method', {
-    enum: ['cash', 'card', 'bank_transfer', 'wallet'],
+    enum: ['cash', 'card', 'bank_transfer', 'wallet', 'online'],
   }).notNull(),
   amountTendered: doublePrecision('amount_tendered'),
   changeGiven: doublePrecision('change_given'),
@@ -25,7 +25,14 @@ export const sales = pgTable('sales', {
   syncedAt: text('synced_at'),
   ...syncColumns,
   ...timestamps,
-});
+}, (t) => ({
+  // Sales history and every report filter on status and order by created_at.
+  statusCreatedIdx: index('idx_sales_status_created').on(t.status, t.createdAt),
+  createdIdx: index('idx_sales_created').on(t.createdAt),
+  heldKeyIdx: index('idx_sales_held_key').on(t.heldKey),
+  customerIdx: index('idx_sales_customer').on(t.customerId),
+  cashierIdx: index('idx_sales_cashier').on(t.cashierId),
+}));
 
 export const saleItems = pgTable('sale_items', {
   id: text('id').primaryKey(),
@@ -40,4 +47,7 @@ export const saleItems = pgTable('sale_items', {
   lineTotal: doublePrecision('line_total').notNull(),
   ...syncColumns,
   ...timestamps,
-});
+}, (t) => ({
+  saleIdx: index('idx_sale_items_sale').on(t.saleId),
+  productIdx: index('idx_sale_items_product').on(t.productId),
+}));

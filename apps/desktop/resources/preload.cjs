@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const APP_UPDATE_STATUS = 'app:update-status';
 const APP_UPDATE_CHECK = 'app:update-check';
 const APP_UPDATE_INSTALL = 'app:update-install';
+const PRINT_STATUS = 'print:status';
 
 contextBridge.exposeInMainWorld('electron', {
   ipcRenderer: {
@@ -23,5 +24,12 @@ contextBridge.exposeInMainWorld('electron', {
     },
     checkForUpdates: () => ipcRenderer.invoke(APP_UPDATE_CHECK),
     installUpdate: () => ipcRenderer.invoke(APP_UPDATE_INSTALL),
+  },
+  print: {
+    onStatus: (callback) => {
+      const handler = (_event, status) => callback(status);
+      ipcRenderer.on(PRINT_STATUS, handler);
+      return () => ipcRenderer.removeListener(PRINT_STATUS, handler);
+    },
   },
 });

@@ -40,6 +40,10 @@ export interface CartItem {
   discountPercent: number;
   taxRate: number;
   lineTotal: number;
+  /** Category of the product — used for category-based promotion matching at checkout. */
+  categoryId?: string | null;
+  /** Timestamp when this line was first added — controls cart row order (first scan stays on top). */
+  scannedAt?: number;
 }
 
 export interface SaleSummary {
@@ -52,15 +56,44 @@ export interface SaleSummary {
   customerPhone?: string | null;
   subtotal: number;
   discountAmount: number;
+  discountReason?: string | null;
   taxAmount: number;
   totalAmount: number;
-  paymentMethod: 'cash' | 'card' | 'bank_transfer' | 'wallet';
+  paymentMethod: 'cash' | 'card' | 'bank_transfer' | 'wallet' | 'online';
   amountTendered: number | null;
   changeGiven: number | null;
   status: 'completed' | 'held' | 'voided' | 'returned';
   heldKey: string | null;
   createdAt: string;
   items: CartItem[];
+}
+
+/** Minimal product shape the till caches for instant local search. */
+export interface SearchProduct {
+  id: string;
+  name: string;
+  sku: string;
+  barcode: string | null;
+  retailPrice: number;
+  salePrice: number | null;
+  taxRate: number;
+  stockQty: number;
+  categoryId: string | null;
+}
+
+export interface SearchPayload {
+  /** Newest product updatedAt — changes when the catalogue changes. */
+  version: string;
+  count: number;
+  products: SearchProduct[];
+}
+
+/** Pushed from main while a queued receipt moves through the printer. */
+export interface PrintStatusPayload {
+  jobId: string;
+  saleNumber: string;
+  state: 'queued' | 'printing' | 'printed' | 'failed';
+  error?: string;
 }
 
 export interface Category {
@@ -81,15 +114,19 @@ export interface CreateSaleInput {
     productId: string;
     quantity: number;
     discountPercent?: number;
+    /** Held-bill resume: the price the line was held at, so re-pricing a product doesn't change the saved bill. */
+    unitPrice?: number;
   }>;
   customerId?: string;
   customerName?: string;
   customerPhone?: string;
   discountAmount?: number;
   discountReason?: string;
+  /** Manual bill adjustment: positive increases the total (surcharge), negative decreases it (extra discount). */
+  adjustmentAmount?: number;
   loyaltyPointsRedeemed?: number;
   promotionIds?: string[];
-  paymentMethod: 'cash' | 'card' | 'bank_transfer' | 'wallet';
+  paymentMethod: 'cash' | 'card' | 'bank_transfer' | 'wallet' | 'online';
   amountTendered?: number;
   giftCardCode?: string;
   notes?: string;
@@ -104,11 +141,36 @@ export interface UpdateSaleInput {
     productId: string;
     quantity: number;
     discountPercent?: number;
+    /** Price the line was sold at. Keeps an edited bill on its original prices even if the product has since been re-priced. */
+    unitPrice?: number;
   }>;
   customerId?: string;
   customerName?: string;
   customerPhone?: string;
   amountTendered?: number;
+  /**
+   * Explicit bill-level discount for the edited sale (already net of promos, loyalty and
+   * manual adjustment). When omitted the original discount is pro-rated to the new subtotal.
+   * A negative value raises the total (surcharge), matching CreateSaleInput semantics.
+   */
+  discountAmount?: number;
+  discountReason?: string;
+}
+
+export interface BulkPriceIncreaseInput {
+  /** Percentage to increase the selling price by (e.g. 5 for +5%). */
+  percent: number;
+  productIds?: string[];
+  categoryIds?: string[];
+  applyToAll?: boolean;
+}
+
+export interface BulkPriceRevertInput {
+  /** 'original' = price at creation, 'last' = price before the most recent increase. */
+  mode: 'original' | 'last';
+  productIds?: string[];
+  categoryIds?: string[];
+  applyToAll?: boolean;
 }
 
 export interface ProductInput {
@@ -514,6 +576,50 @@ export interface PromotionPreview {
 export interface PromotionPreviewInput {
   items: Array<{ productId: string; quantity: number; unitPrice: number; categoryId?: string | null }>;
   subtotal: number;
+}
+
+export interface PromoCode {
+  id: string;
+  code: string;
+  description: string | null;
+  type: 'percent' | 'fixed';
+  value: number;
+  startDate: string | null;
+  endDate: string | null;
+  minPurchase: number | null;
+  productIds: string[];
+  categoryIds: string[];
+  usageLimit: number | null;
+  usageCount: number;
+  isActive: boolean;
+}
+
+export interface PromoCodeInput {
+  code: string;
+  description?: string;
+  type: 'percent' | 'fixed';
+  value: number;
+  startDate?: string;
+  endDate?: string;
+  minPurchase?: number;
+  productIds?: string[];
+  categoryIds?: string[];
+  usageLimit?: number;
+  isActive?: boolean;
+}
+
+export interface PromoCodeValidateInput {
+  code: string;
+  items: Array<{ productId: string; quantity: number; unitPrice: number; categoryId?: string | null }>;
+  subtotal: number;
+}
+
+export interface PromoCodeValidateResult {
+  promoCodeId: string;
+  code: string;
+  discountAmount: number;
+  /** Product ids the code applied to (empty = whole cart). */
+  eligibleProductIds: string[];
 }
 
 export type {

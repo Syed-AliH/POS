@@ -1,23 +1,38 @@
+/** Word separators: whitespace plus common punctuation used inside product names. */
+const WORD_SPLIT = /[\s\-/\\,._()[\]|+&]+/;
+
 export function firstWordOf(name: string): string {
-  return name.trim().split(/\s+/)[0] ?? '';
+  return wordsOf(name)[0] ?? '';
 }
 
 export function wordsOf(name: string): string[] {
-  return name.trim().split(/\s+/).filter(Boolean);
+  return name.trim().split(WORD_SPLIT).filter(Boolean);
 }
 
-/** Master search: first word of product name starts with query (case-insensitive). */
+/** True when the query is a prefix of any individual word in the product name. */
+export function matchesWordPrefix(productName: string, query: string): boolean {
+  const prefix = query.trim().toLowerCase();
+  if (!prefix) return true;
+  // A multi-word query is matched word-for-word: each term must prefix some word.
+  const terms = prefix.split(WORD_SPLIT).filter(Boolean);
+  const words = wordsOf(productName).map((w) => w.toLowerCase());
+  return terms.every((term) => words.some((word) => word.startsWith(term)));
+}
+
+/**
+ * Master search: the product name itself starts with the query, so typing "a" lists
+ * the products that begin with A — not every product that happens to contain a word
+ * starting with A. Refine is the filter that looks inside the name.
+ */
 export function matchesMasterSearch(productName: string, master: string): boolean {
   const prefix = master.trim().toLowerCase();
   if (!prefix) return true;
-  return firstWordOf(productName).toLowerCase().startsWith(prefix);
+  return productName.trim().toLowerCase().startsWith(prefix);
 }
 
-/** Refine: partial, case-insensitive match on any word in the product name. */
+/** Refine: narrows the master results — any word of the name starts with the query. */
 export function matchesRefineSearch(productName: string, refine: string): boolean {
-  const term = refine.trim().toLowerCase();
-  if (!term) return true;
-  return wordsOf(productName).some((word) => word.toLowerCase().includes(term));
+  return matchesWordPrefix(productName, refine);
 }
 
 export interface AdvancedProductSearchFilters {
@@ -49,6 +64,6 @@ export function filterProductsByAdvancedSearch<T extends { name: string; sku: st
   }
 
   const hasFilter = !!(input.sku?.trim() || input.master?.trim() || input.refine?.trim());
-  const max = limit ?? (hasFilter ? 50 : 500);
+  const max = limit ?? (hasFilter ? 200 : 500);
   return filtered.slice(0, max);
 }

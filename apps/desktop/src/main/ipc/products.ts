@@ -1,4 +1,4 @@
-import { and, eq, like, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, like, or, sql } from 'drizzle-orm';
 import { v4 as uuid } from 'uuid';
 import {
   categories,
@@ -12,13 +12,13 @@ import {
   vendors,
 } from '@mama-babi/db-schema';
 import { generateBarcode } from '@mama-babi/barcode';
-import type { AdvancedProductSearchInput, ApiResult, Category, Product, ProductHistory, ProductInput } from '@shared/types';
+import type { AdvancedProductSearchInput, ApiResult, BulkPriceIncreaseInput, BulkPriceRevertInput, Category, Product, ProductHistory, ProductInput } from '@shared/types';
 import { filterProductsByAdvancedSearch } from '@shared/productSearch';
 import { getDb } from '../db';
 import { requireRole, requireSession } from '../session';
 import { logAudit } from '../services/audit';
 import { seedDemoProducts } from '../services/demoProducts';
-import { deriveSkuPrefix, generateCategorySku } from '../services/skuGenerator';
+import { generateCategorySku, resolveUniqueSkuPrefix } from '../services/skuGenerator';
 
 function mapProduct(row: typeof products.$inferSelect): Product {
   return {
@@ -176,6 +176,8 @@ export function handleProductCreate(input: ProductInput): ApiResult<Product> {
       costPrice: input.costPrice,
       retailPrice: input.retailPrice,
       salePrice: input.salePrice ?? null,
+      baseRetailPrice: input.retailPrice,
+      baseSalePrice: input.salePrice ?? null,
       taxRate: input.taxRate ?? 17,
       stockQty: input.stockQty ?? 0,
       reorderLevel: input.reorderLevel ?? 10,
@@ -212,7 +214,8 @@ export function handleProductUpdate(id: string, input: Partial<ProductInput>): A
     }
 
     const now = new Date().toISOString();
-    const updates = { ...input, updatedAt: now };
+    const { stockQty: _stockQty, ...rest } = input;
+    const updates = { ...rest, updatedAt: now };
     db.update(products).set(updates).where(eq(products.id, id)).run();
 
     const updated = db.select().from(products).where(eq(products.id, id)).get()!;
@@ -220,6 +223,112 @@ export function handleProductUpdate(id: string, input: Partial<ProductInput>): A
     return { success: true, data: mapProduct(updated) };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Update failed' };
+  }
+}
+
+/** Round a price to the nearest clean retail value (nearest 10). */
+function roundRetailPrice(price: number): number {
+  return Math.round(price / 10) * 10;
+}
+
+export function handleProductBulkPriceIncrease(
+  input: BulkPriceIncreaseInput,
+): ApiResult<{ updated: number }> {
+  try {
+    requireRole('super_admin', 'manager');
+    const percent = Number(input.percent);
+    if (!Number.isFinite(percent) || percent === 0) {
+      return { success: false, error: 'Enter a non-zero percentage' };
+    }
+    if (!input.productIds?.length && !input.categoryIds?.length && !input.applyToAll) {
+      return { success: false, error: 'Select products, categories, or apply to all' };
+    }
+
+    const db = getDb();
+    const conditions = [eq(products.isDeleted, false), eq(products.status, 'active')];
+    const scopes = [];
+    if (input.productIds?.length) scopes.push(inArray(products.id, input.productIds));
+    if (input.categoryIds?.length) scopes.push(inArray(products.categoryId, input.categoryIds));
+    const where = scopes.length ? and(...conditions, or(...scopes)) : and(...conditions);
+
+    const rows = db.select().from(products).where(where).all();
+    if (!rows.length) return { success: true, data: { updated: 0 } };
+
+    const factor = 1 + percent / 100;
+    const now = new Date().toISOString();
+    let updated = 0;
+
+    db.transaction((tx) => {
+      for (const row of rows) {
+        const nextRetail = roundRetailPrice(row.retailPrice * factor);
+        const nextSale = row.salePrice != null ? roundRetailPrice(row.salePrice * factor) : row.salePrice;
+        tx.update(products)
+          .set({
+            retailPrice: nextRetail,
+            salePrice: nextSale,
+            // Snapshot the pre-change price so the change can be undone.
+            prevRetailPrice: row.retailPrice,
+            prevSalePrice: row.salePrice,
+            // Capture the original baseline the first time a product is ever adjusted.
+            baseRetailPrice: row.baseRetailPrice ?? row.retailPrice,
+            baseSalePrice: row.baseSalePrice ?? row.salePrice,
+            updatedAt: now,
+          })
+          .where(eq(products.id, row.id))
+          .run();
+        updated += 1;
+      }
+    });
+
+    logAudit('products', 'bulk-price-increase', 'bulk', undefined, input);
+    return { success: true, data: { updated } };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Bulk price update failed' };
+  }
+}
+
+export function handleProductBulkPriceRevert(
+  input: BulkPriceRevertInput,
+): ApiResult<{ updated: number }> {
+  try {
+    requireRole('super_admin', 'manager');
+    if (input.mode !== 'original' && input.mode !== 'last') {
+      return { success: false, error: 'Invalid revert mode' };
+    }
+    if (!input.productIds?.length && !input.categoryIds?.length && !input.applyToAll) {
+      return { success: false, error: 'Select products, categories, or apply to all' };
+    }
+
+    const db = getDb();
+    const conditions = [eq(products.isDeleted, false), eq(products.status, 'active')];
+    const scopes = [];
+    if (input.productIds?.length) scopes.push(inArray(products.id, input.productIds));
+    if (input.categoryIds?.length) scopes.push(inArray(products.categoryId, input.categoryIds));
+    const where = scopes.length ? and(...conditions, or(...scopes)) : and(...conditions);
+
+    const rows = db.select().from(products).where(where).all();
+    if (!rows.length) return { success: true, data: { updated: 0 } };
+
+    const now = new Date().toISOString();
+    let updated = 0;
+
+    db.transaction((tx) => {
+      for (const row of rows) {
+        const targetRetail = input.mode === 'original' ? row.baseRetailPrice : row.prevRetailPrice;
+        if (targetRetail == null) continue;
+        const targetSale = input.mode === 'original' ? row.baseSalePrice : row.prevSalePrice;
+        tx.update(products)
+          .set({ retailPrice: targetRetail, salePrice: targetSale, updatedAt: now })
+          .where(eq(products.id, row.id))
+          .run();
+        updated += 1;
+      }
+    });
+
+    logAudit('products', 'bulk-price-revert', 'bulk', undefined, input);
+    return { success: true, data: { updated } };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Bulk price revert failed' };
   }
 }
 
@@ -244,13 +353,25 @@ export function handleProductArchive(id: string): ApiResult<Product> {
   }
 }
 
+function getExistingSkuPrefixes(db: ReturnType<typeof getDb>): string[] {
+  return db
+    .select({ skuPrefix: categories.skuPrefix })
+    .from(categories)
+    .where(eq(categories.isDeleted, false))
+    .all()
+    .map((row) => (row.skuPrefix ?? '').trim().toUpperCase())
+    .filter(Boolean);
+}
+
 export function handleCategoryCreate(name: string, color?: string, skuPrefix?: string): ApiResult<Category> {
   try {
     requireRole('super_admin', 'manager');
     const db = getDb();
     const now = new Date().toISOString();
     const id = uuid();
-    const prefix = (skuPrefix?.trim().toUpperCase() || deriveSkuPrefix(name)).slice(0, 4);
+    const prefix = skuPrefix?.trim()
+      ? skuPrefix.trim().toUpperCase().slice(0, 4)
+      : resolveUniqueSkuPrefix(name, getExistingSkuPrefixes(db)).slice(0, 4);
     db.insert(categories).values({
       id,
       name,
@@ -465,6 +586,7 @@ export function handleProductImportRows(
     const errors: string[] = [];
     let imported = 0;
     const categoryCache = new Map<string, string>(); // name.lower → id
+    const usedPrefixes = new Set(getExistingSkuPrefixes(db));
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -493,7 +615,8 @@ export function handleProductImportRows(
         } else {
           const now = new Date().toISOString();
           const catId = uuid();
-          const prefix = deriveSkuPrefix(categoryName).slice(0, 4);
+          const prefix = resolveUniqueSkuPrefix(categoryName, usedPrefixes).slice(0, 4);
+          usedPrefixes.add(prefix);
           db.insert(categories).values({
             id: catId,
             name: categoryName,

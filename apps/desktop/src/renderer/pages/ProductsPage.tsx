@@ -35,6 +35,13 @@ const WORKFLOW_STEPS = [
   { id: 'return', label: 'Returns', hint: 'Use sale # from receipt' },
 ];
 
+const STOCK_ADJUST_REASONS = [
+  { value: 'correction', label: 'Correction' },
+  { value: 'count', label: 'Physical count' },
+  { value: 'damage', label: 'Damage / write-off' },
+  { value: 'other', label: 'Other' },
+];
+
 function emptyForm(): ProductInput & { retailMarkup?: string; saleMarkup?: string } {
   return { name: '', costPrice: undefined, retailMarkup: '', saleMarkup: '', stockQty: 0, taxRate: 0, reorderLevel: 10 };
 }
@@ -112,6 +119,16 @@ export function ProductsPage() {
   const importFileRef = useRef<HTMLInputElement>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [detailProduct, setDetailProduct] = useState<Product | null>(null);
+  const [bulkPriceOpen, setBulkPriceOpen] = useState(false);
+  const [bulkMode, setBulkMode] = useState<'increase' | 'original' | 'last'>('increase');
+  const [bulkPercent, setBulkPercent] = useState('');
+  const [bulkScope, setBulkScope] = useState<'selected' | 'category' | 'all'>('selected');
+  const [bulkCategoryId, setBulkCategoryId] = useState('');
+  const [bulkApplying, setBulkApplying] = useState(false);
+  const [stockAdjustQty, setStockAdjustQty] = useState('');
+  const [stockAdjustReason, setStockAdjustReason] = useState('correction');
+  const [stockAdjustNotes, setStockAdjustNotes] = useState('');
+  const [stockAdjusting, setStockAdjusting] = useState(false);
   const [history, setHistory] = useState<ProductHistory | null>(null);
   const [historyTab, setHistoryTab] = useState<HistoryTab>('purchases');
   const { onSort: onHistSort, icon: histIcon, sortKey: histSortKey, sortDir: histSortDir } = useTableSort<ProductHistSortKey>('date', 'desc');
@@ -120,10 +137,12 @@ export function ProductsPage() {
 
   const load = async () => {
     const [p, c] = await Promise.all([api.products.list(), api.categories.list()]);
-    if (p.success) setProducts(p.data ?? []);
+    const rows = p.success ? (p.data ?? []) : [];
+    if (p.success) setProducts(rows);
     else toast.error(p.error ?? 'Failed to load products');
     if (c.success) setCategories(c.data ?? []);
     else toast.error(c.error ?? 'Failed to load categories');
+    return rows;
   };
 
   useEffect(() => { load(); }, []);
@@ -240,6 +259,9 @@ export function ProductsPage() {
 
   const startEdit = (p: Product) => {
     setEditingId(p.id);
+    setStockAdjustQty(String(p.stockQty));
+    setStockAdjustReason('correction');
+    setStockAdjustNotes('');
     setForm({
       name: p.name,
       sku: p.sku,
@@ -258,7 +280,59 @@ export function ProductsPage() {
     });
   };
 
-  const cancelEdit = () => { setEditingId(null); setForm(emptyForm()); };
+  const cancelEdit = () => {
+    setEditingId(null);
+    setForm(emptyForm());
+    setStockAdjustQty('');
+    setStockAdjustReason('correction');
+    setStockAdjustNotes('');
+  };
+
+  const resetStockAdjustFields = (product: Product) => {
+    setStockAdjustQty(String(product.stockQty));
+    setStockAdjustReason('correction');
+    setStockAdjustNotes('');
+  };
+
+  const applyStockAdjustment = async (product: Product) => {
+    const qtyAfter = parseInt(stockAdjustQty, 10);
+    if (Number.isNaN(qtyAfter)) {
+      toast.error('Enter a valid stock quantity');
+      return;
+    }
+    if (qtyAfter === product.stockQty) {
+      toast.warning('Stock is already at that quantity');
+      return;
+    }
+    setStockAdjusting(true);
+    try {
+      const result = await api.inventory.adjust({
+        productId: product.id,
+        qtyAfter,
+        reason: stockAdjustReason,
+        notes: stockAdjustNotes.trim() || undefined,
+      });
+      if (!result.success) {
+        toast.error(result.error ?? 'Failed to update stock');
+        return;
+      }
+      toast.success(`Stock updated: ${result.data?.qtyBefore ?? product.stockQty} → ${result.data?.qtyAfter ?? qtyAfter}`);
+      const rows = await load();
+      const refreshed = rows.find((p) => p.id === product.id);
+      if (refreshed) {
+        if (detailProduct?.id === product.id) {
+          setDetailProduct(refreshed);
+          resetStockAdjustFields(refreshed);
+        }
+        if (editingId === product.id) {
+          setForm((prev) => ({ ...prev, stockQty: refreshed.stockQty }));
+          resetStockAdjustFields(refreshed);
+        }
+      }
+    } finally {
+      setStockAdjusting(false);
+    }
+  };
 
   const handleSave = async () => {
     if (!form.name.trim()) { setMessage('Enter a product name'); return; }
@@ -269,6 +343,9 @@ export function ProductsPage() {
       retailPrice: computedRetail,
       salePrice: computedSale,
     };
+    if (editingId && editingId !== 'new') {
+      delete payload.stockQty;
+    }
     if (!payload.retailPrice || payload.retailPrice <= 0) {
       setMessage('Enter cost and retail price (e.g. 40% or 1000)');
       return;
@@ -343,6 +420,7 @@ export function ProductsPage() {
 
   const openDetail = async (p: Product) => {
     setDetailProduct(p);
+    resetStockAdjustFields(p);
     setHistoryTab('purchases');
     const result = await api.products.history(p.id);
     if (result.success) setHistory(result.data ?? null);
@@ -366,6 +444,56 @@ export function ProductsPage() {
     cancelEdit();
     setEditingId('new');
     setForm({ ...emptyForm(), ...newProductFormDefaults() });
+  };
+
+  const openBulkPrice = () => {
+    setBulkMode('increase');
+    setBulkPercent('');
+    setBulkScope(selectedIds.size > 0 ? 'selected' : 'all');
+    setBulkCategoryId(categoryFilter || categories[0]?.id || '');
+    setBulkPriceOpen(true);
+  };
+
+  /** Resolve the shared scope selector into the productIds/categoryIds/applyToAll payload. */
+  const resolveBulkScope = (): { productIds?: string[]; categoryIds?: string[]; applyToAll?: boolean } | null => {
+    if (bulkScope === 'selected') {
+      if (selectedIds.size === 0) { toast.error('Select one or more products first'); return null; }
+      return { productIds: [...selectedIds] };
+    }
+    if (bulkScope === 'category') {
+      if (!bulkCategoryId) { toast.error('Choose a category'); return null; }
+      return { categoryIds: [bulkCategoryId] };
+    }
+    return { applyToAll: true };
+  };
+
+  const applyBulkPrice = async () => {
+    const scope = resolveBulkScope();
+    if (!scope) return;
+
+    setBulkApplying(true);
+    try {
+      let result;
+      if (bulkMode === 'increase') {
+        const percent = parseFloat(bulkPercent);
+        if (!Number.isFinite(percent) || percent === 0) {
+          toast.error('Enter a non-zero percentage');
+          return;
+        }
+        result = await api.products.bulkPriceIncrease({ percent, ...scope });
+      } else {
+        result = await api.products.bulkPriceRevert({ mode: bulkMode, ...scope });
+      }
+      if (result.success) {
+        toast.success(`Updated ${result.data?.updated ?? 0} product price(s)`);
+        setBulkPriceOpen(false);
+        await load();
+      } else {
+        toast.error(result.error ?? 'Bulk price update failed');
+      }
+    } finally {
+      setBulkApplying(false);
+    }
   };
 
   const handleSetDefaultCategory = () => {
@@ -413,6 +541,7 @@ export function ProductsPage() {
             >
               ⬇ Export CSV{selectedProducts.length ? ` (${selectedProducts.length})` : ''}
             </Button>
+            <Button variant="ghost" onClick={openBulkPrice}>% Increase Price</Button>
             <Button variant="secondary" onClick={startNewProduct}>+ Add Product</Button>
           </div>
         </div>
@@ -476,6 +605,75 @@ export function ProductsPage() {
               {computedSale != null && <span> · Sale PKR {computedSale.toFixed(2)}</span>}
               {marginPct > 0 && <span className="text-slate-500"> · Margin {marginPct.toFixed(1)}%</span>}
             </div>
+            {editingId === 'new' ? (
+              <div>
+                <label className="text-xs text-slate-500">Opening stock</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.stockQty ?? 0}
+                  onChange={(e) => setForm({ ...form, stockQty: parseInt(e.target.value, 10) || 0 })}
+                  className="w-full px-3 py-2 border rounded-lg"
+                />
+              </div>
+            ) : (
+              <div className="col-span-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50" id="product-stock-adjust">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium">Stock on hand</p>
+                    <p className={`text-lg font-semibold ${(form.stockQty ?? 0) < 0 ? 'text-red-600' : (form.stockQty ?? 0) === 0 ? 'text-amber-600' : ''}`}>
+                      {form.stockQty ?? 0}
+                      {(form.stockQty ?? 0) < 0 && <span className="ml-2 text-xs font-normal text-red-500">Negative — set correct count below</span>}
+                    </p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="text-xs text-slate-500">Set stock to</label>
+                    <input
+                      type="number"
+                      value={stockAdjustQty}
+                      onChange={(e) => setStockAdjustQty(e.target.value)}
+                      className="w-full px-3 py-2 border rounded-lg dark:border-slate-700 dark:bg-slate-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500">Reason</label>
+                    <select
+                      value={stockAdjustReason}
+                      onChange={(e) => setStockAdjustReason(e.target.value)}
+                      className="w-full px-3 py-2 border rounded-lg dark:border-slate-700 dark:bg-slate-900"
+                    >
+                      {STOCK_ADJUST_REASONS.map((r) => (
+                        <option key={r.value} value={r.value}>{r.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500">Notes (optional)</label>
+                    <input
+                      value={stockAdjustNotes}
+                      onChange={(e) => setStockAdjustNotes(e.target.value)}
+                      placeholder="e.g. GRN void correction"
+                      className="w-full px-3 py-2 border rounded-lg dark:border-slate-700 dark:bg-slate-900"
+                    />
+                  </div>
+                </div>
+                <div className="mt-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={stockAdjusting || !products.find((p) => p.id === editingId)}
+                    onClick={() => {
+                      const current = products.find((p) => p.id === editingId);
+                      if (current) void applyStockAdjustment(current);
+                    }}
+                  >
+                    {stockAdjusting ? 'Updating stock…' : 'Update stock'}
+                  </Button>
+                </div>
+              </div>
+            )}
             {editingId !== 'new' && (
               <select value={form.status ?? 'active'} onChange={(e) => setForm({ ...form, status: e.target.value as Product['status'] })} className="px-3 py-2 border rounded-lg">
                 <option value="active">Active</option>
@@ -590,7 +788,18 @@ export function ProductsPage() {
                   <td className="p-3 whitespace-nowrap text-xs text-slate-500">{formatDateTime(p.createdAt)}</td>
                   <td className="p-3"><span className="text-xs px-2 py-0.5 rounded bg-slate-100">{p.status}</span></td>
                   <td className="p-3" onClick={(e) => e.stopPropagation()}>
-                    <button className="text-primary-600 text-sm" onClick={() => startEdit(p)}>Edit</button>
+                    <button className="text-primary-600 text-sm mr-3" onClick={() => startEdit(p)}>Edit</button>
+                    <button
+                      className="text-slate-600 text-sm hover:text-primary-600"
+                      onClick={() => {
+                        startEdit(p);
+                        setTimeout(() => {
+                          document.getElementById('product-stock-adjust')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        }, 50);
+                      }}
+                    >
+                      Stock
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -632,6 +841,50 @@ export function ProductsPage() {
                   <div><span className="text-slate-500">Updated</span><div className="text-xs">{formatDateTime(detailProduct.updatedAt)}</div></div>
                 )}
               </div>
+              <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
+                <p className="text-sm font-medium mb-2">Set stock</p>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="text-xs text-slate-500">Set stock to</label>
+                    <input
+                      type="number"
+                      value={stockAdjustQty}
+                      onChange={(e) => setStockAdjustQty(e.target.value)}
+                      className="w-full px-3 py-2 border rounded-lg text-sm dark:border-slate-700 dark:bg-slate-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500">Reason</label>
+                    <select
+                      value={stockAdjustReason}
+                      onChange={(e) => setStockAdjustReason(e.target.value)}
+                      className="w-full px-3 py-2 border rounded-lg text-sm dark:border-slate-700 dark:bg-slate-900"
+                    >
+                      {STOCK_ADJUST_REASONS.map((r) => (
+                        <option key={r.value} value={r.value}>{r.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500">Notes (optional)</label>
+                    <input
+                      value={stockAdjustNotes}
+                      onChange={(e) => setStockAdjustNotes(e.target.value)}
+                      placeholder="e.g. after voided GRN"
+                      className="w-full px-3 py-2 border rounded-lg text-sm dark:border-slate-700 dark:bg-slate-900"
+                    />
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="mt-2"
+                  disabled={stockAdjusting}
+                  onClick={() => applyStockAdjustment(detailProduct)}
+                >
+                  {stockAdjusting ? 'Updating stock…' : 'Update stock'}
+                </Button>
+              </div>
               <div className="flex gap-2 mb-3">
                 {(['purchases', 'sales', 'returns'] as HistoryTab[]).map((t) => (
                   <button key={t} type="button" onClick={() => setHistoryTab(t)} className={`px-3 py-1 rounded text-sm capitalize ${historyTab === t ? 'bg-primary-100 text-primary-800' : 'bg-slate-100'}`}>{t}</button>
@@ -664,6 +917,76 @@ export function ProductsPage() {
               </div>
             </div>
           )}
+        </Modal>
+
+        <Modal open={bulkPriceOpen} onClose={() => setBulkPriceOpen(false)} title="Bulk price update">
+          <div className="space-y-4 w-full max-w-md">
+            <div>
+              <label className="block text-sm font-medium mb-1">Action</label>
+              <select
+                value={bulkMode}
+                onChange={(e) => setBulkMode(e.target.value as 'increase' | 'original' | 'last')}
+                className="w-full px-3 py-2 border rounded-lg"
+              >
+                <option value="increase">Increase price by %</option>
+                <option value="last">Undo last increase (revert to previous price)</option>
+                <option value="original">Reset to original price (at creation)</option>
+              </select>
+            </div>
+
+            {bulkMode === 'increase' ? (
+              <>
+                <p className="text-sm text-slate-600 dark:text-slate-400">
+                  Raises retail (and sale) prices by the percentage, then rounds each to the nearest clean value (nearest 10).
+                </p>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Increase by (%)</label>
+                  <input
+                    type="number"
+                    value={bulkPercent}
+                    onChange={(e) => setBulkPercent(e.target.value)}
+                    placeholder="e.g. 5"
+                    className="w-full px-3 py-2 border rounded-lg"
+                  />
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-slate-600 dark:text-slate-400">
+                {bulkMode === 'last'
+                  ? 'Restores each product to the price it had just before the most recent increase.'
+                  : 'Restores each product to its original price recorded when it was created.'}
+              </p>
+            )}
+
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm">
+                <input type="radio" name="bulkScope" checked={bulkScope === 'selected'} onChange={() => setBulkScope('selected')} />
+                Selected products ({selectedIds.size})
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="radio" name="bulkScope" checked={bulkScope === 'category'} onChange={() => setBulkScope('category')} />
+                Category:
+                <select
+                  value={bulkCategoryId}
+                  onChange={(e) => { setBulkCategoryId(e.target.value); setBulkScope('category'); }}
+                  className="px-2 py-1 border rounded-lg text-sm"
+                >
+                  <option value="">Choose…</option>
+                  {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="radio" name="bulkScope" checked={bulkScope === 'all'} onChange={() => setBulkScope('all')} />
+                All active products
+              </label>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" onClick={() => setBulkPriceOpen(false)}>Cancel</Button>
+              <Button onClick={applyBulkPrice} disabled={bulkApplying}>
+                {bulkApplying ? 'Applying…' : bulkMode === 'increase' ? 'Apply increase' : 'Apply revert'}
+              </Button>
+            </div>
+          </div>
         </Modal>
 
         {/* Excel Import Modal */}

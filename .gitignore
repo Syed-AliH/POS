@@ -19,3 +19,6 @@ coverage/
 out/
 apps/desktop/api-bundle/
 apps/desktop/resources/secrets.json
+# Catch backups/variants too — a stray secrets.json.bak is a credential leak.
+apps/desktop/resources/secrets.json.*
+*.bak

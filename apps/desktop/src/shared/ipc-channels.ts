@@ -16,6 +16,8 @@ export const IPC_CHANNELS = {
   PRODUCT_SEED_DEMO: 'product:seed-demo',
   PRODUCT_ADVANCED_SEARCH: 'product:advanced-search',
   PRODUCT_HISTORY: 'product:history',
+  PRODUCT_BULK_PRICE_INCREASE: 'product:bulk-price-increase',
+  PRODUCT_BULK_PRICE_REVERT: 'product:bulk-price-revert',
   CATEGORY_LIST: 'category:list',
   CATEGORY_CREATE: 'category:create',
   CATEGORY_UPDATE: 'category:update',
@@ -39,7 +41,11 @@ export const IPC_CHANNELS = {
   SYNC_STATUS: 'sync:status',
   SYNC_QUEUE_LIST: 'sync:queue-list',
 
+  /** Slim catalogue for the renderer's local search cache. */
+  PRODUCT_SEARCH_PAYLOAD: 'product:search-payload',
   PRINT_RECEIPT: 'print:receipt',
+  /** Main → renderer: progress for an async receipt print job. */
+  PRINT_STATUS: 'print:status',
   PRINT_TEST_RECEIPT: 'print:test-receipt',
   PRINT_TEST_LABEL: 'print:test-label',
   PRINT_Z_REPORT: 'print:z-report',
@@ -73,10 +79,13 @@ export const IPC_CHANNELS = {
   EOD_CLOSE_DAY: 'eod:close-day',
   EOD_CLOSINGS_LIST: 'eod:closings-list',
   EOD_CLOSING_GET: 'eod:closing-get',
+  EOD_SUBMIT_REPORT: 'eod:submit-report',
 
   BACKUP_CREATE: 'backup:create',
   BACKUP_RESTORE: 'backup:restore',
   BACKUP_LIST: 'backup:list',
+  BACKUP_STATUS: 'backup:status',
+  BACKUP_REVEAL: 'backup:reveal',
 
   VENDOR_LIST: 'vendor:list',
   VENDOR_CREATE: 'vendor:create',
@@ -117,6 +126,13 @@ export const IPC_CHANNELS = {
   PROMOTION_UPDATE: 'promotion:update',
   PROMOTION_PREVIEW: 'promotion:preview',
 
+  PROMO_CODE_LIST: 'promo-code:list',
+  PROMO_CODE_CREATE: 'promo-code:create',
+  PROMO_CODE_UPDATE: 'promo-code:update',
+  PROMO_CODE_DELETE: 'promo-code:delete',
+  PROMO_CODE_VALIDATE: 'promo-code:validate',
+  PROMO_CODE_REDEEM: 'promo-code:redeem',
+
   GIFT_CARD_LIST: 'gift-card:list',
   GIFT_CARD_LOOKUP: 'gift-card:lookup',
   GIFT_CARD_ISSUE: 'gift-card:issue',
@@ -150,6 +166,10 @@ export const IPC_CHANNELS = {
   APP_UPDATE_CHECK: 'app:update-check',
   APP_UPDATE_INSTALL: 'app:update-install',
   APP_UPDATE_STATUS: 'app:update-status',
+
+  DB_GET_CONFIG: 'db:get-config',
+  DB_TEST_CONNECTION: 'db:test-connection',
+  DB_SAVE_PASSWORD: 'db:save-password',
 
   RECEIPT_TEMPLATES: 'template:receipt-list',
   RECEIPT_TEMPLATE_UPDATE: 'template:receipt-update',

@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import compress from '@fastify/compress';
 import cors from '@fastify/cors';
 import fastifyJwt from '@fastify/jwt';
 import rateLimit from '@fastify/rate-limit';
@@ -11,10 +12,20 @@ import { registerRoutes } from './routes';
 export async function buildApp(config: AppConfig) {
   const app = Fastify({
     logger: {
-      level: config.NODE_ENV === 'production' ? 'info' : 'debug',
+      // 'info' logs a line per request; in bundled mode that is piped straight into
+      // the Electron main process on its main thread, so keep production quiet.
+      level: config.NODE_ENV === 'production' ? (process.env.API_LOG_LEVEL ?? 'warn') : 'debug',
       redact: ['req.headers.authorization'],
     },
     trustProxy: true,
+  });
+
+  // ── Compression ───────────────────────────────────────────────────────────
+  // Product/sales list payloads are highly repetitive JSON and compress ~5-10x.
+  await app.register(compress, {
+    global: true,
+    threshold: 1024,
+    encodings: ['gzip', 'deflate'],
   });
 
   // ── CORS ──────────────────────────────────────────────────────────────────

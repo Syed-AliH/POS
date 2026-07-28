@@ -13,14 +13,34 @@ function parseIds(json: string | null): string[] {
   }
 }
 
+/**
+ * Parse a promotion boundary into epoch ms. Supports both date-only ("YYYY-MM-DD")
+ * and datetime ("YYYY-MM-DDTHH:mm") strings. Date-only start = beginning of day,
+ * date-only end = end of day, so a whole-day range stays inclusive.
+ */
+function parseBoundary(value: string, isEnd: boolean): number | null {
+  const v = value.trim();
+  if (!v) return null;
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const iso = dateOnly ? `${v}T${isEnd ? '23:59:59.999' : '00:00:00'}` : v;
+  const ms = new Date(iso).getTime();
+  return Number.isNaN(ms) ? null : ms;
+}
+
 function isPromotionActive(
   startDate: string | null,
   endDate: string | null,
   now: Date = new Date(),
 ): boolean {
-  const today = now.toISOString().slice(0, 10);
-  if (startDate && today < startDate) return false;
-  if (endDate && today > endDate) return false;
+  const nowMs = now.getTime();
+  if (startDate) {
+    const start = parseBoundary(startDate, false);
+    if (start != null && nowMs < start) return false;
+  }
+  if (endDate) {
+    const end = parseBoundary(endDate, true);
+    if (end != null && nowMs > end) return false;
+  }
   return true;
 }
 
@@ -81,19 +101,30 @@ export function calculatePromotionPreviews(input: PromotionPreviewInput): Promot
       promotionName: p.name,
       discountAmount: calcPromotionDiscount(p, input),
       isStackable: p.isStackable,
+      // A promotion that targets specific products/categories only discounts its own
+      // matching lines, so multiple such promotions can each apply at the same time.
+      isTargeted: parseIds(p.productIds).length > 0 || parseIds(p.categoryIds).length > 0,
     }))
     .filter((p) => p.discountAmount > 0);
 
   if (!applicable.length) return [];
 
-  const stackable = applicable.filter((p) => {
-    const promo = activePromos.find((ap) => ap.id === p.promotionId);
-    return promo?.isStackable;
-  });
-  const nonStackable = applicable.filter((p) => {
-    const promo = activePromos.find((ap) => ap.id === p.promotionId);
-    return !promo?.isStackable;
-  });
+  // Targeted promotions (category/product specific) each apply independently.
+  const targeted = applicable.filter((p) => p.isTargeted);
+  const cartWide = applicable.filter((p) => !p.isTargeted);
+
+  const targetedResults = targeted.map(({ promotionId, promotionName, discountAmount }) => ({
+    promotionId,
+    promotionName,
+    discountAmount,
+  }));
+
+  if (!cartWide.length) return targetedResults;
+
+  const stackable = cartWide.filter((p) => p.isStackable);
+  const nonStackable = cartWide.filter((p) => !p.isStackable);
+
+  const combine = (results: PromotionPreview[]): PromotionPreview[] => [...targetedResults, ...results];
 
   if (stackable.length && nonStackable.length) {
     const bestNonStackable = nonStackable.reduce((a, b) =>
@@ -101,25 +132,25 @@ export function calculatePromotionPreviews(input: PromotionPreviewInput): Promot
     );
     const stackTotal = stackable.reduce((sum, p) => sum + p.discountAmount, 0);
     if (stackTotal >= bestNonStackable.discountAmount) {
-      return stackable.map(({ promotionId, promotionName, discountAmount }) => ({
+      return combine(stackable.map(({ promotionId, promotionName, discountAmount }) => ({
         promotionId,
         promotionName,
         discountAmount,
-      }));
+      })));
     }
-    return [bestNonStackable];
+    return combine([{ promotionId: bestNonStackable.promotionId, promotionName: bestNonStackable.promotionName, discountAmount: bestNonStackable.discountAmount }]);
   }
 
   if (stackable.length) {
-    return stackable.map(({ promotionId, promotionName, discountAmount }) => ({
+    return combine(stackable.map(({ promotionId, promotionName, discountAmount }) => ({
       promotionId,
       promotionName,
       discountAmount,
-    }));
+    })));
   }
 
   const best = nonStackable.reduce((a, b) => (a.discountAmount >= b.discountAmount ? a : b));
-  return [{ promotionId: best.promotionId, promotionName: best.promotionName, discountAmount: best.discountAmount }];
+  return combine([{ promotionId: best.promotionId, promotionName: best.promotionName, discountAmount: best.discountAmount }]);
 }
 
 export function validatePromotionDiscount(

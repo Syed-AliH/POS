@@ -3,16 +3,27 @@ import { v4 as uuid } from 'uuid';
 import { settings } from '@mama-babi/db-schema';
 import { getDb } from '../db';
 
+/**
+ * Settings are read constantly (device id, branch id, printer config, tax mode) —
+ * including inside loops and on every print — but change rarely. Cache the table in
+ * memory and write through, so a read is not a SQLite query each time.
+ */
+let cache: Record<string, string> | null = null;
+
+export function invalidateSettingsCache(): void {
+  cache = null;
+}
+
 export function getSetting(key: string): string | null {
-  const db = getDb();
-  const row = db.select().from(settings).where(eq(settings.key, key)).get();
-  return row?.value ?? null;
+  return getAllSettings()[key] ?? null;
 }
 
 export function getAllSettings(): Record<string, string> {
+  if (cache) return cache;
   const db = getDb();
   const rows = db.select().from(settings).all();
-  return Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  cache = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  return cache;
 }
 
 export function setSetting(key: string, value: string): void {
@@ -20,6 +31,7 @@ export function setSetting(key: string, value: string): void {
   const now = new Date().toISOString();
   const deviceId = getSetting('device_id') ?? 'local-device';
   const branchId = getSetting('branch_id') ?? 'main';
+  invalidateSettingsCache();
   const existing = db.select().from(settings).where(eq(settings.key, key)).get();
 
   if (existing) {
@@ -54,6 +66,7 @@ export function incrementSaleCounter(): string {
       .set({ value: String(next), updatedAt: now })
       .where(eq(settings.key, key))
       .run();
+    invalidateSettingsCache();
 
     return `MB-${year}-${String(next).padStart(6, '0')}`;
   });
@@ -94,6 +107,7 @@ export function incrementPoCounter(): string {
       .set({ value: String(next), updatedAt: now })
       .where(eq(settings.key, key))
       .run();
+    invalidateSettingsCache();
 
     return `PO-${year}-${String(next).padStart(6, '0')}`;
   });

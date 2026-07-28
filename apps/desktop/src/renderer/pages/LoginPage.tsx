@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, RefreshCw, ShoppingCart, Wifi, WifiOff } from 'lucide-react';
+import { AlertCircle, Database, RefreshCw, ShoppingCart, Wifi, WifiOff, X } from 'lucide-react';
 import { Button, Input } from '@mama-babi/ui';
 import { IPC_CHANNELS } from '@shared/ipc-channels';
+import { DatabaseSettings } from '@renderer/components/DatabaseSettings';
 import { useAuthStore } from '../stores/authStore';
 
 type ServerStatus = 'checking' | 'online' | 'offline';
@@ -10,10 +11,19 @@ type ServerStatus = 'checking' | 'online' | 'offline';
 const isNetworkError = (msg: string | null) =>
   !!msg && (msg.includes('reach') || msg.includes('network') || msg.includes('connect') || msg.includes('fetch') || msg.includes('Server URL'));
 
+/**
+ * A 500 from the login route almost always means the API reached the database
+ * and was rejected — the exact case where the admin needs to fix the password,
+ * and the one case where they cannot log in to reach Settings.
+ */
+const isServerError = (msg: string | null) =>
+  !!msg && /internal server error|500|database/i.test(msg);
+
 export function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [serverStatus, setServerStatus] = useState<ServerStatus>('checking');
+  const [showDbFix, setShowDbFix] = useState(false);
   const { login, loading, loginError, clearLoginError } = useAuthStore();
   const navigate = useNavigate();
 
@@ -56,6 +66,34 @@ export function LoginPage() {
   };
 
   const networkProblem = isNetworkError(loginError);
+  const databaseProblem = isServerError(loginError) || serverStatus === 'offline';
+
+  if (showDbFix) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center overflow-y-auto bg-surface-muted px-4 py-8 dark:bg-slate-950">
+        <div className="w-full max-w-2xl">
+          <div className="mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Database className="h-5 w-5 text-primary-500" />
+              <h2 className="text-lg font-bold text-slate-900 dark:text-slate-50">Fix database connection</h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setShowDbFix(false);
+                void checkServer();
+              }}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              <X className="h-4 w-4" />
+              Back to sign in
+            </button>
+          </div>
+          <DatabaseSettings />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen items-center justify-center bg-surface-muted px-4 dark:bg-slate-950">
@@ -133,8 +171,27 @@ export function LoginPage() {
                 : 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-400'
             }`}>
               <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-              <span>{loginError}</span>
+              <div className="min-w-0">
+                <span>{loginError}</span>
+                {isServerError(loginError) && (
+                  <p className="mt-1 text-xs opacity-80">
+                    This usually means the database rejected the connection — often because its
+                    password was changed.
+                  </p>
+                )}
+              </div>
             </div>
+          )}
+
+          {databaseProblem && (
+            <button
+              type="button"
+              onClick={() => setShowDbFix(true)}
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              <Database className="h-4 w-4" />
+              Update database password
+            </button>
           )}
 
           {serverStatus === 'checking' && (

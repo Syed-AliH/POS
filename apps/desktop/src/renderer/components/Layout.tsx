@@ -6,6 +6,7 @@ import { IPC_CHANNELS } from '@shared/ipc-channels';
 import { useAuthStore } from '../stores/authStore';
 import { useCartStore } from '../stores/cartStore';
 import { useThemeStore } from '../stores/themeStore';
+import { toast } from '../stores/toastStore';
 import { initShortcutBridge, registerGlobalShortcuts, setActiveRoute } from '../lib/shortcuts';
 import { flattenNavForShortcuts, Sidebar } from './layout/Sidebar';
 import { ShortcutHelp } from './ShortcutHelp';
@@ -80,6 +81,16 @@ export function Layout() {
   const location = useLocation();
 
   const workflowHint = Object.entries(WORKFLOW_HINTS).find(([path]) => location.pathname.includes(path))?.[1];
+
+  // Receipts print asynchronously so the till is never blocked; a failure has to be
+  // loud, because the cashier has already moved on to the next customer.
+  useEffect(() => {
+    return window.electron?.print?.onStatus?.((s) => {
+      if (s.state === 'failed') {
+        toast.error(`Receipt ${s.saleNumber} did not print — ${s.error ?? 'printer error'}`);
+      }
+    });
+  }, []);
 
   const visibleNav = useMemo(
     () => (session ? flattenNavForShortcuts(session.role) : []),

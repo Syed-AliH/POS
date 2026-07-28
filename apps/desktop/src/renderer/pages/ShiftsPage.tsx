@@ -4,6 +4,7 @@ import { getApi } from '@renderer/lib/api';
 import { SortableTh } from '@renderer/components/SortableTh';
 import { sortByKey, useTableSort } from '@renderer/lib/useTableSort';
 import { Modal, ModalActions } from '@renderer/components/Modal';
+import { EodReportForm } from '@renderer/components/EodReportForm';
 import { formatDateTime } from '@shared/datetime';
 import type { EodClosingRecord, EodReport, ShiftSummary } from '@shared/types';
 
@@ -123,24 +124,26 @@ export function ShiftsPage() {
           )}
         </div>
 
-        {eod && (
-          <div className="panel p-4">
-            <h3 className="font-semibold mb-3">Today&apos;s EOD ({eod.date})</h3>
-            <div className="space-y-1 text-sm">
-              <p>Transactions: {eod.transactionCount}</p>
-              <p>Total Sales: PKR {eod.totalSales.toFixed(2)}</p>
-              <p>Cash: PKR {eod.cashSales.toFixed(2)} · Card: PKR {eod.cardSales.toFixed(2)} · Wallet: PKR {eod.walletSales.toFixed(2)}</p>
-              <p>Returns: PKR {eod.returnsTotal.toFixed(2)}</p>
-              <p>Expenses: PKR {eod.expensesTotal.toFixed(2)}</p>
-              <p>Expected Cash: PKR {eod.expectedCash.toFixed(2)}</p>
-              <p className="font-semibold">Net Closing: PKR {eod.netClosing.toFixed(2)}</p>
+        <div className="panel p-4">
+          <h3 className="font-semibold mb-3">Day Actions</h3>
+          {eod ? (
+            <div className="space-y-1 text-sm text-slate-500">
+              <p>System-computed reference for {eod.date}:</p>
+              <p>Cash: PKR {eod.cashSales.toFixed(2)} · Card: PKR {eod.cardSales.toFixed(2)} · Online/Wallet: PKR {eod.walletSales.toFixed(2)}</p>
+              <p>Expenses: PKR {eod.expensesTotal.toFixed(2)} · Expected cash: PKR {eod.expectedCash.toFixed(2)}</p>
             </div>
-            <div className="flex gap-2 mt-4">
-              <Button onClick={() => setShowCloseDay(true)}>Close Day</Button>
-              <Button variant="secondary" onClick={handleEodPrint}>Print Z-Report</Button>
-            </div>
+          ) : (
+            <p className="text-sm text-slate-400">No computed EOD data yet.</p>
+          )}
+          <div className="flex gap-2 mt-4">
+            <Button onClick={() => setShowCloseDay(true)} disabled={!eod}>Close Day (save snapshot)</Button>
+            <Button variant="secondary" onClick={handleEodPrint}>Print Z-Report</Button>
           </div>
-        )}
+        </div>
+      </div>
+
+      <div className="mb-6">
+        <EodReportForm />
       </div>
 
       <div className="grid grid-cols-2 gap-6 mb-6">

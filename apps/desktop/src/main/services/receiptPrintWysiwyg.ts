@@ -57,6 +57,70 @@ function normalizeReceiptBitmap(rgba: Buffer, width: number, height: number): Na
 /** Render at 2× then downsample for sharper thermal output. */
 const RECEIPT_CAPTURE_SUPERSAMPLE = 2;
 
+/**
+ * One hidden renderer is reused across receipts instead of creating (and tearing down)
+ * a BrowserWindow per print. Prints are serialised by the receipt queue, so a single
+ * window is enough; it is destroyed and recreated if a render ever fails.
+ */
+let renderWindow: BrowserWindow | null = null;
+let renderWindowBusy = false;
+
+function acquireRenderWindow(widthPx: number): BrowserWindow {
+  if (renderWindowBusy) {
+    // Defensive: the queue serialises prints, so this should not happen. Use a
+    // throwaway window rather than corrupting the shared one.
+    return createRenderWindow(widthPx);
+  }
+  if (!renderWindow || renderWindow.isDestroyed()) {
+    renderWindow = createRenderWindow(widthPx);
+  }
+  renderWindowBusy = true;
+  return renderWindow;
+}
+
+function releaseRenderWindow(): void {
+  renderWindowBusy = false;
+}
+
+function destroyRenderWindow(): void {
+  if (renderWindow && !renderWindow.isDestroyed()) renderWindow.destroy();
+  renderWindow = null;
+  renderWindowBusy = false;
+}
+
+function createRenderWindow(widthPx: number): BrowserWindow {
+  return new BrowserWindow({
+    width: widthPx,
+    height: 400,
+    show: false,
+    useContentSize: true,
+    backgroundColor: '#ffffff',
+    autoHideMenuBar: true,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      zoomFactor: 1,
+    },
+  });
+}
+
+/** Waits for the compositor to present a frame, instead of guessing with a sleep. */
+async function nextPaint(win: BrowserWindow, settleMs: number): Promise<void> {
+  try {
+    await withTimeout(
+      win.webContents.executeJavaScript(
+        `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(1))))`,
+        true,
+      ),
+      2000,
+      'Receipt paint',
+    );
+  } catch {
+    // Fall through to the timed settle below.
+  }
+  if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
+}
+
 async function captureReceiptPng(
   sale: ReceiptSale,
   settings: Record<string, string>,
@@ -76,19 +140,7 @@ async function captureReceiptPng(
   // shows (winWidth / zoom) CSS pixels — e.g. 455 DIP @ 125% zoom clips a 569 px receipt.
   const displayScale = screen.getPrimaryDisplay().scaleFactor || 1;
 
-  const renderWin = new BrowserWindow({
-    width: renderWidthPx,
-    height: 400,
-    show: false,
-    useContentSize: true,
-    backgroundColor: '#ffffff',
-    autoHideMenuBar: true,
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      zoomFactor: 1,
-    },
-  });
+  const renderWin = acquireRenderWindow(renderWidthPx);
 
   try {
     renderWin.setContentSize(renderWidthPx, 400);
@@ -110,7 +162,8 @@ async function captureReceiptPng(
       'Receipt font load',
     );
 
-    await new Promise((r) => setTimeout(r, 350));
+    // Was a flat 350ms guess; wait for an actual painted frame plus a small margin.
+    await nextPaint(renderWin, 60);
 
     const receiptHeightPx = await renderWin.webContents.executeJavaScript(
       `(function() {
@@ -131,7 +184,8 @@ async function captureReceiptPng(
     const winHeight = captureHeight + 2;
     renderWin.setContentSize(renderWidthPx, winHeight);
 
-    await new Promise((r) => setTimeout(r, 200));
+    // The window was just resized — let the resize present before capturing.
+    await nextPaint(renderWin, 40);
 
     const image = await renderWin.webContents.capturePage(
       { x: 0, y: 0, width: renderWidthPx, height: winHeight },
@@ -176,8 +230,12 @@ async function captureReceiptPng(
       widthMm: paperWidthMm,
       designMm,
     };
+  } catch (err) {
+    // A wedged renderer must not poison every later receipt.
+    destroyRenderWindow();
+    throw err;
   } finally {
-    if (!renderWin.isDestroyed()) renderWin.close();
+    releaseRenderWindow();
   }
 }
 

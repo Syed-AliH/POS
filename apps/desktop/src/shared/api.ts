@@ -1,8 +1,11 @@
 import { IPC_CHANNELS } from './ipc-channels';
+import { perfEnabled, timeAsync } from './perf';
 import type {
   AdvancedProductSearchInput,
   ApiResult,
   BackupInfo,
+  BulkPriceIncreaseInput,
+  BulkPriceRevertInput,
   Category,
   CreateGrnInput,
   UpdateGrnInput,
@@ -35,12 +38,17 @@ import type {
   PromotionInput,
   PromotionPreview,
   PromotionPreviewInput,
+  PromoCode,
+  PromoCodeInput,
+  PromoCodeValidateInput,
+  PromoCodeValidateResult,
   ReceiptPreview,
   ReloadGiftCardInput,
   ReturnSummary,
   ReturnListParams,
   SaleListParams,
   SaleSummary,
+  SearchPayload,
   SettingsUpdateInput,
   ShiftSummary,
   StockAdjustmentInput,
@@ -78,6 +86,8 @@ export interface MamaBabiAPI {
   };
   products: {
     search: (query: string) => Promise<ApiResult<Product[]>>;
+    /** Slim catalogue for local search; cached in main. Pass true to force a refresh. */
+    searchPayload: (force?: boolean) => Promise<ApiResult<SearchPayload>>;
     advancedSearch: (input: AdvancedProductSearchInput) => Promise<ApiResult<Product[]>>;
     history: (productId: string) => Promise<ApiResult<ProductHistory>>;
     list: (params?: { status?: string; limit?: number }) => Promise<ApiResult<Product[]>>;
@@ -86,6 +96,8 @@ export interface MamaBabiAPI {
     update: (id: string, input: Partial<ProductInput>) => Promise<ApiResult<Product>>;
     archive: (id: string) => Promise<ApiResult<Product>>;
     barcodeLookup: (barcode: string) => Promise<ApiResult<Product | null>>;
+    bulkPriceIncrease: (input: BulkPriceIncreaseInput) => Promise<ApiResult<{ updated: number }>>;
+    bulkPriceRevert: (input: BulkPriceRevertInput) => Promise<ApiResult<{ updated: number }>>;
     importCsv: (csvContent: string) => Promise<ApiResult<{ imported: number; errors: string[] }>>;
     importRows: (rows: Array<{ name: string; category: string; cost_price?: number; retail_price: number; sale_price?: number }>) => Promise<ApiResult<{ imported: number; errors: string[] }>>;
     seedDemo: () => Promise<ApiResult<{ added: number; skipped: number }>>;
@@ -125,6 +137,19 @@ export interface MamaBabiAPI {
     closeDay: (date?: string, closingFloat?: number) => Promise<ApiResult<EodClosingRecord>>;
     closingsList: (params?: { startDate?: string; endDate?: string; limit?: number }) => Promise<ApiResult<EodClosingRecord[]>>;
     closingGet: (id: string) => Promise<ApiResult<EodClosingRecord>>;
+    submitReport: (input: {
+      html: string;
+      fileName: string;
+      reportDate: string;
+      storeName?: string;
+      cashierName?: string;
+      openingCash: number;
+      cardPayments: number;
+      onlinePayments: number;
+      totalCashCount: number;
+      totalExpenses: number;
+      dailySales: number;
+    }) => Promise<ApiResult<{ id: string; path: string }>>;
   };
   settings: {
     get: (key: string) => Promise<ApiResult<string | null>>;
@@ -152,7 +177,8 @@ export interface MamaBabiAPI {
     queueList: (limit?: number) => Promise<ApiResult<SyncQueueItem[]>>;
   };
   print: {
-    receipt: (saleId: string) => Promise<ApiResult<{ printed: boolean }>>;
+    /** Queues the receipt and returns immediately; watch PRINT_STATUS for the outcome. */
+    receipt: (saleId: string, sale?: SaleSummary) => Promise<ApiResult<{ printed: boolean; queued?: boolean; jobId?: string }>>;
     testReceipt: (template: import('@mama-babi/printer').ReceiptTemplateConfig) => Promise<ApiResult<{ printed: boolean }>>;
     testLabel: (input: { templateId: string }) => Promise<ApiResult<{ printed: boolean; templateName?: string }>>;
     zReport: (date?: string) => Promise<ApiResult<{ printed: boolean }>>;
@@ -178,6 +204,8 @@ export interface MamaBabiAPI {
   backup: {
     create: () => Promise<ApiResult<BackupInfo>>;
     list: () => Promise<ApiResult<BackupInfo[]>>;
+    status: () => Promise<ApiResult<{ nextDueAt: string | null; lastError: string | null; directory: string }>>;
+    reveal: () => Promise<ApiResult<void>>;
     restore: (filename: string) => Promise<ApiResult<void>>;
   };
   vendors: {
@@ -208,6 +236,14 @@ export interface MamaBabiAPI {
     create: (input: PromotionInput) => Promise<ApiResult<Promotion>>;
     update: (id: string, input: Partial<PromotionInput>) => Promise<ApiResult<Promotion>>;
     preview: (input: PromotionPreviewInput) => Promise<ApiResult<PromotionPreview[]>>;
+  };
+  promoCodes: {
+    list: () => Promise<ApiResult<PromoCode[]>>;
+    create: (input: PromoCodeInput) => Promise<ApiResult<PromoCode>>;
+    update: (id: string, input: Partial<PromoCodeInput>) => Promise<ApiResult<PromoCode>>;
+    delete: (id: string) => Promise<ApiResult<{ id: string }>>;
+    validate: (input: PromoCodeValidateInput) => Promise<ApiResult<PromoCodeValidateResult>>;
+    redeem: (id: string) => Promise<ApiResult<{ id: string }>>;
   };
   giftCards: {
     list: (limit?: number) => Promise<ApiResult<GiftCard[]>>;
@@ -269,7 +305,10 @@ function getInvoke() {
   if (!bridge?.invoke) {
     throw new Error('Electron preload bridge is not available. Restart the app.');
   }
-  return bridge.invoke.bind(bridge) as (channel: string, ...args: unknown[]) => Promise<unknown>;
+  const invoke = bridge.invoke.bind(bridge) as (channel: string, ...args: unknown[]) => Promise<unknown>;
+  // One wrap times every renderer→main call (round trip as the UI experiences it).
+  return (channel: string, ...args: unknown[]) =>
+    perfEnabled() ? timeAsync(`invoke ${channel}`, () => invoke(channel, ...args)) : invoke(channel, ...args);
 }
 
 export function createApi(): MamaBabiAPI {
@@ -284,6 +323,7 @@ export function createApi(): MamaBabiAPI {
     },
     products: {
       search: (query) => invoke(IPC_CHANNELS.PRODUCT_SEARCH, query),
+      searchPayload: (force) => invoke(IPC_CHANNELS.PRODUCT_SEARCH_PAYLOAD, force),
       advancedSearch: (input) => invoke(IPC_CHANNELS.PRODUCT_ADVANCED_SEARCH, input),
       history: (productId) => invoke(IPC_CHANNELS.PRODUCT_HISTORY, productId),
       list: (params) => invoke(IPC_CHANNELS.PRODUCT_LIST, params),
@@ -292,6 +332,8 @@ export function createApi(): MamaBabiAPI {
       update: (id, input) => invoke(IPC_CHANNELS.PRODUCT_UPDATE, id, input),
       archive: (id) => invoke(IPC_CHANNELS.PRODUCT_ARCHIVE, id),
       barcodeLookup: (barcode) => invoke(IPC_CHANNELS.PRODUCT_BARCODE_LOOKUP, barcode),
+      bulkPriceIncrease: (input) => invoke(IPC_CHANNELS.PRODUCT_BULK_PRICE_INCREASE, input),
+      bulkPriceRevert: (input) => invoke(IPC_CHANNELS.PRODUCT_BULK_PRICE_REVERT, input),
       importCsv: (csv) => invoke(IPC_CHANNELS.PRODUCT_IMPORT_CSV, csv),
       importRows: (rows) => invoke(IPC_CHANNELS.PRODUCT_IMPORT_ROWS, rows),
       seedDemo: () => invoke(IPC_CHANNELS.PRODUCT_SEED_DEMO),
@@ -331,6 +373,7 @@ export function createApi(): MamaBabiAPI {
       closeDay: (date, closingFloat) => invoke(IPC_CHANNELS.EOD_CLOSE_DAY, date, closingFloat),
       closingsList: (params) => invoke(IPC_CHANNELS.EOD_CLOSINGS_LIST, params),
       closingGet: (id) => invoke(IPC_CHANNELS.EOD_CLOSING_GET, id),
+      submitReport: (input) => invoke(IPC_CHANNELS.EOD_SUBMIT_REPORT, input),
     },
     settings: {
       get: (key) => invoke(IPC_CHANNELS.SETTINGS_GET, key),
@@ -350,7 +393,7 @@ export function createApi(): MamaBabiAPI {
       queueList: (limit) => invoke(IPC_CHANNELS.SYNC_QUEUE_LIST, limit),
     },
     print: {
-      receipt: (saleId) => invoke(IPC_CHANNELS.PRINT_RECEIPT, saleId),
+      receipt: (saleId, sale) => invoke(IPC_CHANNELS.PRINT_RECEIPT, saleId, sale),
       testReceipt: (template) => invoke(IPC_CHANNELS.PRINT_TEST_RECEIPT, template),
       testLabel: (input) => invoke(IPC_CHANNELS.PRINT_TEST_LABEL, input),
       zReport: (date) => invoke(IPC_CHANNELS.PRINT_Z_REPORT, date),
@@ -376,6 +419,8 @@ export function createApi(): MamaBabiAPI {
     backup: {
       create: () => invoke(IPC_CHANNELS.BACKUP_CREATE),
       list: () => invoke(IPC_CHANNELS.BACKUP_LIST),
+      status: () => invoke(IPC_CHANNELS.BACKUP_STATUS),
+      reveal: () => invoke(IPC_CHANNELS.BACKUP_REVEAL),
       restore: (filename) => invoke(IPC_CHANNELS.BACKUP_RESTORE, filename),
     },
     vendors: {
@@ -406,6 +451,14 @@ export function createApi(): MamaBabiAPI {
       create: (input) => invoke(IPC_CHANNELS.PROMOTION_CREATE, input),
       update: (id, input) => invoke(IPC_CHANNELS.PROMOTION_UPDATE, id, input),
       preview: (input) => invoke(IPC_CHANNELS.PROMOTION_PREVIEW, input),
+    },
+    promoCodes: {
+      list: () => invoke(IPC_CHANNELS.PROMO_CODE_LIST),
+      create: (input) => invoke(IPC_CHANNELS.PROMO_CODE_CREATE, input),
+      update: (id, input) => invoke(IPC_CHANNELS.PROMO_CODE_UPDATE, id, input),
+      delete: (id) => invoke(IPC_CHANNELS.PROMO_CODE_DELETE, id),
+      validate: (input) => invoke(IPC_CHANNELS.PROMO_CODE_VALIDATE, input),
+      redeem: (id) => invoke(IPC_CHANNELS.PROMO_CODE_REDEEM, id),
     },
     giftCards: {
       list: (limit) => invoke(IPC_CHANNELS.GIFT_CARD_LIST, limit),

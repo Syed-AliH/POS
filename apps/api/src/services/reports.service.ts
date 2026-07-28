@@ -1,5 +1,5 @@
 import { and, desc, eq, gte, lt, sql } from 'drizzle-orm';
-import { categories, grnHeaders, grnLines, products, returns, saleItems, sales } from '@mama-babi/db-pg';
+import { categories, expenses, grnHeaders, grnLines, products, returns, saleItems, sales, shifts } from '@mama-babi/db-pg';
 import type { PostgresClient } from '@mama-babi/db-pg';
 import { coerceReportDateRange, isoRangeBounds } from '../lib/reportDateRange';
 import { buildSaleSummary } from './sales.service';
@@ -134,6 +134,167 @@ export async function getTopProducts(
     .slice(0, limit);
 
   return { success: true as const, data };
+}
+
+export async function getDailySales(
+  db: PostgresClient,
+  params?: { startDate?: string; endDate?: string },
+) {
+  const range = coerceReportDateRange(params);
+  const rows = await db.select().from(sales).where(completedSalesDateFilter(range));
+  return {
+    success: true as const,
+    data: {
+      totalSales: rows.reduce((sum, r) => sum + r.totalAmount, 0),
+      transactionCount: rows.length,
+    },
+  };
+}
+
+export async function getSalesByCategory(
+  db: PostgresClient,
+  params?: { startDate?: string; endDate?: string },
+) {
+  const range = coerceReportDateRange(params);
+  const completed = await db.select({ id: sales.id }).from(sales).where(completedSalesDateFilter(range));
+  const saleIds = new Set(completed.map((s) => s.id));
+  if (!saleIds.size) return { success: true as const, data: [] };
+
+  const productRows = await db.select().from(products);
+  const productMap = new Map(productRows.map((p) => [p.id, p]));
+  const categoryRows = await db.select().from(categories);
+  const categoryMap = new Map(categoryRows.map((c) => [c.id, c.name]));
+
+  const items = await db.select().from(saleItems);
+  const byCategory = new Map<string | null, { name: string; total: number; count: number }>();
+  for (const item of items) {
+    if (!saleIds.has(item.saleId)) continue;
+    const product = productMap.get(item.productId);
+    const catId = product?.categoryId ?? null;
+    const name = catId ? categoryMap.get(catId) ?? 'Uncategorized' : 'Uncategorized';
+    const existing = byCategory.get(catId) ?? { name, total: 0, count: 0 };
+    existing.total += item.lineTotal;
+    existing.count += item.quantity;
+    byCategory.set(catId, existing);
+  }
+
+  return {
+    success: true as const,
+    data: [...byCategory.entries()].map(([categoryId, v]) => ({
+      categoryId,
+      categoryName: v.name,
+      totalSales: v.total,
+      itemCount: v.count,
+    })),
+  };
+}
+
+export async function getPaymentBreakdown(
+  db: PostgresClient,
+  params?: { startDate?: string; endDate?: string },
+) {
+  const range = coerceReportDateRange(params);
+  const rows = await db.select().from(sales).where(completedSalesDateFilter(range));
+  const byMethod = new Map<string, { total: number; count: number }>();
+  for (const sale of rows) {
+    const existing = byMethod.get(sale.paymentMethod) ?? { total: 0, count: 0 };
+    existing.total += sale.totalAmount;
+    existing.count += 1;
+    byMethod.set(sale.paymentMethod, existing);
+  }
+  return {
+    success: true as const,
+    data: [...byMethod.entries()].map(([paymentMethod, v]) => ({
+      paymentMethod,
+      total: v.total,
+      count: v.count,
+    })),
+  };
+}
+
+export async function getInventoryValuation(db: PostgresClient) {
+  const rows = await db
+    .select()
+    .from(products)
+    .where(and(eq(products.isDeleted, false), eq(products.status, 'active')));
+
+  let totalUnits = 0;
+  let totalCostValue = 0;
+  let totalRetailValue = 0;
+  const negativeStockItems: Array<{ id: string; name: string; sku: string; stockQty: number }> = [];
+  for (const p of rows) {
+    totalUnits += p.stockQty;
+    totalCostValue += p.stockQty * p.costPrice;
+    totalRetailValue += p.stockQty * (p.salePrice ?? p.retailPrice);
+    if (p.stockQty < 0) {
+      negativeStockItems.push({ id: p.id, name: p.name, sku: p.sku, stockQty: p.stockQty });
+    }
+  }
+  negativeStockItems.sort((a, b) => a.stockQty - b.stockQty);
+
+  return {
+    success: true as const,
+    data: {
+      totalUnits,
+      totalCostValue,
+      totalRetailValue,
+      productCount: rows.length,
+      negativeStockCount: negativeStockItems.length,
+      negativeStockItems,
+    },
+  };
+}
+
+export async function getEodReport(
+  db: PostgresClient,
+  params?: { startDate?: string; endDate?: string },
+) {
+  const range = coerceReportDateRange(params);
+  const periodLabel = range.startDate === range.endDate ? range.startDate : `${range.startDate} → ${range.endDate}`;
+  const { startInclusive, endExclusive } = isoRangeBounds(range);
+
+  const daySales = await db.select().from(sales).where(completedSalesDateFilter(range));
+  const dayReturns = await db
+    .select()
+    .from(returns)
+    .where(and(gte(returns.createdAt, startInclusive), lt(returns.createdAt, endExclusive)));
+  const dayExpenses = await db
+    .select()
+    .from(expenses)
+    .where(
+      and(
+        eq(expenses.status, 'approved'),
+        gte(expenses.createdAt, startInclusive),
+        lt(expenses.createdAt, endExclusive),
+      ),
+    );
+
+  const cashSales = daySales.filter((s) => s.paymentMethod === 'cash').reduce((sum, s) => sum + s.totalAmount, 0);
+  const cardSales = daySales.filter((s) => s.paymentMethod === 'card').reduce((sum, s) => sum + s.totalAmount, 0);
+  const walletSales = daySales.filter((s) => s.paymentMethod === 'wallet').reduce((sum, s) => sum + s.totalAmount, 0);
+  const returnsTotal = dayReturns.reduce((sum, r) => sum + r.totalRefund, 0);
+  const expensesTotal = dayExpenses.reduce((sum, e) => sum + e.amount, 0);
+
+  const openShifts = await db.select().from(shifts).where(eq(shifts.status, 'open'));
+  const openingFloat = openShifts.reduce((sum, s) => sum + s.openingFloat, 0);
+  const expectedCash = openingFloat + cashSales - returnsTotal;
+
+  return {
+    success: true as const,
+    data: {
+      date: periodLabel,
+      totalSales: daySales.reduce((sum, s) => sum + s.totalAmount, 0),
+      transactionCount: daySales.length,
+      cashSales,
+      cardSales,
+      walletSales,
+      returnsTotal,
+      expensesTotal,
+      openingFloat,
+      expectedCash,
+      netClosing: expectedCash - expensesTotal,
+    },
+  };
 }
 
 export async function getProfitReport(

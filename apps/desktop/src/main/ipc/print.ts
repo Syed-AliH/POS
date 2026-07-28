@@ -4,6 +4,7 @@ import { requireSession, requireRole } from '../session';
 import { isCloudMode } from '../cloud/config';
 import { fetchCloudSale } from '../cloud/client';
 import { printReceiptToDevice, printTestReceipt, formatZReport } from '../services/printer';
+import { enqueueReceipt } from '../print/receiptQueue';
 import { printTestLabelFromTemplate } from '../services/labelPrintTemplate';
 import { sendLabelPrinterCommand } from '../services/labelPrinterCommands';
 import { buildSaleSummary } from './sales';
@@ -22,6 +23,7 @@ function toReceiptSale(summary: SaleSummary): ReceiptSale {
       quantity: i.quantity,
       unitPrice: i.unitPrice,
       lineTotal: i.lineTotal,
+      discountPercent: i.discountPercent,
     })),
     subtotal: summary.subtotal,
     discountAmount: summary.discountAmount,
@@ -33,26 +35,43 @@ function toReceiptSale(summary: SaleSummary): ReceiptSale {
   };
 }
 
-export async function handlePrintReceipt(saleId: string): Promise<ApiResult<{ printed: boolean }>> {
+/**
+ * Queues a receipt and returns as soon as it is accepted. Rendering a receipt costs
+ * hundreds of milliseconds (hidden window + rasterise), which used to be awaited by
+ * the checkout screen before it could clear the cart. Outcome arrives on PRINT_STATUS.
+ *
+ * Pass `sale` when the caller already has the summary (the checkout screen does) to
+ * skip re-reading it from the server.
+ */
+export async function handlePrintReceipt(
+  saleId: string,
+  sale?: SaleSummary,
+): Promise<ApiResult<{ printed: boolean; queued: boolean; jobId?: string }>> {
   try {
     requireSession();
-    let summary: SaleSummary | null;
+    let summary: SaleSummary | null = sale ?? null;
 
-    if (isCloudMode()) {
-      const result = await fetchCloudSale(saleId);
-      if (!result.success || !result.data) {
-        return { success: false, error: result.error ?? 'Sale not found' };
+    if (!summary) {
+      if (isCloudMode()) {
+        const result = await fetchCloudSale(saleId);
+        if (!result.success || !result.data) {
+          return { success: false, error: result.error ?? 'Sale not found' };
+        }
+        summary = result.data;
+      } else {
+        summary = buildSaleSummary(saleId);
+        if (!summary) return { success: false, error: 'Sale not found' };
       }
-      summary = result.data;
-    } else {
-      summary = buildSaleSummary(saleId);
-      if (!summary) return { success: false, error: 'Sale not found' };
+    }
+
+    if (!isCloudMode()) {
       const db = getDb();
       db.update(sales).set({ receiptPrinted: true, updatedAt: new Date().toISOString() }).where(eq(sales.id, saleId)).run();
     }
 
-    const result = await printReceiptToDevice(toReceiptSale(summary));
-    return { success: true, data: { printed: result.printed } };
+    const { jobId, queued, error } = enqueueReceipt(toReceiptSale(summary));
+    if (!queued) return { success: false, error };
+    return { success: true, data: { printed: false, queued: true, jobId } };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Print failed' };
   }

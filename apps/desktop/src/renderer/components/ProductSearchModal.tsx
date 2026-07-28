@@ -1,10 +1,31 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@mama-babi/ui';
-import { getApi } from '@renderer/lib/api';
+import { filterProductsByAdvancedSearch } from '@shared/productSearch';
+import { useProductSearchStore } from '@renderer/stores/productSearchStore';
 import { Modal } from './Modal';
-import type { Product } from '@shared/types';
+import type { Product, SearchProduct } from '@shared/types';
 
-const api = getApi();
+/** Cached search rows padded out to the Product shape the picker renders. */
+function toProductLike(p: SearchProduct): Product {
+  return {
+    id: p.id,
+    name: p.name,
+    sku: p.sku,
+    barcode: p.barcode ?? '',
+    categoryId: p.categoryId,
+    brandId: null,
+    vendorId: null,
+    costPrice: 0,
+    retailPrice: p.retailPrice,
+    salePrice: p.salePrice,
+    taxRate: p.taxRate,
+    stockQty: p.stockQty,
+    reorderLevel: 0,
+    status: 'active',
+    imagePath: null,
+    description: null,
+  };
+}
 
 interface Props {
   open: boolean;
@@ -20,7 +41,7 @@ export function ProductSearchModal({ open, onClose, onSelect, getAvailableStock 
   const [refine, setRefine] = useState('');
   const [results, setResults] = useState<Product[]>([]);
   const [selectedIdx, setSelectedIdx] = useState(0);
-  const [loading, setLoading] = useState(false);
+  const loading = useProductSearchStore((s) => s.loading);
   const [sortKey, setSortKey] = useState<'name' | 'price'>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const masterRef = useRef<HTMLInputElement>(null);
@@ -44,21 +65,23 @@ export function ProductSearchModal({ open, onClose, onSelect, getAvailableStock 
 
   const sortIcon = (key: 'name' | 'price') => (sortKey === key ? (sortDir === 'asc' ? ' ↑' : ' ↓') : '');
 
-  const search = useCallback(async () => {
-    setLoading(true);
-    const result = await api.products.advancedSearch({
+  const catalogue = useProductSearchStore((s) => s.products);
+  const loadCatalogue = useProductSearchStore((s) => s.load);
+
+  useEffect(() => {
+    if (open) void loadCatalogue();
+  }, [open, loadCatalogue]);
+
+  // Filtered in memory against the cached catalogue — instant, no request per keystroke.
+  const search = useCallback(() => {
+    const filters = {
       sku: sku.trim() || undefined,
       master: master.trim() || undefined,
       refine: refine.trim() || undefined,
-    });
-    setLoading(false);
-    if (result.success) {
-      setResults(result.data ?? []);
-      setSelectedIdx(0);
-    } else {
-      setResults([]);
-    }
-  }, [sku, master, refine]);
+    };
+    setResults(filterProductsByAdvancedSearch(catalogue, filters).map(toProductLike));
+    setSelectedIdx(0);
+  }, [sku, master, refine, catalogue]);
 
   useEffect(() => {
     if (open) {
@@ -74,9 +97,9 @@ export function ProductSearchModal({ open, onClose, onSelect, getAvailableStock 
   }, [open]);
 
   useEffect(() => {
-    const t = setTimeout(search, 200);
-    return () => clearTimeout(t);
-  }, [search]);
+    if (!open) return;
+    search();
+  }, [search, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -98,8 +121,8 @@ export function ProductSearchModal({ open, onClose, onSelect, getAvailableStock 
       open={open}
       title="Product Search (F1)"
       onClose={onClose}
-      panelClassName="w-[720px] max-w-[720px] h-[480px]"
-      bodyClassName="flex flex-col"
+      panelClassName="w-[92vw] max-w-[960px] h-[85vh] max-h-[820px]"
+      bodyClassName="flex flex-col min-h-0"
       footer={<Button variant="ghost" onClick={onClose}>Close (Esc)</Button>}
     >
       <div className="grid grid-cols-3 gap-2 mb-3 shrink-0">
@@ -109,15 +132,15 @@ export function ProductSearchModal({ open, onClose, onSelect, getAvailableStock 
         </div>
         <div>
           <label className="text-xs font-medium text-slate-500">Master search</label>
-          <input ref={masterRef} value={master} onChange={(e) => setMaster(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" placeholder="First word starts with…" />
+          <input ref={masterRef} value={master} onChange={(e) => setMaster(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Name starts with…" />
         </div>
         <div>
           <label className="text-xs font-medium text-slate-500">Refine</label>
-          <input value={refine} onChange={(e) => setRefine(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Any word contains…" />
+          <input value={refine} onChange={(e) => setRefine(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Narrow by another word…" />
         </div>
       </div>
-      <p className="text-xs text-slate-400 mb-2 shrink-0">Master: first word prefix · Refine: any word (partial) · Both apply together · ↑↓ Enter add · Esc close</p>
-      <div className="flex h-[280px] flex-col overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
+      <p className="text-xs text-slate-400 mb-2 shrink-0">Master: name starts with · Refine: any word starts with (e.g. "Baby Suit Q4" → Master B, Refine S or Q) · ↑↓ Enter add · Esc close</p>
+      <div className="flex flex-1 min-h-0 flex-col overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
         <div className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs font-medium text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
           <button type="button" onClick={() => toggleSort('name')} className="text-left hover:text-primary-700">
             Product Name{sortIcon('name')}

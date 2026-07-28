@@ -1,4 +1,4 @@
-import { doublePrecision, integer, pgTable, text } from 'drizzle-orm/pg-core';
+import { doublePrecision, index, integer, pgTable, text } from 'drizzle-orm/pg-core';
 import { syncColumns, timestamps } from './base';
 
 export const grnHeaders = pgTable('grn_headers', {
@@ -14,7 +14,10 @@ export const grnHeaders = pgTable('grn_headers', {
   createdBy: text('created_by').notNull(),
   ...syncColumns,
   ...timestamps,
-});
+}, (t) => ({
+  statusCreatedIdx: index('idx_grn_headers_status_created').on(t.status, t.createdAt),
+  vendorIdx: index('idx_grn_headers_vendor').on(t.vendorId),
+}));
 
 export const grnLines = pgTable('grn_lines', {
   id: text('id').primaryKey(),
@@ -26,7 +29,10 @@ export const grnLines = pgTable('grn_lines', {
   lineTotal: doublePrecision('line_total').notNull(),
   ...syncColumns,
   ...timestamps,
-});
+}, (t) => ({
+  grnIdx: index('idx_grn_lines_grn').on(t.grnId),
+  productIdx: index('idx_grn_lines_product').on(t.productId),
+}));
 
 export const productCostHistory = pgTable('product_cost_history', {
   id: text('id').primaryKey(),
@@ -38,7 +44,10 @@ export const productCostHistory = pgTable('product_cost_history', {
   sourceId: text('source_id'),
   ...syncColumns,
   ...timestamps,
-});
+}, (t) => ({
+  productIdx: index('idx_product_cost_history_product').on(t.productId),
+  sourceIdx: index('idx_product_cost_history_source').on(t.sourceId),
+}));
 
 export const eodClosings = pgTable('eod_closings', {
   id: text('id').primaryKey(),

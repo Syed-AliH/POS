@@ -15,6 +15,27 @@
       "when": 1782036469681,
       "tag": "0001_robust_professor_monster",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784626507118,
+      "tag": "0002_tense_paibok",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784631571874,
+      "tag": "0003_steady_rafael_vega",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785179573962,
+      "tag": "0004_faulty_thundra",
+      "breakpoints": true
     }
   ]
 }

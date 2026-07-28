@@ -1,4 +1,4 @@
-import { pgTable, text } from 'drizzle-orm/pg-core';
+import { index, pgTable, text } from 'drizzle-orm/pg-core';
 import { syncColumns, timestamps } from './base';
 
 export const auditLogs = pgTable('audit_logs', {
@@ -14,7 +14,10 @@ export const auditLogs = pgTable('audit_logs', {
   createdAt: text('created_at')
     .notNull()
     .$defaultFn(() => new Date().toISOString()),
-});
+}, (t) => ({
+  createdIdx: index('idx_audit_logs_created').on(t.createdAt),
+  moduleCreatedIdx: index('idx_audit_logs_module_created').on(t.module, t.createdAt),
+}));
 
 export const syncQueue = pgTable('sync_queue', {
   id: text('id').primaryKey(),

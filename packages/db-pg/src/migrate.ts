@@ -14,9 +14,16 @@ if (!connectionString) {
   process.exit(1);
 }
 
-const pool = new pg.Pool({ connectionString });
-const db = drizzle(pool);
+async function run() {
+  const pool = new pg.Pool({ connectionString });
+  const db = drizzle(pool);
 
-await migrate(db, { migrationsFolder });
-await pool.end();
-console.log('PostgreSQL migrations complete.');
+  await migrate(db, { migrationsFolder });
+  await pool.end();
+  console.log('PostgreSQL migrations complete.');
+}
+
+run().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

@@ -112,9 +112,10 @@ function sortDraftLines<T extends {
   line: GrnDraftLine;
 }>(
   rows: T[],
-  lineSortKey: LineSortKey,
+  lineSortKey: LineSortKey | null,
   lineSortDir: 'asc' | 'desc',
 ) {
+  if (!lineSortKey) return rows;
   rows.sort((a, b) => {
     let cmp = 0;
     if (lineSortKey === 'sku') cmp = a.productSku.localeCompare(b.productSku);
@@ -138,9 +139,10 @@ function sortRecordItems<T extends {
   lineTotal: number;
 }>(
   items: T[],
-  lineSortKey: LineSortKey,
+  lineSortKey: LineSortKey | null,
   lineSortDir: 'asc' | 'desc',
 ) {
+  if (!lineSortKey) return items;
   const rows = items.map((item) => ({
     item,
     productName: item.productName,
@@ -194,9 +196,9 @@ export function GrnPage() {
   const [labelPrinting, setLabelPrinting] = useState(false);
   const [storeName, setStoreName] = useState('Store');
   const [showProductSearch, setShowProductSearch] = useState(false);
-  const [lineSortKey, setLineSortKey] = useState<LineSortKey>('product');
+  const [lineSortKey, setLineSortKey] = useState<LineSortKey | null>(null);
   const [lineSortDir, setLineSortDir] = useState<'asc' | 'desc'>('asc');
-  const [editLineSortKey, setEditLineSortKey] = useState<LineSortKey>('product');
+  const [editLineSortKey, setEditLineSortKey] = useState<LineSortKey | null>(null);
   const [editLineSortDir, setEditLineSortDir] = useState<'asc' | 'desc'>('asc');
   const [grnImportOpen, setGrnImportOpen] = useState(false);
   const [grnImporting, setGrnImporting] = useState(false);
@@ -399,7 +401,8 @@ export function GrnPage() {
     try {
       const rawRows = await parseExcelFile(file);
       const errors: string[] = [];
-      let added = 0;
+      const importedLines: GrnDraftLine[] = [];
+      const seenProductIds = new Set(lines.map((l) => l.productId));
 
       for (let i = 0; i < rawRows.length; i++) {
         const r = rawRows[i];
@@ -430,19 +433,23 @@ export function GrnPage() {
           continue;
         }
 
-        setLines((prev) => {
-          if (prev.some((l) => l.productId === matched.id)) return prev;
-          return [...prev, {
-            productId: matched.id,
-            productName: matched.name,
-            productSku: matched.sku,
-            qty,
-            unitCost: costPrice || matched.costPrice,
-            unitRetail: retailPrice || matched.retailPrice,
-            retailInput: String(retailPrice || matched.retailPrice),
-          }];
+        if (seenProductIds.has(matched.id)) continue;
+        seenProductIds.add(matched.id);
+        importedLines.push({
+          productId: matched.id,
+          productName: matched.name,
+          productSku: matched.sku,
+          qty,
+          unitCost: costPrice || matched.costPrice,
+          unitRetail: retailPrice || matched.retailPrice,
+          retailInput: String(retailPrice || matched.retailPrice),
         });
-        added++;
+      }
+
+      const added = importedLines.length;
+      if (added > 0) {
+        setLines((prev) => [...prev, ...importedLines]);
+        setLineSortKey(null);
       }
 
       setGrnImportErrors(errors);
@@ -455,7 +462,7 @@ export function GrnPage() {
       setGrnImporting(false);
       if (grnImportFileRef.current) grnImportFileRef.current.value = '';
     }
-  }, [products]);
+  }, [products, lines]);
 
   const updateLine = (idx: number, patch: Partial<GrnDraftLine>) => {
     setLines((prev) => {
@@ -501,6 +508,7 @@ export function GrnPage() {
 
   const resetCreateForm = () => {
     setLines([]);
+    setLineSortKey(null);
     setInvoiceNumber('');
     setNotes('');
     if (vendorId) applyVendorPaymentPreference(vendorId, setPaymentType);
@@ -593,6 +601,7 @@ export function GrnPage() {
 
   const loadRecordIntoEditor = (grn: GrnSummary) => {
     setEditingRecord(grn);
+    setEditLineSortKey(null);
     setEditVendorId(grn.vendorId);
     setEditPaymentType(grn.paymentType ?? 'cash');
     setEditInvoiceNumber(grn.invoiceNumber ?? '');

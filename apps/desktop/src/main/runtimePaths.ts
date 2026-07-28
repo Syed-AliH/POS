@@ -16,6 +16,20 @@ export function getUserSecretsPath(): string {
   return join(runtimeDir(), 'secrets.json');
 }
 
+/**
+ * Admin-supplied database password override, encrypted at rest. Kept out of
+ * secrets.json so app updates never overwrite it and it is never bundled.
+ */
+export function getDbCredentialsPath(): string {
+  return join(runtimeDir(), 'db-credentials.json');
+}
+
+export function ensureRuntimeDir(): string {
+  const dir = runtimeDir();
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 function bundledConfigPath(): string {
   return join(process.resourcesPath, 'config.json');
 }

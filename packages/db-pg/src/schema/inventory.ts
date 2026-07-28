@@ -1,4 +1,4 @@
-import { integer, pgTable, text } from 'drizzle-orm/pg-core';
+import { index, integer, pgTable, text } from 'drizzle-orm/pg-core';
 import { syncColumns, timestamps } from './base';
 
 export const inventoryMovements = pgTable('inventory_movements', {
@@ -10,7 +10,10 @@ export const inventoryMovements = pgTable('inventory_movements', {
   notes: text('notes'),
   ...syncColumns,
   ...timestamps,
-});
+}, (t) => ({
+  productCreatedIdx: index('idx_inventory_product_created').on(t.productId, t.createdAt),
+  referenceIdx: index('idx_inventory_reference').on(t.referenceId),
+}));
 
 export const stockAdjustments = pgTable('stock_adjustments', {
   id: text('id').primaryKey(),
@@ -44,7 +47,9 @@ export const stocktakeItems = pgTable('stocktake_items', {
   countedQty: integer('counted_qty'),
   ...syncColumns,
   ...timestamps,
-});
+}, (t) => ({
+  sessionIdx: index('idx_stocktake_items_session').on(t.sessionId),
+}));
 
 export const damagedStock = pgTable('damaged_stock', {
   id: text('id').primaryKey(),

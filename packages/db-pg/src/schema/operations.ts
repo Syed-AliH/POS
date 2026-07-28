@@ -1,4 +1,4 @@
-import { boolean, doublePrecision, integer, pgTable, text } from 'drizzle-orm/pg-core';
+import { boolean, doublePrecision, index, integer, pgTable, text } from 'drizzle-orm/pg-core';
 import { syncColumns, timestamps } from './base';
 
 export const purchaseOrders = pgTable('purchase_orders', {
@@ -39,7 +39,10 @@ export const returns = pgTable('returns', {
   processedBy: text('processed_by').notNull(),
   ...syncColumns,
   ...timestamps,
-});
+}, (t) => ({
+  saleIdx: index('idx_returns_sale').on(t.saleId),
+  createdIdx: index('idx_returns_created').on(t.createdAt),
+}));
 
 export const returnItems = pgTable('return_items', {
   id: text('id').primaryKey(),
@@ -51,7 +54,11 @@ export const returnItems = pgTable('return_items', {
   unitRefund: doublePrecision('unit_refund').notNull(),
   ...syncColumns,
   ...timestamps,
-});
+}, (t) => ({
+  returnIdx: index('idx_return_items_return').on(t.returnId),
+  productIdx: index('idx_return_items_product').on(t.productId),
+  saleItemIdx: index('idx_return_items_sale_item').on(t.saleItemId),
+}));
 
 export const cashSessions = pgTable('cash_sessions', {
   id: text('id').primaryKey(),
@@ -77,7 +84,10 @@ export const shifts = pgTable('shifts', {
   status: text('status').notNull().default('open'),
   ...syncColumns,
   ...timestamps,
-});
+}, (t) => ({
+  statusIdx: index('idx_shifts_status').on(t.status),
+  cashierIdx: index('idx_shifts_cashier').on(t.cashierId),
+}));
 
 export const expenseCategories = pgTable('expense_categories', {
   id: text('id').primaryKey(),
@@ -99,7 +109,9 @@ export const expenses = pgTable('expenses', {
   status: text('status').notNull().default('pending'),
   ...syncColumns,
   ...timestamps,
-});
+}, (t) => ({
+  statusCreatedIdx: index('idx_expenses_status_created').on(t.status, t.createdAt),
+}));
 
 export const giftCards = pgTable('gift_cards', {
   id: text('id').primaryKey(),

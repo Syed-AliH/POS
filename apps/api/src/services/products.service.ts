@@ -1,6 +1,12 @@
 import { and, eq, ilike, or, sql } from 'drizzle-orm';
 import { v4 as uuid } from 'uuid';
-import { generateBarcode, deriveSkuPrefix, formatCategorySku, nextSkuSequence } from '@mama-babi/barcode';
+import {
+  generateBarcode,
+  deriveSkuPrefix,
+  formatCategorySku,
+  nextSkuSequence,
+  resolveUniqueSkuPrefix,
+} from '@mama-babi/barcode';
 import { categories, grnHeaders, grnLines, products, returnItems, returns, saleItems, sales, vendors } from '@mama-babi/db-pg';
 import type { PostgresClient } from '@mama-babi/db-pg';
 import type { ApiResult } from '../types';
@@ -31,6 +37,44 @@ function mapProduct(row: ProductRow) {
   };
 }
 
+/**
+ * Everything the till needs to search and sell, and nothing else.
+ *
+ * The checkout screen used to fetch the full product rows (30+ columns) twice on
+ * mount and again after every sale, purely to search and to read stock. This is one
+ * projected query the client can cache and search locally, so typing costs no network.
+ */
+export async function getProductSearchPayload(db: PostgresClient) {
+  const rows = await db
+    .select({
+      id: products.id,
+      name: products.name,
+      sku: products.sku,
+      barcode: products.barcode,
+      retailPrice: products.retailPrice,
+      salePrice: products.salePrice,
+      taxRate: products.taxRate,
+      stockQty: products.stockQty,
+      categoryId: products.categoryId,
+      updatedAt: products.updatedAt,
+    })
+    .from(products)
+    .where(and(eq(products.isDeleted, false), eq(products.status, 'active')));
+
+  // Max updatedAt doubles as a cheap version stamp for the client cache.
+  let version = '';
+  for (const r of rows) if (r.updatedAt > version) version = r.updatedAt;
+
+  return {
+    success: true as const,
+    data: {
+      version,
+      count: rows.length,
+      products: rows.map(({ updatedAt: _ignored, ...p }) => p),
+    },
+  };
+}
+
 export async function searchProducts(db: PostgresClient, query: string) {
   const term = query.trim();
   if (!term) return { success: true as const, data: [] };
@@ -49,14 +93,24 @@ export async function searchProducts(db: PostgresClient, query: string) {
   return { success: true as const, data: rows.map(mapProduct) };
 }
 
+/** Keep in sync with apps/desktop/src/shared/productSearch.ts */
+const WORD_SPLIT = /[\s\-/\\,._()[\]|+&]+/;
+
 function nameWords(name: string): string[] {
-  return name.trim().split(/\s+/).filter(Boolean);
+  return name.trim().split(WORD_SPLIT).filter(Boolean);
 }
 
-function matchesRefine(name: string, refine: string): boolean {
-  const term = refine.trim().toLowerCase();
-  if (!term) return true;
-  return nameWords(name).some((word) => word.toLowerCase().includes(term));
+/** True when the query is a prefix of any individual word in the product name. */
+function matchesWordPrefix(name: string, query: string): boolean {
+  const prefix = query.trim().toLowerCase();
+  if (!prefix) return true;
+  const terms = prefix.split(WORD_SPLIT).filter(Boolean);
+  const words = nameWords(name).map((w) => w.toLowerCase());
+  return terms.every((term) => words.some((word) => word.startsWith(term)));
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/([\\%_])/g, '\\$1');
 }
 
 export async function advancedSearchProducts(
@@ -70,13 +124,21 @@ export async function advancedSearchProducts(
   const conditions = [eq(products.isDeleted, false), eq(products.status, 'active')];
 
   if (sku) {
-    const skuPattern = `${sku.toLowerCase()}%`;
+    const skuPattern = `${escapeLike(sku.toLowerCase())}%`;
     conditions.push(
       sql`(lower(${products.sku}) like ${skuPattern} or lower(coalesce(${products.barcode}, '')) like ${skuPattern})`,
     );
   }
+  // Master matches the start of the name, so it is a real indexable prefix.
   if (master) {
-    conditions.push(sql`lower(split_part(trim(${products.name}), ' ', 1)) like ${`${master.toLowerCase()}%`}`);
+    conditions.push(sql`lower(${products.name}) like ${`${escapeLike(master.toLowerCase())}%`}`);
+  }
+  // Refine matches the start of any word, so SQL can only prefilter on "contains";
+  // the exact word-boundary check happens in JS below.
+  if (refine) {
+    for (const term of refine.toLowerCase().split(WORD_SPLIT).filter(Boolean)) {
+      conditions.push(sql`lower(${products.name}) like ${`%${escapeLike(term)}%`}`);
+    }
   }
 
   const hasFilter = !!(sku || master || refine);
@@ -84,13 +146,15 @@ export async function advancedSearchProducts(
     .select()
     .from(products)
     .where(and(...conditions))
-    .limit(hasFilter ? 200 : 500);
+    .limit(hasFilter ? 2000 : 500);
 
-  if (refine) {
-    rows = rows.filter((row) => matchesRefine(row.name, refine));
+  if (master) {
+    const prefix = master.toLowerCase();
+    rows = rows.filter((row) => row.name.trim().toLowerCase().startsWith(prefix));
   }
+  if (refine) rows = rows.filter((row) => matchesWordPrefix(row.name, refine));
 
-  const max = hasFilter ? 50 : 500;
+  const max = hasFilter ? 200 : 500;
   return { success: true as const, data: rows.slice(0, max).map(mapProduct) };
 }
 
@@ -178,6 +242,8 @@ export async function createProduct(db: PostgresClient, input: {
       costPrice: input.costPrice ?? 0,
       retailPrice: input.retailPrice ?? 0,
       salePrice: input.salePrice ?? null,
+      baseRetailPrice: input.retailPrice ?? 0,
+      baseSalePrice: input.salePrice ?? null,
       taxRate: input.taxRate ?? 0,
       stockQty: input.stockQty ?? 0,
       reorderLevel: input.reorderLevel ?? 0,
@@ -242,7 +308,6 @@ export async function updateProduct(
       retailPrice: input.retailPrice ?? existing.retailPrice,
       salePrice: input.salePrice !== undefined ? input.salePrice : existing.salePrice,
       taxRate: input.taxRate ?? existing.taxRate,
-      stockQty: input.stockQty ?? existing.stockQty,
       reorderLevel: input.reorderLevel ?? existing.reorderLevel,
       description: input.description !== undefined ? input.description : existing.description,
       status: input.status ?? existing.status,
@@ -250,6 +315,123 @@ export async function updateProduct(
     })
     .where(eq(products.id, id));
   return getProduct(db, id);
+}
+
+/** Round a price up/down to the nearest clean retail value (nearest 10). */
+function roundRetailPrice(price: number): number {
+  return Math.round(price / 10) * 10;
+}
+
+export async function bulkIncreasePrice(
+  db: PostgresClient,
+  input: {
+    percent: number;
+    productIds?: string[];
+    categoryIds?: string[];
+    applyToAll?: boolean;
+  },
+): Promise<ApiResult<{ updated: number }>> {
+  const percent = Number(input.percent);
+  if (!Number.isFinite(percent) || percent === 0) {
+    return { success: false, error: 'Enter a non-zero percentage' };
+  }
+
+  const scopes = [];
+  if (input.productIds?.length) scopes.push(inArrayIds(input.productIds));
+  if (input.categoryIds?.length) scopes.push(inCategoryIds(input.categoryIds));
+  if (!scopes.length && !input.applyToAll) {
+    return { success: false, error: 'Select products, categories, or apply to all' };
+  }
+
+  const conditions = [eq(products.isDeleted, false), eq(products.status, 'active')];
+  const scopeClause = scopes.length ? or(...scopes) : undefined;
+  const where = scopeClause ? and(...conditions, scopeClause) : and(...conditions);
+
+  const rows = await db.select().from(products).where(where);
+  if (!rows.length) return { success: true, data: { updated: 0 } };
+
+  const factor = 1 + percent / 100;
+  const now = new Date().toISOString();
+  let updated = 0;
+
+  await db.transaction(async (tx) => {
+    for (const row of rows) {
+      const nextRetail = roundRetailPrice(row.retailPrice * factor);
+      const nextSale = row.salePrice != null ? roundRetailPrice(row.salePrice * factor) : row.salePrice;
+      await tx
+        .update(products)
+        .set({
+          retailPrice: nextRetail,
+          salePrice: nextSale,
+          // Snapshot the pre-change price so the change can be undone.
+          prevRetailPrice: row.retailPrice,
+          prevSalePrice: row.salePrice,
+          // Capture the original baseline the first time a product is ever adjusted.
+          baseRetailPrice: row.baseRetailPrice ?? row.retailPrice,
+          baseSalePrice: row.baseSalePrice ?? row.salePrice,
+          updatedAt: now,
+        })
+        .where(eq(products.id, row.id));
+      updated += 1;
+    }
+  });
+
+  return { success: true, data: { updated } };
+}
+
+export async function bulkRevertPrice(
+  db: PostgresClient,
+  input: {
+    mode: 'original' | 'last';
+    productIds?: string[];
+    categoryIds?: string[];
+    applyToAll?: boolean;
+  },
+): Promise<ApiResult<{ updated: number }>> {
+  if (input.mode !== 'original' && input.mode !== 'last') {
+    return { success: false, error: 'Invalid revert mode' };
+  }
+
+  const scopes = [];
+  if (input.productIds?.length) scopes.push(inArrayIds(input.productIds));
+  if (input.categoryIds?.length) scopes.push(inCategoryIds(input.categoryIds));
+  if (!scopes.length && !input.applyToAll) {
+    return { success: false, error: 'Select products, categories, or apply to all' };
+  }
+
+  const conditions = [eq(products.isDeleted, false), eq(products.status, 'active')];
+  const scopeClause = scopes.length ? or(...scopes) : undefined;
+  const where = scopeClause ? and(...conditions, scopeClause) : and(...conditions);
+
+  const rows = await db.select().from(products).where(where);
+  if (!rows.length) return { success: true, data: { updated: 0 } };
+
+  const now = new Date().toISOString();
+  let updated = 0;
+
+  await db.transaction(async (tx) => {
+    for (const row of rows) {
+      const targetRetail = input.mode === 'original' ? row.baseRetailPrice : row.prevRetailPrice;
+      // No snapshot to restore for this product — leave it untouched.
+      if (targetRetail == null) continue;
+      const targetSale = input.mode === 'original' ? row.baseSalePrice : row.prevSalePrice;
+      await tx
+        .update(products)
+        .set({ retailPrice: targetRetail, salePrice: targetSale, updatedAt: now })
+        .where(eq(products.id, row.id));
+      updated += 1;
+    }
+  });
+
+  return { success: true, data: { updated } };
+}
+
+function inArrayIds(ids: string[]) {
+  return sql`${products.id} in (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`;
+}
+
+function inCategoryIds(ids: string[]) {
+  return sql`${products.categoryId} in (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`;
 }
 
 export async function listCategories(db: PostgresClient) {
@@ -318,7 +500,7 @@ async function resolveCategoryId(
     return existingId;
   }
 
-  const created = await insertCategory(db, categoryName, '#6366f1', deriveSkuPrefix(categoryName));
+  const created = await insertCategory(db, categoryName, '#6366f1');
   cache.set(key, created.id);
   return created.id;
 }
@@ -382,6 +564,14 @@ export async function importProductRows(
   return { success: true, data: { imported, errors } };
 }
 
+async function getExistingSkuPrefixes(db: PostgresClient): Promise<string[]> {
+  const rows = await db
+    .select({ skuPrefix: categories.skuPrefix })
+    .from(categories)
+    .where(eq(categories.isDeleted, false));
+  return rows.map((row) => (row.skuPrefix ?? '').trim().toUpperCase()).filter(Boolean);
+}
+
 async function insertCategory(
   db: PostgresClient,
   name: string,
@@ -392,7 +582,9 @@ async function insertCategory(
   const id = uuid();
   const deviceId = (await getSetting(db, 'device_id')) ?? 'cloud';
   const branchId = (await getSetting(db, 'branch_id')) ?? 'main';
-  const prefix = (skuPrefix?.trim().toUpperCase() || deriveSkuPrefix(name)).slice(0, 4);
+  const prefix = skuPrefix?.trim()
+    ? skuPrefix.trim().toUpperCase().slice(0, 4)
+    : resolveUniqueSkuPrefix(name, await getExistingSkuPrefixes(db)).slice(0, 4);
 
   await db.insert(categories).values({
     id,

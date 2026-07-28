@@ -13,6 +13,7 @@ import {
   setDefaultLabelTemplate,
 } from '../services/labelTemplates';
 import { normalizeReceiptTemplateRow, receiptTemplateToStorage } from '../services/receiptTemplates';
+import { invalidatePrintContext } from '../print/printContext';
 
 export function handleReceiptTemplates(): ApiResult<ReceiptTemplate[]> {
   try {
@@ -63,6 +64,7 @@ export function handleReceiptTemplateUpdate(
       .run();
 
     logAudit('templates', 'update_receipt', id);
+    invalidatePrintContext();
 
     const saved = db.select().from(receiptTemplates).where(eq(receiptTemplates.id, id)).get();
     if (!saved) return { success: false, error: 'Failed to read saved template' };

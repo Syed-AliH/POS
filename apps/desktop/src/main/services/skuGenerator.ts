@@ -3,7 +3,7 @@ import { deriveSkuPrefix, formatCategorySku, nextSkuSequence } from '@mama-babi/
 import { categories, products } from '@mama-babi/db-schema';
 import { getDb } from '../db';
 
-export { deriveSkuPrefix } from '@mama-babi/barcode';
+export { deriveSkuPrefix, resolveUniqueSkuPrefix } from '@mama-babi/barcode';
 
 export function generateCategorySku(categoryId: string): string {
   const db = getDb();

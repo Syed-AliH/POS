@@ -1,25 +1,53 @@
 import { create } from 'zustand';
 import type { CartItem, Customer, Product, SaleSummary } from '@shared/types';
 
+export interface EditingSale {
+  id: string;
+  saleNumber: string;
+  /** Total of the bill as it was last saved — the baseline for the collect/refund difference. */
+  originalTotal: number;
+  paymentMethod: SaleSummary['paymentMethod'];
+  /** Cash actually kept by the shop for this bill (tendered minus change already returned). */
+  netPaid: number;
+}
+
 interface CartState {
   items: CartItem[];
+  /** Product id of the most recently scanned/added line — used for row highlight in checkout. */
+  lastScannedProductId: string | null;
   discountAmount: number;
   discountReason: string;
+  /** Manual bill adjustment: positive = surcharge (increases total), negative = extra discount. */
+  adjustmentAmount: number;
+  /** Manual global discount percent applied to every scanned line (and future scans). */
+  globalDiscountPercent: number;
   customer: Customer | null;
   loyaltyPointsRedeemed: number;
   promotionIds: string[];
+  /** Applied promo-code discount (rupees), separate from auto-promotions. */
+  promoCodeDiscount: number;
+  promoCodeId: string | null;
+  promoCodeLabel: string;
   heldSaleId: string | null;
+  /** Set when the cart is editing an already-paid bill instead of starting a new sale. */
+  editingSale: EditingSale | null;
   addProduct: (product: Product, qty?: number) => void;
   updateQuantity: (productId: string, quantity: number) => void;
   updateLineDiscount: (productId: string, discountPercent: number) => void;
+  setGlobalDiscount: (discountPercent: number) => void;
   removeItem: (productId: string) => void;
   clear: () => void;
   setDiscount: (amount: number, reason?: string, promotionIds?: string[]) => void;
+  setPromoCode: (discount: number, id: string | null, label: string) => void;
+  clearPromoCode: () => void;
+  setAdjustment: (amount: number) => void;
   setCustomer: (customer: Customer | null) => void;
   setLoyaltyRedemption: (points: number) => void;
   setHeldSaleId: (id: string | null) => void;
   loadFromSale: (items: CartItem[]) => void;
   restoreHeldSale: (sale: SaleSummary, customer?: Customer | null) => void;
+  /** Load a completed (already paid) bill into the cart for editing. */
+  loadSaleForEdit: (sale: SaleSummary, customer?: Customer | null) => void;
   getSubtotal: () => number;
   getTotal: (taxInclusive: boolean) => number;
   getTax: (taxInclusive: boolean) => number;
@@ -32,12 +60,19 @@ function calcLineTotal(unitPrice: number, qty: number, discountPercent: number):
 
 const emptyCart = {
   items: [] as CartItem[],
+  lastScannedProductId: null as string | null,
   discountAmount: 0,
   discountReason: '',
+  adjustmentAmount: 0,
+  globalDiscountPercent: 0,
   customer: null as Customer | null,
   loyaltyPointsRedeemed: 0,
   promotionIds: [] as string[],
+  promoCodeDiscount: 0,
+  promoCodeId: null as string | null,
+  promoCodeLabel: '',
   heldSaleId: null as string | null,
+  editingSale: null as EditingSale | null,
 };
 
 export const useCartStore = create<CartState>((set, get) => ({
@@ -50,6 +85,7 @@ export const useCartStore = create<CartState>((set, get) => ({
 
     if (existing) {
       set({
+        lastScannedProductId: product.id,
         items: items.map((i) =>
           i.productId === product.id
             ? {
@@ -61,7 +97,9 @@ export const useCartStore = create<CartState>((set, get) => ({
         ),
       });
     } else {
+      const discountPercent = get().globalDiscountPercent || 0;
       set({
+        lastScannedProductId: product.id,
         items: [
           ...items,
           {
@@ -71,9 +109,11 @@ export const useCartStore = create<CartState>((set, get) => ({
             barcode: product.barcode,
             quantity: qty,
             unitPrice,
-            discountPercent: 0,
+            discountPercent,
             taxRate: product.taxRate,
-            lineTotal: calcLineTotal(unitPrice, qty, 0),
+            categoryId: product.categoryId,
+            lineTotal: calcLineTotal(unitPrice, qty, discountPercent),
+            scannedAt: Date.now(),
           },
         ],
       });
@@ -104,6 +144,18 @@ export const useCartStore = create<CartState>((set, get) => ({
     });
   },
 
+  setGlobalDiscount: (discountPercent) => {
+    const pct = Number.isFinite(discountPercent) ? Math.min(100, Math.max(0, discountPercent)) : 0;
+    set({
+      globalDiscountPercent: pct,
+      items: get().items.map((i) => ({
+        ...i,
+        discountPercent: pct,
+        lineTotal: calcLineTotal(i.unitPrice, i.quantity, pct),
+      })),
+    });
+  },
+
   removeItem: (productId) => {
     set({ items: get().items.filter((i) => i.productId !== productId) });
   },
@@ -113,23 +165,71 @@ export const useCartStore = create<CartState>((set, get) => ({
   setDiscount: (amount, reason = '', promotionIds = []) =>
     set({ discountAmount: amount, discountReason: reason, promotionIds }),
 
+  setPromoCode: (discount, id, label) =>
+    set({ promoCodeDiscount: Math.max(0, discount), promoCodeId: id, promoCodeLabel: label }),
+
+  clearPromoCode: () => set({ promoCodeDiscount: 0, promoCodeId: null, promoCodeLabel: '' }),
+
+  setAdjustment: (amount) => set({ adjustmentAmount: Number.isFinite(amount) ? amount : 0 }),
+
   setCustomer: (customer) => set({ customer, loyaltyPointsRedeemed: 0 }),
 
   setLoyaltyRedemption: (points) => set({ loyaltyPointsRedeemed: Math.max(0, points) }),
 
   setHeldSaleId: (id) => set({ heldSaleId: id }),
 
-  loadFromSale: (items) => set({ items }),
+  loadFromSale: (items) =>
+    set({
+      items: items.map((item, index) => ({
+        ...item,
+        scannedAt: item.scannedAt ?? index,
+      })),
+      lastScannedProductId: items.length ? items[items.length - 1]!.productId : null,
+    }),
 
   restoreHeldSale: (sale, customer = null) => {
+    const base = Date.now();
     set({
-      items: sale.items,
+      items: sale.items.map((item, index) => ({
+        ...item,
+        scannedAt: item.scannedAt ?? base + index,
+      })),
+      lastScannedProductId: sale.items.length ? sale.items[sale.items.length - 1]!.productId : null,
       discountAmount: sale.discountAmount,
-      discountReason: '',
+      discountReason: sale.discountReason ?? '',
+      adjustmentAmount: 0,
       customer,
       loyaltyPointsRedeemed: 0,
       promotionIds: [],
+      promoCodeDiscount: 0,
+      promoCodeId: null,
+      promoCodeLabel: '',
       heldSaleId: sale.id,
+      editingSale: null,
+    });
+  },
+
+  loadSaleForEdit: (sale, customer = null) => {
+    const base = Date.now();
+    set({
+      ...emptyCart,
+      items: sale.items.map((item, index) => ({
+        ...item,
+        scannedAt: item.scannedAt ?? base + index,
+      })),
+      lastScannedProductId: sale.items.length ? sale.items[sale.items.length - 1]!.productId : null,
+      customer,
+      // The stored discount already nets promos, loyalty and any manual adjustment,
+      // so reloading it reproduces the exact total the bill was saved with.
+      discountAmount: sale.discountAmount,
+      discountReason: sale.discountReason ?? '',
+      editingSale: {
+        id: sale.id,
+        saleNumber: sale.saleNumber,
+        originalTotal: sale.totalAmount,
+        paymentMethod: sale.paymentMethod,
+        netPaid: (sale.amountTendered ?? sale.totalAmount) - (sale.changeGiven ?? 0),
+      },
     });
   },
 
@@ -140,6 +240,8 @@ export const useCartStore = create<CartState>((set, get) => ({
   getTotal: (_taxInclusive?: boolean) => {
     const subtotal = get().getSubtotal();
     const discount = get().discountAmount;
-    return subtotal - discount;
+    const promoCodeDiscount = get().promoCodeDiscount;
+    const adjustment = get().adjustmentAmount;
+    return Math.max(0, subtotal - discount - promoCodeDiscount + adjustment);
   },
 }));

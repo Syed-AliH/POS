@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { FileText, Sticker } from 'lucide-react';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
+import { DatabaseSettings } from '@renderer/components/DatabaseSettings';
 import { SortableTh } from '@renderer/components/SortableTh';
 import { sortByKey, useTableSort } from '@renderer/lib/useTableSort';
 import { useAuthStore } from '../stores/authStore';
@@ -20,7 +21,7 @@ import type {
 
 const api = getApi();
 
-type Tab = 'general' | 'printers' | 'currency' | 'backup' | 'staff' | 'templates' | 'audit' | 'sync';
+type Tab = 'general' | 'printers' | 'currency' | 'backup' | 'staff' | 'database' | 'templates' | 'audit' | 'sync';
 type AuditSortKey = 'time' | 'user' | 'module' | 'action';
 
 export function SettingsPage() {
@@ -29,6 +30,12 @@ export function SettingsPage() {
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [printers, setPrinters] = useState<PrinterInfo[]>([]);
   const [backups, setBackups] = useState<BackupInfo[]>([]);
+  const [backingUp, setBackingUp] = useState(false);
+  const [backupStatus, setBackupStatus] = useState<{
+    nextDueAt: string | null;
+    lastError: string | null;
+    directory: string;
+  } | null>(null);
   const [staff, setStaff] = useState<StaffUser[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [syncQueue, setSyncQueue] = useState<SyncQueueItem[]>([]);
@@ -73,6 +80,8 @@ export function SettingsPage() {
       if (refreshed.success) setSettings(refreshed.data ?? {});
     }
     if (b.success) setBackups(b.data ?? []);
+    const bs = await api.backup.status();
+    if (bs.success && bs.data) setBackupStatus(bs.data);
     if (st.success) setStaff(st.data ?? []);
     if (au.success) setAuditLogs(au.data ?? []);
     if (sq.success) setSyncQueue(sq.data ?? []);
@@ -111,15 +120,11 @@ export function SettingsPage() {
   };
 
   const handleBackup = async () => {
+    setBackingUp(true);
     const result = await api.backup.create();
+    setBackingUp(false);
     setMessage(result.success ? `Backup created: ${result.data?.filename}` : result.error ?? 'Backup failed');
     if (result.success) load();
-  };
-
-  const handleRestore = async (filename: string) => {
-    if (!confirm(`Restore from ${filename}? The app will restart.`)) return;
-    const result = await api.backup.restore(filename);
-    setMessage(result.success ? 'Restoring… app will restart' : result.error ?? 'Restore failed');
   };
 
   const handleCreateStaff = async () => {
@@ -162,7 +167,8 @@ export function SettingsPage() {
     bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 
   const tabs: Tab[] = ['general', 'printers', 'currency', 'backup', 'templates', 'audit', 'sync'];
-  if (isSuperAdmin) tabs.splice(4, 0, 'staff');
+  // Database credentials are an owner-level concern — super admins only.
+  if (isSuperAdmin) tabs.splice(4, 0, 'staff', 'database');
 
   return (
     <div className="page-shell">
@@ -263,16 +269,57 @@ export function SettingsPage() {
 
       {tab === 'backup' && (
         <div className="panel p-6 max-w-2xl">
-          <div className="flex justify-between mb-4">
-            <p className="text-sm text-slate-500">Local SQLite backups</p>
-            {isSuperAdmin && <Button variant="secondary" onClick={handleBackup}>Create Backup</Button>}
-          </div>
-          {backups.map((b) => (
-            <div key={b.filename} className="flex justify-between p-3 border rounded-lg text-sm mb-2">
-              <div><div className="font-medium">{b.filename}</div><div className="text-slate-500">{formatSize(b.size)}</div></div>
-              {isSuperAdmin && <Button variant="ghost" size="sm" onClick={() => handleRestore(b.filename)}>Restore</Button>}
+          <div className="mb-4 flex items-start justify-between gap-4">
+            <div>
+              <p className="font-medium text-slate-900 dark:text-slate-100">Database backups</p>
+              <p className="mt-0.5 text-sm text-slate-500">
+                Runs automatically every 6 hours while the app is open. The last {backups.length > 0 ? backups.length : 0} of 28 are kept.
+              </p>
             </div>
-          ))}
+            <div className="flex shrink-0 gap-2">
+              <Button variant="ghost" onClick={() => void api.backup.reveal()}>Open folder</Button>
+              {isSuperAdmin && (
+                <Button variant="secondary" onClick={handleBackup} disabled={backingUp}>
+                  {backingUp ? 'Backing up…' : 'Back up now'}
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {backupStatus?.lastError && (
+            <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">
+              Last automatic backup failed: {backupStatus.lastError}
+            </p>
+          )}
+
+          {backups.length === 0 ? (
+            <p className="rounded-lg bg-amber-50 px-3 py-3 text-sm text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+              No backups yet. The first one runs a minute after the app starts.
+            </p>
+          ) : (
+            <>
+              <p className="mb-3 text-xs text-slate-400">
+                Next automatic backup: {backupStatus?.nextDueAt ? formatDateTime(backupStatus.nextDueAt) : '—'}
+              </p>
+              {backups.map((b) => (
+                <div key={b.filename} className="mb-2 flex items-center justify-between rounded-lg border p-3 text-sm">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium">{b.filename}</div>
+                    <div className="text-slate-500">
+                      {formatDateTime(b.createdAt)} · {formatSize(b.size)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+
+          <p className="mt-4 border-t pt-4 text-xs text-slate-400">
+            These back up the shared Postgres database, so restoring one affects every terminal. That is
+            done deliberately from a computer with database tools, not from this screen — use
+            <strong> Open folder</strong> to copy a backup somewhere safe. Keep copies off this machine:
+            a backup stored only on the till is lost with the till.
+          </p>
         </div>
       )}
 
@@ -321,6 +368,8 @@ export function SettingsPage() {
           </div>
         </div>
       )}
+
+      {tab === 'database' && isSuperAdmin && <DatabaseSettings />}
 
       {tab === 'templates' && (
         <div className="grid md:grid-cols-3 gap-6 max-w-5xl">

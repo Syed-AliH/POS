@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 import { IPC_CHANNELS } from '@shared/ipc-channels';
-import type { ApiResult, SettingsUpdateInput } from '@shared/types';
+import type { ApiResult, SaleSummary, SettingsUpdateInput } from '@shared/types';
 import {
   DEVICE_LOCAL_SETTING_KEYS,
   mergeDeviceLocalSettings,
@@ -11,6 +11,8 @@ import { hasCloudHandler, invokeCloud } from '../cloud/client';
 import { isCloudMode } from '../cloud/config';
 import { withCloud } from './cloud-proxy';
 import { registerAppConfigHandlers } from './appConfig';
+import { getProductSearchPayload, invalidateProductSearchCache } from '../services/productSearchCache';
+import { registerDatabaseHandlers } from './database';
 import { registerUpdaterHandlers } from './updater';
 import {
   handleGetSession,
@@ -23,6 +25,8 @@ import {
   handleCategoryList,
   handleCategoryUpdate,
   handleProductAdvancedSearch,
+  handleProductBulkPriceIncrease,
+  handleProductBulkPriceRevert,
   handleProductCreate,
   handleProductGet,
   handleProductArchive,
@@ -132,7 +136,14 @@ import {
   handleEodClosingsList,
   handleEodClosingGet,
 } from './cash';
-import { handleBackupCreate, handleBackupList, handleBackupRestore } from './backup';
+import { handleEodSubmitReport } from './eodPdf';
+import {
+  handleBackupCreate,
+  handleBackupList,
+  handleBackupRestore,
+  handleBackupReveal,
+  handleBackupStatus,
+} from './backup';
 import { handleVendorCreate, handleVendorList, handleVendorUpdate } from './vendors';
 import {
   handlePoCreate,
@@ -152,6 +163,14 @@ import {
   handleLoyaltyRuleSave,
 } from './customers';
 import { handlePromotionCreate, handlePromotionList, handlePromotionPreview, handlePromotionUpdate } from './promotions';
+import {
+  handlePromoCodeCreate,
+  handlePromoCodeDelete,
+  handlePromoCodeList,
+  handlePromoCodeRedeem,
+  handlePromoCodeUpdate,
+  handlePromoCodeValidate,
+} from './promoCodes';
 
 export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.AUTH_LOGIN, (_e, username: string, password: string) =>
@@ -163,6 +182,15 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.AUTH_VERIFY_MANAGER_PIN, (_e, pin: string) =>
     withCloud(IPC_CHANNELS.AUTH_VERIFY_MANAGER_PIN, () => handleVerifyManagerPin(pin), [pin]));
 
+  ipcMain.handle(IPC_CHANNELS.PRODUCT_SEARCH_PAYLOAD, (_e, force?: boolean) =>
+    getProductSearchPayload(force));
+
+  /** Any write that changes the catalogue drops the cached search payload. */
+  const afterCatalogueWrite = async <T>(work: Promise<T> | T): Promise<T> => {
+    const result = await work;
+    invalidateProductSearchCache();
+    return result;
+  };
   ipcMain.handle(IPC_CHANNELS.PRODUCT_SEARCH, (_e, query: string) =>
     withCloud(IPC_CHANNELS.PRODUCT_SEARCH, () => handleProductSearch(query), [query]));
   ipcMain.handle(IPC_CHANNELS.PRODUCT_LIST, (_e, params) =>
@@ -170,14 +198,15 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.PRODUCT_GET, (_e, id: string) =>
     withCloud(IPC_CHANNELS.PRODUCT_GET, () => handleProductGet(id), [id]));
   ipcMain.handle(IPC_CHANNELS.PRODUCT_CREATE, (_e, input) =>
-    withCloud(IPC_CHANNELS.PRODUCT_CREATE, () => handleProductCreate(input), [input]));
+    afterCatalogueWrite(withCloud(IPC_CHANNELS.PRODUCT_CREATE, () => handleProductCreate(input), [input])));
   ipcMain.handle(IPC_CHANNELS.PRODUCT_UPDATE, (_e, id: string, input) =>
-    withCloud(IPC_CHANNELS.PRODUCT_UPDATE, () => handleProductUpdate(id, input), [id, input]));
+    afterCatalogueWrite(withCloud(IPC_CHANNELS.PRODUCT_UPDATE, () => handleProductUpdate(id, input), [id, input])));
   ipcMain.handle(IPC_CHANNELS.PRODUCT_BARCODE_LOOKUP, (_e, barcode: string) =>
     withCloud(IPC_CHANNELS.PRODUCT_BARCODE_LOOKUP, () => handleBarcodeLookup(barcode), [barcode]));
-  ipcMain.handle(IPC_CHANNELS.PRODUCT_IMPORT_CSV, (_e, csv: string) => handleProductImportCsv(csv));
+  ipcMain.handle(IPC_CHANNELS.PRODUCT_IMPORT_CSV, (_e, csv: string) =>
+    afterCatalogueWrite(handleProductImportCsv(csv)));
   ipcMain.handle(IPC_CHANNELS.PRODUCT_IMPORT_ROWS, (_e, rows: unknown[]) =>
-    withCloud(IPC_CHANNELS.PRODUCT_IMPORT_ROWS, () => handleProductImportRows(rows as never), [rows]));
+    afterCatalogueWrite(withCloud(IPC_CHANNELS.PRODUCT_IMPORT_ROWS, () => handleProductImportRows(rows as never), [rows])));
   ipcMain.handle(IPC_CHANNELS.CATEGORY_LIST, () =>
     withCloud(IPC_CHANNELS.CATEGORY_LIST, () => handleCategoryList()));
   ipcMain.handle(IPC_CHANNELS.CATEGORY_CREATE, (_e, name: string, color?: string, skuPrefix?: string) =>
@@ -188,25 +217,42 @@ export function registerIpcHandlers(): void {
     withCloud(IPC_CHANNELS.PRODUCT_ADVANCED_SEARCH, () => handleProductAdvancedSearch(input), [input]));
   ipcMain.handle(IPC_CHANNELS.PRODUCT_HISTORY, (_e, productId: string) =>
     withCloud(IPC_CHANNELS.PRODUCT_HISTORY, () => handleProductHistory(productId), [productId]));
-  ipcMain.handle(IPC_CHANNELS.PRODUCT_ARCHIVE, (_e, id: string) => handleProductArchive(id));
-  ipcMain.handle(IPC_CHANNELS.PRODUCT_SEED_DEMO, () => handleProductSeedDemo());
+  ipcMain.handle(IPC_CHANNELS.PRODUCT_BULK_PRICE_INCREASE, (_e, input) =>
+    afterCatalogueWrite(withCloud(IPC_CHANNELS.PRODUCT_BULK_PRICE_INCREASE, () => handleProductBulkPriceIncrease(input), [input])));
+  ipcMain.handle(IPC_CHANNELS.PRODUCT_BULK_PRICE_REVERT, (_e, input) =>
+    afterCatalogueWrite(withCloud(IPC_CHANNELS.PRODUCT_BULK_PRICE_REVERT, () => handleProductBulkPriceRevert(input), [input])));
+  ipcMain.handle(IPC_CHANNELS.PRODUCT_ARCHIVE, (_e, id: string) =>
+    afterCatalogueWrite(handleProductArchive(id)));
+  ipcMain.handle(IPC_CHANNELS.PRODUCT_SEED_DEMO, () =>
+    afterCatalogueWrite(handleProductSeedDemo()));
 
-  ipcMain.handle(IPC_CHANNELS.SALE_CREATE, (_e, input) =>
-    withCloud(IPC_CHANNELS.SALE_CREATE, () => handleSaleCreate(input), [input]));
+  ipcMain.handle(IPC_CHANNELS.SALE_CREATE, async (_e, input) => {
+    const result = await withCloud<ApiResult<SaleSummary>>(
+      IPC_CHANNELS.SALE_CREATE, () => handleSaleCreate(input), [input],
+    );
+    // A sale only moves stock, so adjust the cached figures rather than throwing the
+    // whole catalogue away and re-downloading it on the next keystroke.
+    if (result?.success && result.data && result.data.status !== 'held') {
+      applyStockDeltas(result.data.items.map((i) => ({ productId: i.productId, delta: -i.quantity })));
+    }
+    return result;
+  });
   ipcMain.handle(IPC_CHANNELS.SALE_LIST, (_e, params) =>
     withCloud(IPC_CHANNELS.SALE_LIST, () => handleSaleList(params), [params]));
   ipcMain.handle(IPC_CHANNELS.SALE_GET, (_e, id: string) =>
     withCloud(IPC_CHANNELS.SALE_GET, () => handleSaleGet(id), [id]));
   ipcMain.handle(IPC_CHANNELS.SALE_RECEIPT_PREVIEW, (_e, saleId: string) =>
     withCloud(IPC_CHANNELS.SALE_RECEIPT_PREVIEW, () => handleSaleReceiptPreview(saleId), [saleId]));
-  ipcMain.handle(IPC_CHANNELS.SALE_VOID, (_e, id: string) => handleSaleVoid(id));
+  ipcMain.handle(IPC_CHANNELS.SALE_VOID, (_e, id: string) =>
+    afterCatalogueWrite(withCloud(IPC_CHANNELS.SALE_VOID, () => handleSaleVoid(id), [id])));
   ipcMain.handle(IPC_CHANNELS.SALE_RESUME, (_e, key: string) =>
     withCloud(IPC_CHANNELS.SALE_RESUME, () => handleSaleResume(key), [key]));
   ipcMain.handle(IPC_CHANNELS.SALE_DISCARD_HELD, (_e, id: string) =>
     withCloud(IPC_CHANNELS.SALE_DISCARD_HELD, () => handleDiscardHeld(id), [id]));
   ipcMain.handle(IPC_CHANNELS.SALE_LOOKUP, (_e, saleNumber: string) =>
     withCloud(IPC_CHANNELS.SALE_LOOKUP, () => handleSaleLookupForReturn(saleNumber), [saleNumber]));
-  ipcMain.handle(IPC_CHANNELS.SALE_UPDATE, (_e, input) => handleSaleUpdate(input));
+  ipcMain.handle(IPC_CHANNELS.SALE_UPDATE, (_e, input) =>
+    afterCatalogueWrite(withCloud(IPC_CHANNELS.SALE_UPDATE, () => handleSaleUpdate(input), [input])));
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_GET, (_e, key: string) => {
     if (DEVICE_LOCAL_SETTING_KEYS.has(key)) {
@@ -261,7 +307,8 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.SYNC_STATUS, () => handleSyncStatus());
   ipcMain.handle(IPC_CHANNELS.SYNC_QUEUE_LIST, (_e, limit?: number) => handleSyncQueueList(limit));
 
-  ipcMain.handle(IPC_CHANNELS.PRINT_RECEIPT, (_e, saleId: string) => handlePrintReceipt(saleId));
+  ipcMain.handle(IPC_CHANNELS.PRINT_RECEIPT, (_e, saleId: string, sale?: SaleSummary) =>
+    handlePrintReceipt(saleId, sale));
   ipcMain.handle(IPC_CHANNELS.PRINT_TEST_RECEIPT, (_e, template) => handlePrintTestReceipt(template));
   ipcMain.handle(IPC_CHANNELS.PRINT_TEST_LABEL, (_e, input) => handlePrintTestLabel(input));
   ipcMain.handle(IPC_CHANNELS.LABEL_FEED, (_e, input) => handleLabelFeed(input));
@@ -272,23 +319,30 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.LABEL_TEMPLATE_GET, (_e, id: string) =>
     withCloud(IPC_CHANNELS.LABEL_TEMPLATE_GET, () => handleLabelTemplateGet(id), [id]));
   ipcMain.handle(IPC_CHANNELS.LABEL_PRINT_BATCH, (_e, input) => handleLabelPrintBatch(input));
-  ipcMain.handle(IPC_CHANNELS.REPORT_DAILY_SALES, (_e, params) => handleDailySales(params));
-  ipcMain.handle(IPC_CHANNELS.REPORT_EOD, (_e, params) => handleEodReport(params));
-  ipcMain.handle(IPC_CHANNELS.REPORT_SALES_BY_CATEGORY, (_e, params) => handleSalesByCategory(params));
-  ipcMain.handle(IPC_CHANNELS.REPORT_TOP_PRODUCTS, (_e, params) => handleTopProducts(params));
-  ipcMain.handle(IPC_CHANNELS.REPORT_PAYMENT_BREAKDOWN, (_e, params) => handlePaymentBreakdown(params));
-  ipcMain.handle(IPC_CHANNELS.REPORT_INVENTORY_VALUATION, () => handleInventoryValuation());
+  ipcMain.handle(IPC_CHANNELS.REPORT_DAILY_SALES, (_e, params) =>
+    withCloud(IPC_CHANNELS.REPORT_DAILY_SALES, () => handleDailySales(params), [params]));
+  ipcMain.handle(IPC_CHANNELS.REPORT_EOD, (_e, params) =>
+    withCloud(IPC_CHANNELS.REPORT_EOD, () => handleEodReport(params), [params]));
+  ipcMain.handle(IPC_CHANNELS.REPORT_SALES_BY_CATEGORY, (_e, params) =>
+    withCloud(IPC_CHANNELS.REPORT_SALES_BY_CATEGORY, () => handleSalesByCategory(params), [params]));
+  ipcMain.handle(IPC_CHANNELS.REPORT_TOP_PRODUCTS, (_e, params) =>
+    withCloud(IPC_CHANNELS.REPORT_TOP_PRODUCTS, () => handleTopProducts(params), [params]));
+  ipcMain.handle(IPC_CHANNELS.REPORT_PAYMENT_BREAKDOWN, (_e, params) =>
+    withCloud(IPC_CHANNELS.REPORT_PAYMENT_BREAKDOWN, () => handlePaymentBreakdown(params), [params]));
+  ipcMain.handle(IPC_CHANNELS.REPORT_INVENTORY_VALUATION, () =>
+    withCloud(IPC_CHANNELS.REPORT_INVENTORY_VALUATION, () => handleInventoryValuation()));
   ipcMain.handle(IPC_CHANNELS.REPORT_INVENTORY, (_e, params) =>
     withCloud(IPC_CHANNELS.REPORT_INVENTORY, () => handleInventoryReport(params), [params]));
   ipcMain.handle(IPC_CHANNELS.REPORT_PROFIT, (_e, params) =>
     withCloud(IPC_CHANNELS.REPORT_PROFIT, () => handleProfitReport(params), [params]));
 
   ipcMain.handle(IPC_CHANNELS.RETURN_CREATE, (_e, input) =>
-    withCloud(IPC_CHANNELS.RETURN_CREATE, () => handleReturnCreate(input), [input]));
+    afterCatalogueWrite(withCloud(IPC_CHANNELS.RETURN_CREATE, () => handleReturnCreate(input), [input])));
   ipcMain.handle(IPC_CHANNELS.RETURN_LIST, (_e, params?) =>
     withCloud(IPC_CHANNELS.RETURN_LIST, () => handleReturnList(params), [params]));
 
-  ipcMain.handle(IPC_CHANNELS.INVENTORY_ADJUST, (_e, input) => handleInventoryAdjust(input));
+  ipcMain.handle(IPC_CHANNELS.INVENTORY_ADJUST, (_e, input) =>
+    afterCatalogueWrite(handleInventoryAdjust(input)));
   ipcMain.handle(IPC_CHANNELS.INVENTORY_LOW_STOCK, () => handleLowStock());
   ipcMain.handle(IPC_CHANNELS.INVENTORY_MOVEMENTS, (_e, productId?: string) => handleMovementHistory(productId));
 
@@ -299,9 +353,12 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.EOD_CLOSE_DAY, (_e, date?: string, closingFloat?: number) => handleEodCloseDay(date, closingFloat));
   ipcMain.handle(IPC_CHANNELS.EOD_CLOSINGS_LIST, (_e, params) => handleEodClosingsList(params));
   ipcMain.handle(IPC_CHANNELS.EOD_CLOSING_GET, (_e, id: string) => handleEodClosingGet(id));
+  ipcMain.handle(IPC_CHANNELS.EOD_SUBMIT_REPORT, (_e, input) => handleEodSubmitReport(input));
 
   ipcMain.handle(IPC_CHANNELS.BACKUP_CREATE, () => handleBackupCreate());
   ipcMain.handle(IPC_CHANNELS.BACKUP_LIST, () => handleBackupList());
+  ipcMain.handle(IPC_CHANNELS.BACKUP_STATUS, () => handleBackupStatus());
+  ipcMain.handle(IPC_CHANNELS.BACKUP_REVEAL, () => handleBackupReveal());
   ipcMain.handle(IPC_CHANNELS.BACKUP_RESTORE, (_e, filename: string) => handleBackupRestore(filename));
 
   ipcMain.handle(IPC_CHANNELS.VENDOR_LIST, () =>
@@ -325,7 +382,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.GRN_GET, (_e, id: string) =>
     withCloud(IPC_CHANNELS.GRN_GET, () => handleGrnGet(id), [id]));
   ipcMain.handle(IPC_CHANNELS.GRN_FINALIZE, (_e, id: string) =>
-    withCloud(IPC_CHANNELS.GRN_FINALIZE, () => handleGrnFinalize(id), [id]));
+    afterCatalogueWrite(withCloud(IPC_CHANNELS.GRN_FINALIZE, () => handleGrnFinalize(id), [id])));
   ipcMain.handle(IPC_CHANNELS.GRN_UPDATE, (_e, id: string, input) =>
     withCloud(IPC_CHANNELS.GRN_UPDATE, () => handleGrnUpdate(id, input), [id, input]));
   ipcMain.handle(IPC_CHANNELS.GRN_CANCEL, (_e, id: string) =>
@@ -359,6 +416,19 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.PROMOTION_CREATE, (_e, input) => handlePromotionCreate(input));
   ipcMain.handle(IPC_CHANNELS.PROMOTION_UPDATE, (_e, id: string, input) => handlePromotionUpdate(id, input));
   ipcMain.handle(IPC_CHANNELS.PROMOTION_PREVIEW, (_e, input) => handlePromotionPreview(input));
+
+  ipcMain.handle(IPC_CHANNELS.PROMO_CODE_LIST, () =>
+    withCloud(IPC_CHANNELS.PROMO_CODE_LIST, () => handlePromoCodeList()));
+  ipcMain.handle(IPC_CHANNELS.PROMO_CODE_CREATE, (_e, input) =>
+    withCloud(IPC_CHANNELS.PROMO_CODE_CREATE, () => handlePromoCodeCreate(input), [input]));
+  ipcMain.handle(IPC_CHANNELS.PROMO_CODE_UPDATE, (_e, id: string, input) =>
+    withCloud(IPC_CHANNELS.PROMO_CODE_UPDATE, () => handlePromoCodeUpdate(id, input), [id, input]));
+  ipcMain.handle(IPC_CHANNELS.PROMO_CODE_DELETE, (_e, id: string) =>
+    withCloud(IPC_CHANNELS.PROMO_CODE_DELETE, () => handlePromoCodeDelete(id), [id]));
+  ipcMain.handle(IPC_CHANNELS.PROMO_CODE_VALIDATE, (_e, input) =>
+    withCloud(IPC_CHANNELS.PROMO_CODE_VALIDATE, () => handlePromoCodeValidate(input), [input]));
+  ipcMain.handle(IPC_CHANNELS.PROMO_CODE_REDEEM, (_e, id: string) =>
+    withCloud(IPC_CHANNELS.PROMO_CODE_REDEEM, () => handlePromoCodeRedeem(id), [id]));
 
   ipcMain.handle(IPC_CHANNELS.GIFT_CARD_LIST, (_e, limit?: number) => handleGiftCardList(limit));
   ipcMain.handle(IPC_CHANNELS.GIFT_CARD_LOOKUP, (_e, code: string) => handleGiftCardLookup(code));
@@ -409,5 +479,6 @@ export function registerIpcHandlers(): void {
     withCloud(IPC_CHANNELS.LABEL_TEMPLATE_SET_DEFAULT, () => handleLabelTemplateSetDefault(id), [id]));
 
   registerAppConfigHandlers();
+  registerDatabaseHandlers();
   registerUpdaterHandlers();
 }
