@@ -84,14 +84,16 @@ export const useCartStore = create<CartState>((set, get) => ({
     const unitPrice = product.salePrice ?? product.retailPrice;
 
     if (existing) {
+      // Scanning onto a return line (-1) walks back up to +1 rather than parking on 0.
+      const nextQty = existing.quantity + qty === 0 ? qty : existing.quantity + qty;
       set({
         lastScannedProductId: product.id,
         items: items.map((i) =>
           i.productId === product.id
             ? {
                 ...i,
-                quantity: i.quantity + qty,
-                lineTotal: calcLineTotal(i.unitPrice, i.quantity + qty, i.discountPercent),
+                quantity: nextQty,
+                lineTotal: calcLineTotal(i.unitPrice, nextQty, i.discountPercent),
               }
             : i,
         ),
@@ -121,7 +123,9 @@ export const useCartStore = create<CartState>((set, get) => ({
   },
 
   updateQuantity: (productId, quantity) => {
-    if (quantity <= 0) {
+    // Negative quantities are returns: the line credits the customer and the sale
+    // puts the stock back. Only an exact zero drops the line.
+    if (!Number.isFinite(quantity) || quantity === 0) {
       get().removeItem(productId);
       return;
     }

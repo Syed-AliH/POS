@@ -109,6 +109,8 @@ export function CheckoutPage() {
   const [stockMap, setStockMap] = useState<Record<string, number>>({});
   const [stockWarning, setStockWarning] = useState<{ productName: string; stock: number } | null>(null);
   const [historyProduct, setHistoryProduct] = useState<{ id: string; name: string } | null>(null);
+  // Qty cell being typed into — kept as raw text so "-" and an empty box are valid mid-edit.
+  const [qtyDraft, setQtyDraft] = useState<{ productId: string; value: string } | null>(null);
   const latestCartRowRef = useRef<HTMLTableRowElement | null>(null);
 
   const cartItemsInScanOrder = useMemo(
@@ -139,10 +141,23 @@ export function CheckoutPage() {
   /** One reduce per cart change instead of the store getter re-running each render. */
   const subtotal = useMemo(() => items.reduce((sum, i) => sum + i.lineTotal, 0), [items]);
   const total = getTotal(taxInclusive) - loyaltyDiscount;
-  /** Edit mode: what still has to move between cashier and customer. >0 collect, <0 refund. */
-  const billDifference = editingSale ? total - editingSale.originalTotal : 0;
-  const amountToCollect = Math.max(0, billDifference);
-  const amountToRefund = Math.max(0, -billDifference);
+  /** Sold lines and return lines, kept apart so the panel can show the two sides. */
+  const soldTotal = useMemo(
+    () => items.reduce((sum, i) => (i.quantity > 0 ? sum + i.lineTotal : sum), 0),
+    [items],
+  );
+  const returnTotal = useMemo(
+    () => items.reduce((sum, i) => (i.quantity < 0 ? sum - i.lineTotal : sum), 0),
+    [items],
+  );
+  /**
+   * Signed bill total: sold lines minus returned lines, after discounts. Positive means
+   * the customer still owes, negative means the shop owes. `total` stays clamped at 0
+   * because a sale row cannot store a negative amount.
+   */
+  const netTotal = subtotal - discountAmount - promoCodeDiscount + adjustmentAmount - loyaltyDiscount;
+  const amountToCollect = Math.max(0, netTotal);
+  const amountToRefund = Math.max(0, -netTotal);
   const editCashChange = isEditingBill
     ? Math.max(0, parseFloat(amountTendered || '0') - amountToCollect)
     : 0;
@@ -150,6 +165,33 @@ export function CheckoutPage() {
     ? editCashChange
     : paymentMethod === 'cash' ? Math.max(0, parseFloat(amountTendered || '0') - total) : 0;
   const secondaryTotal = exchangeRate > 0 && secondaryCurrency ? total * exchangeRate : null;
+
+  /**
+   * One place that spells out which way the cash moves, so the banner, the summary
+   * card and the confirm button can never disagree about it.
+   */
+  const settlement = useMemo(() => {
+    if (amountToRefund > 0.009) {
+      return {
+        direction: 'refund' as const,
+        amount: amountToRefund,
+        /** What the cashier physically does. */
+        action: 'Give back',
+        short: 'Give back',
+        icon: '↩',
+      };
+    }
+    if (amountToCollect > 0.009) {
+      return {
+        direction: 'collect' as const,
+        amount: amountToCollect,
+        action: 'Take',
+        short: 'Take',
+        icon: '↓',
+      };
+    }
+    return { direction: 'settled' as const, amount: 0, action: '', short: '', icon: '' };
+  }, [amountToCollect, amountToRefund]);
 
   const workflowStep = items.length === 0
     ? 0
@@ -176,6 +218,37 @@ export function CheckoutPage() {
   const getAvailableStock = useCallback((productId: string, fallbackOnHand = 0) => (
     getOnHandStock(productId, fallbackOnHand) - (cartQtyById.get(productId) ?? 0)
   ), [getOnHandStock, cartQtyById]);
+
+  /** Applies a new quantity and warns if selling more than what is on hand. */
+  const applyQuantity = useCallback((productId: string, productName: string, quantity: number) => {
+    updateQuantity(productId, quantity);
+    const onHand = getOnHandStock(productId);
+    if (quantity > 0 && onHand - quantity < 0) {
+      setStockWarning({ productName, stock: onHand });
+    }
+  }, [updateQuantity, getOnHandStock]);
+
+  /**
+   * +/- and the arrow keys step by one and skip straight over zero, so a line goes
+   * 1 → -1 (a return) instead of vanishing, and -1 → 1 on the way back up.
+   */
+  const stepQuantity = useCallback((productId: string, current: number, step: number) => {
+    const item = items.find((i) => i.productId === productId);
+    const next = current + step === 0 ? current + step * 2 : current + step;
+    setQtyDraft(null);
+    applyQuantity(productId, item?.productName ?? '', next);
+  }, [items, applyQuantity]);
+
+  /** Commits the typed quantity; blank or unparseable text reverts to the current value. */
+  const commitQtyDraft = useCallback((productId: string, current: number) => {
+    const draft = qtyDraft;
+    setQtyDraft(null);
+    if (!draft || draft.productId !== productId) return;
+    const parsed = parseInt(draft.value, 10);
+    if (!Number.isFinite(parsed) || parsed === current) return;
+    const item = items.find((i) => i.productId === productId);
+    applyQuantity(productId, item?.productName ?? '', parsed);
+  }, [qtyDraft, items, applyQuantity]);
 
   useEffect(() => {
     api.customers.loyaltyRules().then((r) => {
@@ -348,7 +421,7 @@ export function CheckoutPage() {
     const isCash = editingSale.paymentMethod === 'cash';
     const received = isCash && amountToCollect > 0 ? parseFloat(amountTendered || '0') : amountToCollect;
     if (amountToCollect > 0 && received < amountToCollect) {
-      toast.error(`Collect at least PKR ${amountToCollect.toFixed(2)} before updating`);
+      toast.error(`Take at least PKR ${amountToCollect.toFixed(2)} from the customer before updating`);
       return;
     }
 
@@ -368,14 +441,23 @@ export function CheckoutPage() {
       // stored total matches the figure the cashier just saw.
       discountAmount: subtotal - total,
       discountReason: [discountReason, promoCodeLabel ? `Promo ${promoCodeLabel}` : ''].filter(Boolean).join('; ') || undefined,
-      // Cash bills track the running total actually paid, so the stored change/refund
-      // stays correct after the edit. Non-cash bills keep whatever they had.
-      amountTendered: isCash ? editingSale.netPaid + received : undefined,
+      // The bill is settled in full at the counter each time it is updated, so the
+      // stored tender is the cash taken for this version of the bill.
+      amountTendered: isCash ? received : undefined,
     }));
 
     if (result.success && result.data) {
       const sale = result.data;
-      const settled = sale.totalAmount - editingSale.originalTotal;
+      const settled = netTotal;
+      // The saved bill is the source of truth: if it does not match what the cashier
+      // just approved, say so instead of reporting a success that did not happen.
+      if (Math.abs(sale.totalAmount - Math.max(0, netTotal)) > 0.01) {
+        toast.error(
+          `Bill ${sale.saleNumber} saved as PKR ${sale.totalAmount.toFixed(2)}, not PKR ${Math.max(0, netTotal).toFixed(2)} — the return lines were rejected. Do not hand over cash; check the server version.`,
+        );
+        setProcessing(false);
+        return;
+      }
       // Pass the summary we already have so the print path doesn't re-fetch the sale.
       if (options?.forcePrint || autoPrintRef.current) void api.print.receipt(sale.id, sale);
       resetAfterSale();
@@ -383,9 +465,9 @@ export function CheckoutPage() {
       void refreshStockMap();
       toast.success(
         settled > 0.009
-          ? `Bill ${sale.saleNumber} updated — collected PKR ${settled.toFixed(2)}`
+          ? `Bill ${sale.saleNumber} updated — take PKR ${settled.toFixed(2)} from the customer`
           : settled < -0.009
-            ? `Bill ${sale.saleNumber} updated — refund PKR ${Math.abs(settled).toFixed(2)}`
+            ? `Bill ${sale.saleNumber} updated — give PKR ${Math.abs(settled).toFixed(2)} back to the customer`
             : `Bill ${sale.saleNumber} updated — no payment adjustment needed`,
       );
     } else {
@@ -680,13 +762,19 @@ export function CheckoutPage() {
       {editingSale && (
         <div className="mx-4 mt-3 flex items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm dark:border-amber-900 dark:bg-amber-950/40">
           <span className="font-semibold text-amber-900 dark:text-amber-200">Editing {editingSale.saleNumber}</span>
-          <span className="text-amber-700 dark:text-amber-300">Saved PKR {editingSale.originalTotal.toFixed(2)}</span>
-          <span className="ml-auto font-semibold text-amber-900 dark:text-amber-200">
-            {amountToCollect > 0.009
-              ? `Collect PKR ${amountToCollect.toFixed(2)}`
-              : amountToRefund > 0.009
-                ? `Refund PKR ${amountToRefund.toFixed(2)}`
-                : 'No difference'}
+          <span
+            className={cn(
+              'ml-auto flex items-center gap-2 rounded-lg px-3 py-1 font-semibold',
+              settlement.direction === 'refund'
+                ? 'bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-200'
+                : settlement.direction === 'collect'
+                  ? 'bg-green-100 text-green-800 dark:bg-green-950/60 dark:text-green-200'
+                  : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+            )}
+          >
+            {settlement.direction === 'settled'
+              ? 'No difference'
+              : `${settlement.icon} ${settlement.action} PKR ${settlement.amount.toFixed(2)}`}
           </span>
           <Button variant="ghost" size="sm" onClick={() => setShowClearConfirm(true)}>Cancel</Button>
         </div>
@@ -786,20 +874,38 @@ export function CheckoutPage() {
                         </td>
                         <td className="p-3" onDoubleClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center gap-2">
-                            <button type="button" className="h-10 w-10 rounded bg-slate-100 font-bold dark:bg-slate-800 dark:text-slate-100" onClick={() => updateQuantity(item.productId, item.quantity - 1)}>-</button>
-                            <span className="w-8 text-center font-medium text-slate-900 dark:text-slate-100">{item.quantity}</span>
+                            <button type="button" className="h-10 w-10 rounded bg-slate-100 font-bold dark:bg-slate-800 dark:text-slate-100" onClick={() => stepQuantity(item.productId, item.quantity, -1)}>-</button>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              aria-label={`Quantity for ${item.productName}`}
+                              value={qtyDraft?.productId === item.productId ? qtyDraft.value : String(item.quantity)}
+                              onChange={(e) => setQtyDraft({ productId: item.productId, value: e.target.value })}
+                              onFocus={(e) => {
+                                setQtyDraft({ productId: item.productId, value: String(item.quantity) });
+                                e.target.select();
+                              }}
+                              onBlur={() => commitQtyDraft(item.productId, item.quantity)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+                                else if (e.key === 'Escape') { setQtyDraft(null); e.currentTarget.blur(); }
+                                else if (e.key === 'ArrowUp') { e.preventDefault(); setQtyDraft(null); stepQuantity(item.productId, item.quantity, 1); }
+                                else if (e.key === 'ArrowDown') { e.preventDefault(); setQtyDraft(null); stepQuantity(item.productId, item.quantity, -1); }
+                              }}
+                              className={cn(
+                                'h-10 w-14 rounded border border-slate-200 text-center font-medium tabular-nums dark:border-slate-700 dark:bg-slate-900',
+                                item.quantity < 0 ? 'text-red-600 dark:text-red-400' : 'text-slate-900 dark:text-slate-100',
+                              )}
+                            />
                             <button
                               type="button"
                               className="h-10 w-10 rounded bg-slate-100 font-bold dark:bg-slate-800 dark:text-slate-100"
-                              onClick={() => {
-                                const nextAvailable = onHand - item.quantity - 1;
-                                updateQuantity(item.productId, item.quantity + 1);
-                                if (nextAvailable < 0) {
-                                  setStockWarning({ productName: item.productName, stock: onHand });
-                                }
-                              }}
+                              onClick={() => stepQuantity(item.productId, item.quantity, 1)}
                             >+</button>
                           </div>
+                          {item.quantity < 0 && (
+                            <div className="mt-1 text-xs font-medium text-red-600 dark:text-red-400">Return</div>
+                          )}
                         </td>
                         <td className="p-3">
                           <input
@@ -1022,18 +1128,27 @@ export function CheckoutPage() {
           {isEditingBill && (
             <div className="border-b border-slate-200 p-4 dark:border-slate-800">
               <div className="space-y-1 text-sm text-slate-600 dark:text-slate-400">
-                <div className="flex justify-between"><span>Saved</span><span className="tabular-nums">PKR {editingSale!.originalTotal.toFixed(2)}</span></div>
-                <div className="flex justify-between"><span>Now</span><span className="tabular-nums">PKR {total.toFixed(2)}</span></div>
+                <div className="flex justify-between"><span>Items</span><span className="tabular-nums">{soldTotal.toFixed(2)}</span></div>
+                {returnTotal > 0.009 && (
+                  <div className="flex justify-between text-red-600 dark:text-red-400">
+                    <span>Returns</span><span className="tabular-nums">−{returnTotal.toFixed(2)}</span>
+                  </div>
+                )}
               </div>
-              {amountToCollect > 0.009 || amountToRefund > 0.009 ? (
-                <div className={`mt-2 flex items-baseline justify-between border-t pt-2 dark:border-slate-700 ${amountToRefund > 0.009 ? 'text-red-700 dark:text-red-300' : 'text-amber-800 dark:text-amber-200'}`}>
-                  <span className="text-sm font-medium">{amountToRefund > 0.009 ? 'Refund' : 'Collect'}</span>
-                  <span className="text-2xl font-bold tabular-nums">
-                    PKR {(amountToRefund > 0.009 ? amountToRefund : amountToCollect).toFixed(2)}
-                  </span>
-                </div>
+              {settlement.direction === 'settled' ? (
+                <div className="mt-2 border-t pt-2 text-sm text-slate-500 dark:border-slate-700">Nothing to pay or refund</div>
               ) : (
-                <div className="mt-2 border-t pt-2 text-sm text-slate-500 dark:border-slate-700">No adjustment needed</div>
+                <div
+                  className={cn(
+                    'mt-2 flex items-baseline justify-between border-t pt-2 dark:border-slate-700',
+                    settlement.direction === 'refund'
+                      ? 'text-red-700 dark:text-red-300'
+                      : 'text-green-700 dark:text-green-300',
+                  )}
+                >
+                  <span className="text-sm font-semibold">{settlement.icon} {settlement.action}</span>
+                  <span className="text-2xl font-bold tabular-nums">{settlement.amount.toFixed(2)}</span>
+                </div>
               )}
               {amountToCollect > 0.009 && editingSale!.paymentMethod === 'cash' && (
                 <div className="mt-3 flex items-center gap-2">
@@ -1122,6 +1237,9 @@ export function CheckoutPage() {
           <div className="p-4">
             <Button
               size="lg"
+              // Money leaving the till gets the danger colour, so the direction reads
+              // off the button itself and not just the label.
+              variant={isEditingBill && settlement.direction === 'refund' ? 'danger' : 'primary'}
               className="w-full text-xl py-4"
               onClick={() => handleCharge()}
               disabled={
@@ -1134,7 +1252,9 @@ export function CheckoutPage() {
                 : items.length === 0
                   ? isEditingBill ? 'Bill needs at least one item' : 'Add products first'
                   : isEditingBill
-                    ? 'Update bill (F4)'
+                    ? settlement.direction === 'settled'
+                      ? 'Update bill (F4)'
+                      : `Update & ${settlement.short.toLowerCase()} PKR ${settlement.amount.toFixed(2)} (F4)`
                     : `Charge PKR ${total.toFixed(2)} (F4 / Ctrl+S)`}
             </Button>
           </div>

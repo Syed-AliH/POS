@@ -505,7 +505,8 @@ export async function updateSale(
 
   const merged = new Map<string, { quantity: number; discountPercent: number; unitPrice?: number }>();
   for (const item of input.items) {
-    if (item.quantity <= 0) continue;
+    // Negative lines are returns and must survive the merge; only a zero line drops out.
+    if (item.quantity === 0) continue;
     const existing = merged.get(item.productId);
     if (existing) existing.quantity += item.quantity;
     else merged.set(item.productId, {

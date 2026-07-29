@@ -431,7 +431,9 @@ export function handleSaleUpdate(input: UpdateSaleInput): ApiResult<SaleSummary>
 
     const mergedInput = new Map<string, { quantity: number; discountPercent: number; unitPrice?: number }>();
     for (const item of input.items) {
-      if (item.quantity <= 0) continue;
+      // Negative lines are returns and must survive the merge — they lower the bill
+      // and put the stock back. Only an exact zero drops out.
+      if (item.quantity === 0) continue;
       const existing = mergedInput.get(item.productId);
       if (existing) {
         existing.quantity += item.quantity;

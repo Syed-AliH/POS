@@ -8,7 +8,10 @@ export function syncSkuPrefixesLocal(): { categoriesUpdated: number; productsUpd
   const db = getDb();
   const now = new Date().toISOString();
   const cats = db.select().from(categories).where(eq(categories.isDeleted, false)).all();
-  const allProducts = db.select().from(products).where(eq(products.isDeleted, false)).all();
+  // Deleted rows keep their SKU and the unique index still covers them, so they are
+  // read too — their SKUs are reserved rather than handed out again.
+  const productRows = db.select().from(products).all();
+  const allProducts = productRows.filter((p) => !p.isDeleted);
 
   const prefixByCategoryId = assignUniqueSkuPrefixes(
     cats.map((cat) => ({ id: cat.id, name: cat.name })),
@@ -26,8 +29,8 @@ export function syncSkuPrefixesLocal(): { categoriesUpdated: number; productsUpd
     }
   }
 
-  const usedSkus = new Set<string>();
-  let productsUpdated = 0;
+  const usedSkus = new Set<string>(productRows.filter((p) => p.isDeleted).map((p) => p.sku));
+  const renames: Array<{ id: string; sku: string }> = [];
 
   const sorted = [...allProducts].sort((a, b) => {
     const catA = cats.find((c) => c.id === a.categoryId)?.name ?? '';
@@ -47,14 +50,22 @@ export function syncSkuPrefixesLocal(): { categoriesUpdated: number; productsUpd
     }
     usedSkus.add(newSku);
 
-    if (product.sku !== newSku) {
-      db.update(products)
-        .set({ sku: newSku, updatedAt: now })
-        .where(eq(products.id, product.id))
-        .run();
-      productsUpdated++;
-    }
+    if (product.sku !== newSku) renames.push({ id: product.id, sku: newSku });
   }
 
-  return { categoriesUpdated, productsUpdated };
+  // A product's target SKU is often still held by a product later in the list, so
+  // writing them one by one trips the unique index. Park every rename on a throwaway
+  // SKU first, then write the real ones — no intermediate state can collide.
+  if (renames.length) {
+    db.transaction((tx) => {
+      for (const { id } of renames) {
+        tx.update(products).set({ sku: `~pending~${id}`, updatedAt: now }).where(eq(products.id, id)).run();
+      }
+      for (const { id, sku } of renames) {
+        tx.update(products).set({ sku, updatedAt: now }).where(eq(products.id, id)).run();
+      }
+    });
+  }
+
+  return { categoriesUpdated, productsUpdated: renames.length };
 }
