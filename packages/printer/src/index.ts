@@ -477,7 +477,6 @@ export function defaultLabelElements(): LabelElement[] {
 import {
   labelBarcodeBarWidth,
   labelBarcodeHeightPx,
-  labelBarcodePrintHeightPx,
   labelElementStyle,
   resolveLabelFieldText,
 } from './labelRender';

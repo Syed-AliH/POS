@@ -370,27 +370,41 @@ export function GrnPage() {
     return () => window.removeEventListener('keydown', onKey, true);
   }, [tab, canEditRecord]);
 
-  const addLine = (product: Product) => {
+  /**
+   * The F1 search modal builds its rows from the till's catalogue payload, which
+   * carries no cost price. Resolve the real product row before pricing a GRN line,
+   * so an existing product arrives with the cost it was last received at.
+   */
+  const resolveProductForLine = useCallback(async (product: Product): Promise<Product> => {
+    const known = products.find((p) => p.id === product.id);
+    if (known) return known;
+    const result = await api.products.get(product.id);
+    return result.success && result.data ? result.data : product;
+  }, [products]);
+
+  const addLine = async (product: Product) => {
+    if (lines.some((l) => l.productId === product.id)) {
+      toast.warning(`${product.name} is already on this GRN`);
+      return;
+    }
+    const full = await resolveProductForLine(product);
     setLines((prev) => {
-      if (prev.some((l) => l.productId === product.id)) {
-        toast.warning(`${product.name} is already on this GRN`);
-        return prev;
-      }
+      if (prev.some((l) => l.productId === full.id)) return prev;
       return [
         ...prev,
         {
-          productId: product.id,
-          productName: product.name,
-          productSku: product.sku,
+          productId: full.id,
+          productName: full.name,
+          productSku: full.sku,
           qty: 1,
-          unitCost: product.costPrice,
-          unitRetail: product.retailPrice,
-          retailInput: String(product.retailPrice),
+          unitCost: full.costPrice,
+          unitRetail: full.retailPrice,
+          retailInput: String(full.retailPrice),
         },
       ];
     });
     setProductSearch('');
-    toast.success(`Added: ${product.name}`);
+    toast.success(`Added: ${full.name}`);
   };
 
   const handleGrnImportFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -658,27 +672,29 @@ export function GrnPage() {
     });
   };
 
-  const addEditLine = (product: Product) => {
+  const addEditLine = async (product: Product) => {
+    if (editLines.some((l) => l.productId === product.id)) {
+      toast.warning(`${product.name} is already on this GRN`);
+      return;
+    }
+    const full = await resolveProductForLine(product);
     setEditLines((prev) => {
-      if (prev.some((l) => l.productId === product.id)) {
-        toast.warning(`${product.name} is already on this GRN`);
-        return prev;
-      }
+      if (prev.some((l) => l.productId === full.id)) return prev;
       return [
         ...prev,
         {
-          productId: product.id,
-          productName: product.name,
-          productSku: product.sku,
+          productId: full.id,
+          productName: full.name,
+          productSku: full.sku,
           qty: 1,
-          unitCost: product.costPrice,
-          unitRetail: product.retailPrice,
-          retailInput: String(product.retailPrice),
+          unitCost: full.costPrice,
+          unitRetail: full.retailPrice,
+          retailInput: String(full.retailPrice),
         },
       ];
     });
     setEditProductSearch('');
-    toast.success(`Added: ${product.name}`);
+    toast.success(`Added: ${full.name}`);
   };
 
   const handleUpdateRecord = async () => {

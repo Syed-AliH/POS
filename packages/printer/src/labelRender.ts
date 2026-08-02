@@ -1,8 +1,6 @@
 import type { LabelElement, LabelFieldType, LabelLayout, LabelProduct } from './index';
 import {
-  detectBarcodeFormat,
   estimateBarcodeWidthPx,
-  fitBarcodeBarWidth,
   normalizeBarcodeForPrint,
   resolveBarcodePrintFormat,
   resolveLabelFontFamily,
@@ -11,7 +9,6 @@ import {
   barcodeModuleMinWidth,
   barcodeDesignerMinBarWidth,
   isBarcodeBarWidthAuto,
-  resolveBarcodeBarWidthFromHeight,
 } from './labelFonts';
 
 /** 203 DPI thermal print density — matches Gainscha dot pitch. */
@@ -186,7 +183,7 @@ export function labelLeftEdgeMmToAnchorPercent(
   leftEdgeMm: number,
   el: Pick<
     LabelElement,
-    'type' | 'align' | 'fontSize' | 'barcodeBarWidth' | 'barcodeHeightMm' | 'y'
+    'type' | 'x' | 'align' | 'fontSize' | 'barcodeBarWidth' | 'barcodeHeightMm' | 'y'
   >,
   labelWidthMm: number,
   barcodeValue?: string,
@@ -223,7 +220,7 @@ export function labelTsplFontKey(fontSize: number): string {
   return '1';
 }
 
-export function labelTsplXMul(fontSize: number, bold?: boolean): number {
+export function labelTsplXMul(_fontSize: number, bold?: boolean): number {
   const base = 1;
   return bold ? Math.min(2, base + 1) : base;
 }
@@ -364,11 +361,14 @@ export function labelBarcodeLayoutStyle(
 ): Record<string, string | number> {
   const align = el.align ?? 'left';
   const maxWidthPx = labelElementMaxWidthPx(el, labelWidthMm);
+  const alignTransform = labelElementAlignTransform(align);
   const style: Record<string, string | number> = {
     position: 'absolute',
     top: `${el.y}%`,
     left: `${el.x}%`,
-    transform: labelElementAlignTransform(align),
+    // Left-aligned elements need no transform, and the key stays absent so the CSS
+    // and the React style object are exactly what they were before.
+    ...(alignTransform ? { transform: alignTransform } : {}),
     maxWidth: `${maxWidthPx}px`,
     overflow: 'hidden',
     lineHeight: 0,
@@ -476,6 +476,8 @@ export function resolveBarcodePrintMetrics(
   height: number;
   barWidth: number;
   maxWidthPx: number;
+  minBarWidth: number;
+  maxBarWidth: number;
   svgWidthPx: number;
   normalizedValue: string;
   format: string;
@@ -570,11 +572,12 @@ export function labelElementStyle(
       ? labelFontSizePx(el.fontSize)
       : labelPreviewFontSizePx(el.fontSize, previewScale);
 
+  const alignTransform = labelElementAlignTransform(el.align);
   return {
     position: 'absolute',
     left: `${el.x}%`,
     top: `${el.y}%`,
-    transform: labelElementAlignTransform(el.align),
+    ...(alignTransform ? { transform: alignTransform } : {}),
     fontSize: `${fontSizePx}px`,
     fontWeight: el.fontWeight === 'bold' ? 700 : 400,
     textAlign: el.align ?? 'left',

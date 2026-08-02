@@ -1,8 +1,8 @@
-import { and, desc, eq, gte, lt, sql } from 'drizzle-orm';
-import { categories, expenses, grnHeaders, grnLines, products, returns, saleItems, sales, shifts } from '@mama-babi/db-pg';
+import { and, desc, eq, gte, inArray, lt, lte, sql } from 'drizzle-orm';
+import { categories, customers, expenses, grnHeaders, grnLines, labelTemplates, products, returns, saleItems, sales, shifts, users, vendors } from '@mama-babi/db-pg';
 import type { PostgresClient } from '@mama-babi/db-pg';
 import { coerceReportDateRange, isoRangeBounds } from '../lib/reportDateRange';
-import { buildSaleSummary } from './sales.service';
+import { getSetting } from './settings.service';
 
 function completedSalesDateFilter(params?: { startDate?: string; endDate?: string }) {
   const range = coerceReportDateRange(params);
@@ -85,14 +85,97 @@ export async function listOwnerSales(
     .where(and(...conditions))
     .orderBy(desc(sales.createdAt))
     .limit(limit);
-  const summaries = (
-    await Promise.all(rows.map((r) => buildSaleSummary(db, r.id)))
-  ).filter(Boolean);
+  if (!rows.length) return { success: true as const, data: [] };
 
-  return {
-    success: true as const,
-    data: summaries as NonNullable<Awaited<ReturnType<typeof buildSaleSummary>>>[],
-  };
+  // buildSaleSummary costs four round trips per sale — 100 sales meant ~500 queries.
+  // Names, line items and product costs are fetched once for the whole page instead.
+  const saleIds = rows.map((r) => r.id);
+  const cashierIds = [...new Set(rows.map((r) => r.cashierId).filter(Boolean))];
+  const customerIds = [...new Set(rows.map((r) => r.customerId).filter((id): id is string => Boolean(id)))];
+
+  const [cashierRows, customerRows, itemRows] = await Promise.all([
+    cashierIds.length
+      ? db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, cashierIds))
+      : Promise.resolve([] as Array<{ id: string; name: string }>),
+    customerIds.length
+      ? db
+          .select({ id: customers.id, name: customers.name, phone: customers.phone })
+          .from(customers)
+          .where(inArray(customers.id, customerIds))
+      : Promise.resolve([] as Array<{ id: string; name: string; phone: string | null }>),
+    db
+      .select({
+        saleId: saleItems.saleId,
+        saleItemId: saleItems.id,
+        productId: saleItems.productId,
+        productName: saleItems.productName,
+        productSku: saleItems.productSku,
+        quantity: saleItems.quantity,
+        unitPrice: saleItems.unitPrice,
+        discountPercent: saleItems.discountPercent,
+        taxRate: saleItems.taxRate,
+        lineTotal: saleItems.lineTotal,
+        // Cost isn't stored per line, so we report the product's current cost price —
+        // same basis as the estimated-cost figure on the owner dashboard.
+        barcode: products.barcode,
+        costPrice: products.costPrice,
+      })
+      .from(saleItems)
+      .leftJoin(products, eq(products.id, saleItems.productId))
+      .where(inArray(saleItems.saleId, saleIds)),
+  ]);
+
+  const cashierById = new Map(cashierRows.map((r) => [r.id, r.name]));
+  const customerById = new Map(customerRows.map((r) => [r.id, r]));
+  const itemsBySaleId = new Map<string, typeof itemRows>();
+  for (const item of itemRows) {
+    const list = itemsBySaleId.get(item.saleId);
+    if (list) list.push(item);
+    else itemsBySaleId.set(item.saleId, [item]);
+  }
+
+  const data = rows.map((sale) => {
+    const customer = sale.customerId ? customerById.get(sale.customerId) : undefined;
+    return {
+      id: sale.id,
+      saleNumber: sale.saleNumber,
+      cashierId: sale.cashierId,
+      cashierName: cashierById.get(sale.cashierId) ?? 'Unknown',
+      customerId: sale.customerId,
+      customerName: customer?.name ?? null,
+      customerPhone: customer?.phone ?? null,
+      subtotal: sale.subtotal,
+      discountAmount: sale.discountAmount,
+      discountReason: sale.discountReason,
+      taxAmount: sale.taxAmount,
+      totalAmount: sale.totalAmount,
+      paymentMethod: sale.paymentMethod,
+      amountTendered: sale.amountTendered,
+      changeGiven: sale.changeGiven,
+      status: sale.status,
+      heldKey: sale.heldKey,
+      createdAt: sale.createdAt,
+      items: (itemsBySaleId.get(sale.id) ?? []).map((item) => {
+        const unitCost = item.costPrice ?? 0;
+        return {
+          saleItemId: item.saleItemId,
+          productId: item.productId,
+          productName: item.productName,
+          productSku: item.productSku,
+          barcode: item.barcode ?? '',
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          unitCost,
+          lineCost: unitCost * item.quantity,
+          discountPercent: item.discountPercent,
+          taxRate: item.taxRate,
+          lineTotal: item.lineTotal,
+        };
+      }),
+    };
+  });
+
+  return { success: true as const, data };
 }
 
 export async function getTopProducts(
@@ -100,38 +183,109 @@ export async function getTopProducts(
   params?: { startDate?: string; endDate?: string; limit?: number },
 ) {
   const range = coerceReportDateRange(params);
+  const { startInclusive, endExclusive } = isoRangeBounds(range);
   const limit = Math.min(params?.limit ?? 10, 50);
-  const completed = await db
-    .select({ id: sales.id })
-    .from(sales)
-    .where(completedSalesDateFilter(range));
-  const saleIds = new Set(completed.map((s) => s.id));
-  if (!saleIds.size) return { success: true as const, data: [] };
 
-  const items = await db.select().from(saleItems);
-  const byProduct = new Map<string, { name: string; qty: number; revenue: number }>();
+  // Grouped and trimmed in the database — this used to read every sale_items row in
+  // the table and filter it in memory.
+  const rows = await db.execute<{
+    product_id: string;
+    product_name: string;
+    quantity_sold: string | number;
+    revenue: string | number;
+  }>(sql`
+    select si.product_id,
+           min(si.product_name) as product_name,
+           coalesce(sum(si.quantity), 0) as quantity_sold,
+           coalesce(sum(si.line_total), 0) as revenue
+    from sale_items si
+    inner join sales s on s.id = si.sale_id
+    where s.status = 'completed'
+      and s.created_at >= ${startInclusive}
+      and s.created_at < ${endExclusive}
+    group by si.product_id
+    order by revenue desc
+    limit ${limit}
+  `);
 
-  for (const item of items) {
-    if (!saleIds.has(item.saleId)) continue;
-    const existing = byProduct.get(item.productId) ?? {
-      name: item.productName,
-      qty: 0,
-      revenue: 0,
-    };
-    existing.qty += item.quantity;
-    existing.revenue += item.lineTotal;
-    byProduct.set(item.productId, existing);
+  const data = rows.rows.map((r) => ({
+    productId: r.product_id,
+    productName: r.product_name,
+    quantitySold: Number(r.quantity_sold),
+    revenue: Number(r.revenue),
+  }));
+
+  return { success: true as const, data };
+}
+
+/**
+ * Catalogue lookup for the owner portal: name, SKU or barcode in, cost and selling
+ * price out. One query, capped, so it stays quick over a phone connection.
+ */
+export async function searchOwnerProducts(
+  db: PostgresClient,
+  params?: { search?: string; limit?: number },
+) {
+  const limit = Math.min(Math.max(params?.limit ?? 50, 1), 200);
+  const search = params?.search?.trim().toLowerCase();
+
+  const conditions = [eq(products.isDeleted, false)];
+  if (search) {
+    const like = `%${search}%`;
+    conditions.push(
+      sql`(lower(${products.name}) like ${like} or lower(${products.sku}) like ${like} or lower(${products.barcode}) like ${like})`,
+    );
   }
 
-  const data = [...byProduct.entries()]
-    .map(([productId, v]) => ({
-      productId,
-      productName: v.name,
-      quantitySold: v.qty,
-      revenue: v.revenue,
-    }))
-    .sort((a, b) => b.revenue - a.revenue)
-    .slice(0, limit);
+  const rows = await db
+    .select({
+      id: products.id,
+      name: products.name,
+      sku: products.sku,
+      barcode: products.barcode,
+      costPrice: products.costPrice,
+      retailPrice: products.retailPrice,
+      salePrice: products.salePrice,
+      stockQty: products.stockQty,
+      status: products.status,
+      categoryName: categories.name,
+    })
+    .from(products)
+    .leftJoin(categories, eq(categories.id, products.categoryId))
+    .where(and(...conditions))
+    // Exact SKU/barcode hits first so scanning or typing a full code lands on top.
+    .orderBy(
+      search
+        ? sql`case when lower(${products.sku}) = ${search} or lower(${products.barcode}) = ${search} then 0
+                   when lower(${products.name}) like ${search + '%'} then 1
+                   else 2 end`
+        : sql`0`,
+      products.name,
+    )
+    .limit(limit);
+
+  const data = rows.map((r) => {
+    const costPrice = r.costPrice ?? 0;
+    const retailPrice = r.retailPrice ?? 0;
+    const salePrice = r.salePrice ?? null;
+    const sellingPrice = salePrice ?? retailPrice;
+    const profit = sellingPrice - costPrice;
+    return {
+      id: r.id,
+      name: r.name,
+      sku: r.sku,
+      barcode: r.barcode,
+      categoryName: r.categoryName ?? null,
+      costPrice,
+      retailPrice,
+      salePrice,
+      sellingPrice,
+      stockQty: r.stockQty,
+      status: r.status,
+      profit,
+      marginPercent: sellingPrice > 0 ? (profit / sellingPrice) * 100 : 0,
+    };
+  });
 
   return { success: true as const, data };
 }
@@ -433,6 +587,179 @@ export async function getInventoryReport(
       negativeCount: allActive.filter((p) => p.stockQty < 0).length,
       zeroCount: allActive.filter((p) => p.stockQty === 0).length,
       lowCount: allActive.filter((p) => p.stockQty > 0 && p.stockQty <= p.reorderLevel).length,
+    },
+  };
+}
+
+/**
+ * GRN list for the owner portal — headers with vendor and line totals only. The full
+ * `listGrns` maps every line of every GRN; this stays at three queries for the page.
+ */
+export async function listOwnerGrns(
+  db: PostgresClient,
+  params?: { search?: string; startDate?: string; endDate?: string; limit?: number },
+) {
+  const limit = Math.min(Math.max(params?.limit ?? 50, 1), 200);
+  const search = params?.search?.trim().toLowerCase();
+
+  const conditions = [eq(grnHeaders.isDeleted, false)];
+  if (params?.startDate) conditions.push(gte(grnHeaders.receivedDate, params.startDate));
+  if (params?.endDate) conditions.push(lte(grnHeaders.receivedDate, params.endDate));
+  if (search) {
+    const like = `%${search}%`;
+    conditions.push(
+      sql`(lower(${grnHeaders.grnNumber}) like ${like} or lower(coalesce(${grnHeaders.invoiceNumber}, '')) like ${like})`,
+    );
+  }
+
+  const headers = await db
+    .select({
+      id: grnHeaders.id,
+      grnNumber: grnHeaders.grnNumber,
+      vendorId: grnHeaders.vendorId,
+      vendorName: vendors.name,
+      invoiceNumber: grnHeaders.invoiceNumber,
+      invoiceTotal: grnHeaders.invoiceTotal,
+      receivedDate: grnHeaders.receivedDate,
+      status: grnHeaders.status,
+      paymentType: grnHeaders.paymentType,
+      createdAt: grnHeaders.createdAt,
+    })
+    .from(grnHeaders)
+    .leftJoin(vendors, eq(vendors.id, grnHeaders.vendorId))
+    .where(and(...conditions))
+    .orderBy(desc(grnHeaders.createdAt))
+    .limit(limit);
+
+  if (!headers.length) return { success: true as const, data: [] };
+
+  const totals = await db
+    .select({
+      grnId: grnLines.grnId,
+      lineCount: sql<number>`count(*)::int`,
+      totalQty: sql<number>`coalesce(sum(${grnLines.qty}), 0)::int`,
+      linesTotal: sql<number>`coalesce(sum(${grnLines.lineTotal}), 0)`,
+    })
+    .from(grnLines)
+    .where(inArray(grnLines.grnId, headers.map((h) => h.id)))
+    .groupBy(grnLines.grnId);
+
+  const totalsById = new Map(totals.map((t) => [t.grnId, t]));
+
+  return {
+    success: true as const,
+    data: headers.map((h) => {
+      const t = totalsById.get(h.id);
+      return {
+        id: h.id,
+        grnNumber: h.grnNumber,
+        vendorId: h.vendorId,
+        vendorName: h.vendorName ?? 'Unknown',
+        invoiceNumber: h.invoiceNumber,
+        invoiceTotal: h.invoiceTotal,
+        receivedDate: h.receivedDate,
+        status: h.status,
+        paymentType: h.paymentType,
+        createdAt: h.createdAt,
+        lineCount: Number(t?.lineCount ?? 0),
+        totalQty: Number(t?.totalQty ?? 0),
+        linesTotal: Number(t?.linesTotal ?? 0),
+      };
+    }),
+  };
+}
+
+/** One GRN with the per-line product details a label needs (barcode and selling price). */
+export async function getOwnerGrn(db: PostgresClient, id: string) {
+  const [header] = await db
+    .select({
+      id: grnHeaders.id,
+      grnNumber: grnHeaders.grnNumber,
+      vendorId: grnHeaders.vendorId,
+      vendorName: vendors.name,
+      invoiceNumber: grnHeaders.invoiceNumber,
+      invoiceTotal: grnHeaders.invoiceTotal,
+      receivedDate: grnHeaders.receivedDate,
+      status: grnHeaders.status,
+      paymentType: grnHeaders.paymentType,
+      notes: grnHeaders.notes,
+      createdAt: grnHeaders.createdAt,
+    })
+    .from(grnHeaders)
+    .leftJoin(vendors, eq(vendors.id, grnHeaders.vendorId))
+    .where(eq(grnHeaders.id, id))
+    .limit(1);
+
+  if (!header) return { success: false as const, error: 'GRN not found' };
+
+  const lines = await db
+    .select({
+      id: grnLines.id,
+      productId: grnLines.productId,
+      qty: grnLines.qty,
+      unitCost: grnLines.unitCost,
+      unitRetail: grnLines.unitRetail,
+      lineTotal: grnLines.lineTotal,
+      productName: products.name,
+      productSku: products.sku,
+      barcode: products.barcode,
+      retailPrice: products.retailPrice,
+      salePrice: products.salePrice,
+    })
+    .from(grnLines)
+    .leftJoin(products, eq(products.id, grnLines.productId))
+    .where(eq(grnLines.grnId, id));
+
+  return {
+    success: true as const,
+    data: {
+      ...header,
+      vendorName: header.vendorName ?? 'Unknown',
+      linesTotal: lines.reduce((sum, l) => sum + l.lineTotal, 0),
+      items: lines.map((l) => {
+        // Label price follows the till: sale price when set, else retail, else the
+        // retail figure captured on the GRN line.
+        const sellingPrice = l.salePrice ?? l.retailPrice ?? l.unitRetail ?? 0;
+        return {
+          id: l.id,
+          productId: l.productId,
+          productName: l.productName ?? 'Unknown product',
+          productSku: l.productSku ?? '',
+          barcode: l.barcode ?? '',
+          qty: l.qty,
+          unitCost: l.unitCost,
+          unitRetail: l.unitRetail,
+          sellingPrice,
+          lineTotal: l.lineTotal,
+        };
+      }),
+    },
+  };
+}
+
+/** Label templates as stored — the browser normalises the JSON with @mama-babi/printer. */
+export async function listOwnerLabelTemplates(db: PostgresClient) {
+  const [rows, storeNameSetting] = await Promise.all([
+    db
+      .select({
+        id: labelTemplates.id,
+        name: labelTemplates.name,
+        widthMm: labelTemplates.widthMm,
+        heightMm: labelTemplates.heightMm,
+        layoutJson: labelTemplates.layoutJson,
+        rollConfigJson: labelTemplates.rollConfigJson,
+        isDefault: labelTemplates.isDefault,
+      })
+      .from(labelTemplates)
+      .where(eq(labelTemplates.isDeleted, false)),
+    getSetting(db, 'store_name'),
+  ]);
+
+  return {
+    success: true as const,
+    data: {
+      storeName: storeNameSetting ?? 'Store',
+      templates: rows,
     },
   };
 }
