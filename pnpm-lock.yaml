@@ -195,9 +195,6 @@ importers:
       jose:
         specifier: ^6.0.11
         version: 6.2.3
-      jsbarcode:
-        specifier: ^3.12.3
-        version: 3.12.3
       postgres:
         specifier: ^3.4.9
         version: 3.4.9
@@ -214,9 +211,6 @@ importers:
         specifier: ^5.0.3
         version: 5.0.14(@types/react@19.2.17)(react@19.2.7)
     devDependencies:
-      '@types/jsbarcode':
-        specifier: ^3.11.4
-        version: 3.11.4
       '@types/node':
         specifier: ^22.13.10
         version: 22.19.20
@@ -1590,9 +1584,6 @@ packages:
 
   '@types/http-cache-semantics@4.2.0':
     resolution: {integrity: sha512-L3LgimLHXtGkWikKnsPg0/VFx9OGZaC+eN1u4r+OB1XRqH3meBIAVC2zr1WdMH+RHmnRkqliQAOHNJ/E0j/e0Q==}
-
-  '@types/jsbarcode@3.11.4':
-    resolution: {integrity: sha512-VBcpTAnEMH0Gbh8JpV14CgOtJjCYjsvR2FoDRyoYPE0gUxtApf8N4c+HKEOyz/iiIZkMzqrzBA3XX7+KgKxxsA==}
 
   '@types/json-schema@7.0.15':
     resolution: {integrity: sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==}
@@ -5065,10 +5056,6 @@ snapshots:
       '@types/node': 22.19.20
 
   '@types/http-cache-semantics@4.2.0': {}
-
-  '@types/jsbarcode@3.11.4':
-    dependencies:
-      '@types/node': 22.19.20
 
   '@types/json-schema@7.0.15': {}
 
