@@ -5,12 +5,7 @@ import { useProductSearchStore } from '@renderer/stores/productSearchStore';
 import { Modal } from './Modal';
 import type { Product, SearchProduct } from '@shared/types';
 
-/**
- * Cached search rows padded out to the Product shape the picker renders.
- *
- * The till's catalogue payload carries no cost price, so `costPrice` here is a
- * placeholder — any caller that prices on cost (GRN lines) must re-read the product.
- */
+/** Cached search rows padded out to the Product shape the picker renders. */
 function toProductLike(p: SearchProduct): Product {
   return {
     id: p.id,
