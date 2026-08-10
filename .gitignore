@@ -22,3 +22,8 @@ apps/desktop/resources/secrets.json
 # Catch backups/variants too — a stray secrets.json.bak is a credential leak.
 apps/desktop/resources/secrets.json.*
 *.bak
+
+# Claude Code setup — holds a database credential in .mcp.json, and hook/skill
+# config is per-developer. Share via docs, not the repo.
+.claude/
+.mcp.json
