@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "prebuild": "pnpm --filter @mama-babi/barcode --filter @mama-babi/db-pg build",
+    "prebuild": "pnpm --filter @mama-babi/barcode --filter @mama-babi/db-pg --filter @mama-babi/printer build",
     "build": "tsc",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit"

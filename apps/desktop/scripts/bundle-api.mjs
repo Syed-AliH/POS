@@ -65,5 +65,17 @@ installWorkspacePackage('@mama-babi/db-pg', join(root, 'packages/db-pg/dist'), {
     './client': './dist/client.js',
   },
 });
+installWorkspacePackage('@mama-babi/printer', join(root, 'packages/printer/dist'));
+
+// The bundle is the only place these are resolved at runtime, so a missing one shows
+// up as "Local API did not become ready in time" rather than a module error.
+for (const name of Object.keys(apiPkg.dependencies).filter((n) => n.startsWith('@mama-babi/'))) {
+  if (!existsSync(join(bundleDir, 'node_modules', name, 'dist'))) {
+    throw new Error(
+      `[bundle-api] ${name} is an API dependency but was not installed into the bundle. ` +
+        'Add an installWorkspacePackage() call for it (and a build script if it has none).',
+    );
+  }
+}
 
 console.log('[bundle-api] Done →', bundleDir);
