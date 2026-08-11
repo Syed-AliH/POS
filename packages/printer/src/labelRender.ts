@@ -1,8 +1,6 @@
 import type { LabelElement, LabelFieldType, LabelLayout, LabelProduct } from './index';
 import {
-  detectBarcodeFormat,
   estimateBarcodeWidthPx,
-  fitBarcodeBarWidth,
   normalizeBarcodeForPrint,
   resolveBarcodePrintFormat,
   resolveLabelFontFamily,
@@ -11,7 +9,6 @@ import {
   barcodeModuleMinWidth,
   barcodeDesignerMinBarWidth,
   isBarcodeBarWidthAuto,
-  resolveBarcodeBarWidthFromHeight,
 } from './labelFonts';
 
 /** 203 DPI thermal print density — matches Gainscha dot pitch. */
@@ -186,7 +183,7 @@ export function labelLeftEdgeMmToAnchorPercent(
   leftEdgeMm: number,
   el: Pick<
     LabelElement,
-    'type' | 'align' | 'fontSize' | 'barcodeBarWidth' | 'barcodeHeightMm' | 'y'
+    'type' | 'x' | 'align' | 'fontSize' | 'barcodeBarWidth' | 'barcodeHeightMm' | 'y'
   >,
   labelWidthMm: number,
   barcodeValue?: string,
@@ -223,7 +220,7 @@ export function labelTsplFontKey(fontSize: number): string {
   return '1';
 }
 
-export function labelTsplXMul(fontSize: number, bold?: boolean): number {
+export function labelTsplXMul(_fontSize: number, bold?: boolean): number {
   const base = 1;
   return bold ? Math.min(2, base + 1) : base;
 }
@@ -364,11 +361,12 @@ export function labelBarcodeLayoutStyle(
 ): Record<string, string | number> {
   const align = el.align ?? 'left';
   const maxWidthPx = labelElementMaxWidthPx(el, labelWidthMm);
+  const alignTransform = labelElementAlignTransform(align);
   const style: Record<string, string | number> = {
     position: 'absolute',
     top: `${el.y}%`,
     left: `${el.x}%`,
-    transform: labelElementAlignTransform(align),
+    ...(alignTransform ? { transform: alignTransform } : {}),
     maxWidth: `${maxWidthPx}px`,
     overflow: 'hidden',
     lineHeight: 0,
@@ -476,6 +474,8 @@ export function resolveBarcodePrintMetrics(
   height: number;
   barWidth: number;
   maxWidthPx: number;
+  minBarWidth: number;
+  maxBarWidth: number;
   svgWidthPx: number;
   normalizedValue: string;
   format: string;
@@ -556,6 +556,48 @@ export function labelTextPrintStyle(
   return style;
 }
 
+/**
+ * Re-expresses a print style at the designer canvas scale.
+ *
+ * Every px value is a print pixel (8 per mm). Scaling them uniformly keeps the box,
+ * the truncation point and the line height identical to what the printer produces —
+ * only the size on screen changes. At the default canvas scale the ratio is 1 and the
+ * style is passed through untouched.
+ */
+export function scaleLabelStyleToPreview(
+  style: Record<string, string | number>,
+  previewScale: number,
+): Record<string, string | number> {
+  const ratio = previewScale / LABEL_PRINT_PX_PER_MM;
+  if (ratio === 1) return { ...style };
+  const scaled: Record<string, string | number> = {};
+  for (const [key, value] of Object.entries(style)) {
+    if (typeof value === 'string' && value.endsWith('px')) {
+      const px = parseFloat(value);
+      if (!Number.isNaN(px)) {
+        scaled[key] = `${px * ratio}px`;
+        continue;
+      }
+    }
+    scaled[key] = value;
+  }
+  return scaled;
+}
+
+/**
+ * The designer's text style, derived from the print style rather than restated.
+ *
+ * The canvas is meant to be what comes out of the printer; keeping a second set of
+ * rules is how the two drifted apart (line height, ellipsis vs clipping, font stack).
+ */
+export function labelTextPreviewStyle(
+  el: LabelElement,
+  labelWidthMm: number,
+  previewScale: number,
+): Record<string, string | number> {
+  return scaleLabelStyleToPreview(labelTextPrintStyle(el, labelWidthMm), previewScale);
+}
+
 export function labelElementPrintStyle(el: LabelElement, labelWidthMm: number): Record<string, string | number> {
   return labelTextPrintStyle(el, labelWidthMm);
 }
@@ -570,11 +612,12 @@ export function labelElementStyle(
       ? labelFontSizePx(el.fontSize)
       : labelPreviewFontSizePx(el.fontSize, previewScale);
 
+  const alignTransform = labelElementAlignTransform(el.align);
   return {
     position: 'absolute',
     left: `${el.x}%`,
     top: `${el.y}%`,
-    transform: labelElementAlignTransform(el.align),
+    ...(alignTransform ? { transform: alignTransform } : {}),
     fontSize: `${fontSizePx}px`,
     fontWeight: el.fontWeight === 'bold' ? 700 : 400,
     textAlign: el.align ?? 'left',

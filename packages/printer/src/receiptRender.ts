@@ -47,7 +47,7 @@ export function resolveReceiptPaperWidthMm(
 export function receiptScaledDotsSize(
   designMm: 58 | 80,
   paperMm: 58 | 80,
-  contentWidthPx: number,
+  _contentWidthPx: number,
   contentHeightPx: number,
 ): { width: number; height: number } {
   const headPx = receiptPrintWidthPx(paperMm);

@@ -1,5 +1,5 @@
 import { BrowserWindow, nativeImage, screen, type NativeImage } from 'electron';
-import { calcLabelSlotPositionPx } from '@mama-babi/printer';
+import { calcLabelSlotPositionPx, labelDpiScale } from '@mama-babi/printer';
 import {
   buildBarcodeInjectScript,
   buildSingleLabelHtmlDocument,
@@ -42,13 +42,18 @@ async function captureLabelHtmlToRgba(
   layoutHtml: string,
   widthPx: number,
   heightPx: number,
+  /** Layout px → head dots. 1 for a 203 DPI head, 1.478 for 300 DPI. */
+  dpiScale = 1,
 ): Promise<Buffer> {
   const displayScale = screen.getPrimaryDisplay().scaleFactor || 1;
   // Compensate Windows/macOS display scaling: shrink the window in DIP and zoom
   // content back up so capturePage returns exact print pixels (624×203 at 203 DPI).
-  const winWidth = displayScale !== 1 ? Math.round(widthPx / displayScale) : widthPx;
-  const winHeight = displayScale !== 1 ? Math.round(heightPx / displayScale) : heightPx;
-  const zoomFactor = displayScale !== 1 ? displayScale : 1;
+  // The HTML is authored at 203 DPI, so a denser head also zooms by dpiScale — the
+  // text re-renders at the higher density instead of being blown up afterwards.
+  const totalZoom = displayScale * dpiScale;
+  const winWidth = Math.max(1, Math.round(widthPx / displayScale));
+  const winHeight = Math.max(1, Math.round(heightPx / displayScale));
+  const zoomFactor = totalZoom;
 
   const win = new BrowserWindow({
     width: winWidth,
@@ -157,19 +162,29 @@ export async function captureLabelRowImage(
   }
 
   const { labelWidthMm, labelHeightMm, rollConfig } = roll;
-  const composite = Buffer.alloc(pageSizePx.width * pageSizePx.height * 4, 255);
+  const dpiScale = labelDpiScale(rollConfig);
+  const dotW = Math.max(1, Math.round(pageSizePx.width * dpiScale));
+  const dotH = Math.max(1, Math.round(pageSizePx.height * dpiScale));
+  const composite = Buffer.alloc(dotW * dotH * 4, 255);
   const rotate180 = rollConfig.rotate180 ?? false;
 
   for (const slot of slotList) {
     const pos = calcLabelSlotPositionPx(rollConfig, labelWidthMm, labelHeightMm, slot.slotIndex);
+    const slotW = Math.max(1, Math.round(pos.labelWidthPx * dpiScale));
+    const slotH = Math.max(1, Math.round(pos.labelHeightPx * dpiScale));
     const html = buildSingleLabelHtmlDocument(slot, rotate180);
-    const slotRgba = await captureLabelHtmlToRgba(html, pos.labelWidthPx, pos.labelHeightPx);
-    blitRgba(composite, pageSizePx.width, pageSizePx.height, slotRgba, pos.labelWidthPx, pos.labelHeightPx, pos.leftPx, pos.topPx);
+    const slotRgba = await captureLabelHtmlToRgba(html, slotW, slotH, dpiScale);
+    blitRgba(
+      composite, dotW, dotH, slotRgba, slotW, slotH,
+      Math.round(pos.leftPx * dpiScale), Math.round(pos.topPx * dpiScale),
+    );
   }
 
   console.log('[print:label:capture] per-slot composite', {
-    pageWidthPx: pageSizePx.width,
-    pageHeightPx: pageSizePx.height,
+    dpi: rollConfig.dpi,
+    dpiScale,
+    layoutPx: `${pageSizePx.width}x${pageSizePx.height}`,
+    headDots: `${dotW}x${dotH}`,
     slots: slotList.map((s) => ({
       sku: s.product.sku,
       barcode: s.product.barcode,
@@ -179,8 +194,8 @@ export async function captureLabelRowImage(
   });
 
   return nativeImage.createFromBuffer(composite, {
-    width: pageSizePx.width,
-    height: pageSizePx.height,
+    width: dotW,
+    height: dotH,
     scaleFactor: 1,
   });
 }

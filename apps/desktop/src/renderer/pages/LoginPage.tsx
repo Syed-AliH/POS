@@ -136,12 +136,17 @@ export function LoginPage() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            {/* The health check is advice, not a gate. It probes the cloud API, but an
+                offline till signs in against local SQLite, and even in cloud mode a
+                failed probe should produce a real error on submit rather than a form
+                nobody can type into. Blocking here left no way back in after logout. */}
             <Input
               label="Username"
               value={username}
               onChange={(e) => { setUsername(e.target.value); clearLoginError(); }}
               autoComplete="username"
-              disabled={loading || serverStatus === 'offline'}
+              autoFocus
+              disabled={loading}
               placeholder="Enter username"
             />
             <Input
@@ -150,7 +155,7 @@ export function LoginPage() {
               value={password}
               onChange={(e) => { setPassword(e.target.value); clearLoginError(); }}
               autoComplete="current-password"
-              disabled={loading || serverStatus === 'offline'}
+              disabled={loading}
               placeholder="Enter password"
             />
             <Button
@@ -158,7 +163,7 @@ export function LoginPage() {
               className="w-full"
               size="lg"
               loading={loading}
-              disabled={!username.trim() || !password || serverStatus === 'offline'}
+              disabled={loading || !username.trim() || !password}
             >
               {loading ? 'Signing in…' : 'Sign in'}
             </Button>

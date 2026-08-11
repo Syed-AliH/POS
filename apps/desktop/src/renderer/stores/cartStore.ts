@@ -9,6 +9,15 @@ export interface EditingSale {
   paymentMethod: SaleSummary['paymentMethod'];
   /** Cash actually kept by the shop for this bill (tendered minus change already returned). */
   netPaid: number;
+  /**
+   * Quantity of each product on the bill as it was saved.
+   *
+   * A negative cart quantity means "these units are coming back", so the bill is
+   * charged for `originalQty - returned`. Without this baseline a line flipped from
+   * 1 to -1 would swing the total by twice the price: once for dropping the sold
+   * unit and again for adding a refund the customer was never charged for.
+   */
+  originalQtyByProduct: Record<string, number>;
 }
 
 interface CartState {
@@ -215,6 +224,10 @@ export const useCartStore = create<CartState>((set, get) => ({
 
   loadSaleForEdit: (sale, customer = null) => {
     const base = Date.now();
+    const originalQtyByProduct: Record<string, number> = {};
+    for (const item of sale.items) {
+      originalQtyByProduct[item.productId] = (originalQtyByProduct[item.productId] ?? 0) + item.quantity;
+    }
     set({
       ...emptyCart,
       items: sale.items.map((item, index) => ({
@@ -233,6 +246,7 @@ export const useCartStore = create<CartState>((set, get) => ({
         originalTotal: sale.totalAmount,
         paymentMethod: sale.paymentMethod,
         netPaid: (sale.amountTendered ?? sale.totalAmount) - (sale.changeGiven ?? 0),
+        originalQtyByProduct,
       },
     });
   },

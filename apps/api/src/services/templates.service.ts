@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { v4 as uuid } from 'uuid';
 import { labelTemplates, receiptTemplates } from '@mama-babi/db-pg';
+import { normalizeLabelRollConfig, type LabelRollConfig } from '@mama-babi/printer';
 import type { PostgresClient } from '@mama-babi/db-pg';
 import type { ApiResult } from '../types';
 import { getAllSettings } from './settings.service';
@@ -40,15 +41,7 @@ type ReceiptFooter = Record<string, unknown> & {
   qrCodeContent?: string;
 };
 
-type LabelRollConfig = {
-  columns: number;
-  horizontalGapMm: number;
-  verticalGapMm: number;
-  marginLeftMm: number;
-  marginRightMm: number;
-  marginTopMm: number;
-  marginBottomMm: number;
-};
+
 
 type LabelLayout = {
   elements: unknown[];
@@ -76,17 +69,7 @@ export type LabelTemplateSummary = {
   isDefault: boolean;
 };
 
-function normalizeLabelRollConfig(input: Partial<LabelRollConfig> = {}): LabelRollConfig {
-  return {
-    columns: input.columns ?? 1,
-    horizontalGapMm: input.horizontalGapMm ?? 2,
-    verticalGapMm: input.verticalGapMm ?? 2,
-    marginLeftMm: input.marginLeftMm ?? 0,
-    marginRightMm: input.marginRightMm ?? 0,
-    marginTopMm: input.marginTopMm ?? 0,
-    marginBottomMm: input.marginBottomMm ?? 0,
-  };
-}
+
 
 type StoredHeader = ReceiptHeader & {
   widthMm?: 58 | 80;

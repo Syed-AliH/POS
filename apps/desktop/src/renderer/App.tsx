@@ -16,6 +16,7 @@ const CheckoutPage = lazy(() => import('./pages/CheckoutPage').then((m) => ({ de
 const DashboardPage = lazy(() => import('./pages/DashboardPage').then((m) => ({ default: m.DashboardPage })));
 const ProductsPage = lazy(() => import('./pages/ProductsPage').then((m) => ({ default: m.ProductsPage })));
 const SalesHistoryPage = lazy(() => import('./pages/SalesHistoryPage').then((m) => ({ default: m.SalesHistoryPage })));
+const DayClosePage = lazy(() => import('./pages/DayClosePage').then((m) => ({ default: m.DayClosePage })));
 const ReturnsPage = lazy(() => import('./pages/ReturnsPage').then((m) => ({ default: m.ReturnsPage })));
 const ShiftsPage = lazy(() => import('./pages/ShiftsPage').then((m) => ({ default: m.ShiftsPage })));
 const VendorsPage = lazy(() => import('./pages/VendorsPage').then((m) => ({ default: m.VendorsPage })));
@@ -146,7 +147,8 @@ export function App() {
             <Route path="stocktake" element={<ProtectedRoute roles={['manager', 'super_admin']}><StocktakePage /></ProtectedRoute>} />
             <Route path="settings" element={<ProtectedRoute roles={['manager', 'super_admin']}><SettingsPage /></ProtectedRoute>} />
             <Route path="users" element={<ProtectedRoute roles={['super_admin']}><UsersPage /></ProtectedRoute>} />
-            <Route path="sales" element={<ProtectedRoute roles={['manager', 'super_admin']}><SalesHistoryPage /></ProtectedRoute>} />
+            <Route path="sales" element={<ProtectedRoute roles={['cashier', 'manager', 'super_admin']}><SalesHistoryPage /></ProtectedRoute>} />
+            <Route path="eod" element={<ProtectedRoute roles={['cashier', 'manager', 'super_admin']}><DayClosePage /></ProtectedRoute>} />
             <Route path="shifts" element={<ProtectedRoute roles={['manager', 'super_admin']}><ShiftsPage /></ProtectedRoute>} />
           </Route>
           <Route path="*" element={<Navigate to={session ? '/' : '/login'} replace />} />

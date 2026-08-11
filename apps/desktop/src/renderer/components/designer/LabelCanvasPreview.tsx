@@ -4,14 +4,13 @@ import {
   LABEL_FIELD_META,
   clampLabelPositionPercent,
   labelBarcodeLayoutStyle,
-  labelPreviewFontSizePx,
-  labelPreviewLetterSpacingPx,
   labelPreviewMaxWidthPx,
+  labelTextPreviewStyle,
+  scaleLabelStyleToPreview,
   mmToPx,
   normalizeBarcodeForPrint,
   resolveBarcodePrintMetrics,
   resolveLabelFieldText,
-  resolveLabelFontFamily,
   truncateLabelElementText,
   type LabelElement,
   type LabelFieldType,
@@ -97,8 +96,6 @@ export function LabelCanvasPreview({
           const isBarcodeGraphic = el.type === 'barcode' && showGraphic;
           const rawText = resolveLabelFieldText(el.type, product, layout, currency, el);
           const selected = selectedId === el.id;
-          const align = el.align ?? 'left';
-          const fontFamily = resolveLabelFontFamily(el);
           const text =
             isBarcodeGraphic || el.type === 'barcode'
               ? rawText
@@ -114,15 +111,7 @@ export function LabelCanvasPreview({
               metrics.height,
               metrics.barWidth,
             );
-            const scaledStyle = Object.fromEntries(
-              Object.entries(printStyle).map(([k, v]) => {
-                if (k === 'fontSize' || (typeof v === 'string' && v.endsWith('px'))) {
-                  const px = parseFloat(String(v));
-                  if (!Number.isNaN(px)) return [k, `${px * previewScale}px`];
-                }
-                return [k, v];
-              }),
-            );
+            const scaledStyle = scaleLabelStyleToPreview(printStyle, scale);
             const maxWidthPx = labelPreviewMaxWidthPx(el, widthMm, scale);
             const barcodeHeight = Math.round(metrics.height * previewScale);
             const svgWidthPx = Math.round(metrics.svgWidthPx * previewScale);
@@ -161,11 +150,7 @@ export function LabelCanvasPreview({
             return null;
           }
 
-          const fontSizePx = labelPreviewFontSizePx(el.fontSize, scale);
-          const maxWidthPx = labelPreviewMaxWidthPx(el, widthMm, scale);
-          const letterSpacingPx = labelPreviewLetterSpacingPx(el.letterSpacing, scale);
-          const transform =
-            align === 'center' ? 'translateX(-50%)' : align === 'right' ? 'translateX(-100%)' : undefined;
+          const previewStyle = labelTextPreviewStyle(el, widthMm, scale);
 
           return (
             <div
@@ -175,29 +160,13 @@ export function LabelCanvasPreview({
               onPointerDown={(e) => handlePointerDown(e, el)}
               onClick={() => onSelect?.(el.id)}
               className={cn(
-                'absolute overflow-hidden leading-tight',
                 interactive && 'cursor-grab active:cursor-grabbing',
                 selected && interactive && 'ring-2 ring-primary-400 rounded-sm',
                 dragging === el.id && 'opacity-80',
               )}
-              style={{
-                left: `${el.x}%`,
-                top: `${el.y}%`,
-                transform,
-                fontSize: `${fontSizePx}px`,
-                fontWeight: el.fontWeight === 'bold' ? 700 : 400,
-                textAlign: align,
-                fontFamily,
-                maxWidth: maxWidthPx,
-                width: maxWidthPx,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'clip',
-                boxSizing: 'border-box',
-                ...(letterSpacingPx != null ? { letterSpacing: `${letterSpacingPx}px` } : {}),
-              }}
+              style={previewStyle as React.CSSProperties}
             >
-              <span className="block truncate">{text}</span>
+              {text}
             </div>
           );
         })}

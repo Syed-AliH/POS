@@ -136,6 +136,13 @@ export function buildLabelHtmlDocument(
     color: #000;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
+    /* The capture is thresholded to 1 bit per pixel. Antialiased glyph edges land
+       between black and white, and the threshold then promotes them to solid black,
+       which reads as smudged ink on thermal stock. Render aliased so every pixel is
+       already either ink or paper. */
+    -webkit-font-smoothing: none;
+    font-smooth: never;
+    text-rendering: geometricPrecision;
   }
   #page {
     position: relative;
@@ -214,6 +221,13 @@ export function buildSingleLabelHtmlDocument(
     color: #000;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
+    /* The capture is thresholded to 1 bit per pixel. Antialiased glyph edges land
+       between black and white, and the threshold then promotes them to solid black,
+       which reads as smudged ink on thermal stock. Render aliased so every pixel is
+       already either ink or paper. */
+    -webkit-font-smoothing: none;
+    font-smooth: never;
+    text-rendering: geometricPrecision;
   }
   #page {
     position: relative;
@@ -268,6 +282,8 @@ export function buildRasterPrintHtml(
     width: ${pageWidthPx}px;
     height: ${pageHeightPx}px;
     display: block;
+    /* Already a 1-bit bitmap — smooth scaling would reintroduce grey edges. */
+    image-rendering: pixelated;
   }
 </style>
 </head>

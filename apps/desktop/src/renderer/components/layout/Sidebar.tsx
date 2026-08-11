@@ -21,7 +21,6 @@ import {
   FileText,
   Sticker,
   Truck,
-  Undo2,
   Users,
   Wallet,
 } from 'lucide-react';
@@ -48,8 +47,8 @@ const NAV_SECTIONS: NavSection[] = [
     label: 'Operations',
     items: [
       { to: '/checkout', label: 'Checkout', icon: ShoppingCart, roles: ['cashier', 'manager', 'super_admin'] },
-      { to: '/returns', label: 'Returns', icon: Undo2, roles: ['cashier', 'manager', 'super_admin'] },
-      { to: '/sales', label: 'Sales History', icon: Receipt, roles: ['manager', 'super_admin'] },
+      { to: '/sales', label: 'Sales History', icon: Receipt, roles: ['cashier', 'manager', 'super_admin'] },
+      { to: '/eod', label: 'Day Close', icon: Clock, roles: ['cashier', 'manager', 'super_admin'] },
     ],
   },
   {

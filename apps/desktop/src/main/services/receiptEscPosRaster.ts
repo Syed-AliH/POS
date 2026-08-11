@@ -3,8 +3,19 @@ import type { NativeImage } from 'electron';
 /** 203 DPI — matches common 58/80 mm thermal printers (8 dots/mm). */
 export const RECEIPT_PRINT_DPI = 203;
 
-/** Pixels darker than this print as black; higher = cleaner white background. */
-export const RECEIPT_THERMAL_THRESHOLD = 236;
+/**
+ * Mid-grey cut for the 1-bit conversion.
+ *
+ * Text and rules are pure #000 on #fff in print mode, so every intermediate value
+ * there is an artefact of the 2× supersampled capture being downsampled. 50% coverage
+ * is the honest boundary: a higher cut (this was 236) promoted quarter-covered edge
+ * pixels to solid black, fattening every glyph by up to a pixel a side — ink spread.
+ *
+ * Caveat: an uploaded store logo is a real image and may contain mid greys. Anything
+ * lighter than this cut drops out of it. Raise the value if a pale logo disappears,
+ * accepting slightly heavier text in exchange.
+ */
+export const RECEIPT_THERMAL_THRESHOLD = 128;
 
 /** Xprinter / ESC/POS clones often accept at most 128–255 raster rows per GS v 0 command. */
 const MAX_STRIP_ROWS = 128;

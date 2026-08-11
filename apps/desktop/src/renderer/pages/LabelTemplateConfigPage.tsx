@@ -392,6 +392,37 @@ export function LabelTemplateConfigPage() {
                 </select>
               </label>
               <label className="block text-sm">
+                Print darkness
+                <select
+                  className="form-input w-full mt-1"
+                  value={rollConfig.density}
+                  onChange={(e) => updateRoll({ density: Number(e.target.value) })}
+                >
+                  {[4, 6, 8, 10, 11, 12, 13, 14, 15].map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                      {d === 8 ? ' — default' : ''}
+                      {d === 12 ? ' — suggested for 300 DPI' : ''}
+                    </option>
+                  ))}
+                </select>
+                <span className="mt-1 block text-xs text-slate-500">
+                  Brown or faint print means too low; smudged or bled edges mean too high.
+                </span>
+              </label>
+              <label className="block text-sm">
+                Print speed
+                <select
+                  className="form-input w-full mt-1"
+                  value={rollConfig.speedIps}
+                  onChange={(e) => updateRoll({ speedIps: Number(e.target.value) })}
+                >
+                  {[2, 3, 4, 5, 6].map((v) => (
+                    <option key={v} value={v}>{v} ips{v === 3 ? ' — sharpest for small text' : ''}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="block text-sm">
                 Orientation
                 <select
                   className="form-input w-full mt-1"

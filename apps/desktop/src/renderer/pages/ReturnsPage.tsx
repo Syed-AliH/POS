@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
 import { SortableTh } from '@renderer/components/SortableTh';
@@ -51,6 +51,7 @@ const STEPS = [
 export function ReturnsPage() {
   const [searchParams] = useSearchParams();
   const location = useLocation();
+  const navigate = useNavigate();
 
   const [lookupMode, setLookupMode] = useState<LookupMode>('saleNumber');
   const [searchQuery, setSearchQuery] = useState('');
@@ -316,6 +317,14 @@ export function ReturnsPage() {
       <div className="flex-1 overflow-y-auto p-6">
         <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
           <div>
+            {/* Reached from a bill in Sales History rather than the sidebar. */}
+            <button
+              type="button"
+              onClick={() => navigate('/sales')}
+              className="mb-1 text-sm font-medium text-primary-700 hover:underline dark:text-primary-400"
+            >
+              ← Back to Sales History
+            </button>
             <h2 className="text-2xl font-bold">Returns</h2>
             <p className="text-sm text-slate-500">Return policy: {returnPolicyDays} days from purchase</p>
           </div>

@@ -16,6 +16,14 @@ export interface LabelRollConfig {
   marginBottomMm: number;
   paperType: LabelPaperType;
   dpi: 203 | 300;
+  /**
+   * Head energy, 0–15 (TSPL `DENSITY`). Direct thermal needs enough heat to burn a
+   * solid black dot; too little prints brown and furry, too much bleeds sideways.
+   * A 300 DPI dot is a quarter the area of a 203 DPI one, so it needs more.
+   */
+  density: number;
+  /** Inches per second (TSPL `SPEED`). Slower burns darker and cleaner on small text. */
+  speedIps: number;
   orientation: LabelOrientation;
   rotate180: boolean;
   scaleMode: LabelScaleMode;
@@ -35,6 +43,8 @@ export const DEFAULT_LABEL_ROLL_CONFIG: LabelRollConfig = {
   marginBottomMm: 0,
   paperType: 'gap',
   dpi: 203,
+  density: 8,
+  speedIps: 4,
   orientation: 'portrait',
   rotate180: false,
   scaleMode: '100',
@@ -50,6 +60,8 @@ export function normalizeLabelRollConfig(raw?: Partial<LabelRollConfig> | null):
     ...raw,
     columns: Math.max(1, Math.round(raw.columns ?? DEFAULT_LABEL_ROLL_CONFIG.columns)),
     rows: Math.max(1, Math.round(raw.rows ?? DEFAULT_LABEL_ROLL_CONFIG.rows)),
+    density: Math.min(15, Math.max(0, Math.round(raw.density ?? DEFAULT_LABEL_ROLL_CONFIG.density))),
+    speedIps: Math.min(8, Math.max(1, raw.speedIps ?? DEFAULT_LABEL_ROLL_CONFIG.speedIps)),
     horizontalGapMm: Math.max(0, raw.horizontalGapMm ?? DEFAULT_LABEL_ROLL_CONFIG.horizontalGapMm),
     verticalGapMm: Math.max(0, raw.verticalGapMm ?? DEFAULT_LABEL_ROLL_CONFIG.verticalGapMm),
     marginLeftMm: Math.max(0, raw.marginLeftMm ?? DEFAULT_LABEL_ROLL_CONFIG.marginLeftMm),
@@ -120,6 +132,19 @@ export function calcLabelSlotPosition(
     config.offsetYMm +
     row * (labelHeightMm + config.verticalGapMm);
   return { index: slotIndex, column: col, row, xMm, yMm };
+}
+
+/**
+ * How many bitmap dots one layout pixel becomes on the head.
+ *
+ * All layout maths is authored at `LABEL_PRINT_PX_PER_MM` (8 px/mm), which is 203 DPI.
+ * A 300 DPI head needs 1.478× as many dots to cover the same millimetres — the TSPL
+ * `SIZE` is declared in mm, so a bitmap with too few dots either prints small or, on
+ * printers that stretch the image to the declared size, prints oversized and clipped.
+ */
+export function labelDpiScale(config: Pick<LabelRollConfig, 'dpi'>): number {
+  const dpi = config.dpi === 300 ? 300 : 203;
+  return dpi / 203;
 }
 
 export function resolvePrintScalePercent(config: LabelRollConfig): number {

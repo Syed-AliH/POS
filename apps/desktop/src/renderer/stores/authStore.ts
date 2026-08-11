@@ -45,8 +45,15 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   logout: async () => {
-    await getApi().auth.logout();
-    set({ session: null, loginError: null });
+    // Clear the session first: if the logout call hangs or throws (no network in
+    // cloud mode), the operator is still returned to a usable login screen rather
+    // than being stranded on the till.
+    set({ session: null, loginError: null, loading: false });
+    try {
+      await getApi().auth.logout();
+    } catch {
+      // The local session is already gone; a failed server call must not block sign-in.
+    }
   },
 
   clearLoginError: () => set({ loginError: null }),

@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
 import { SortableTh } from '@renderer/components/SortableTh';
 import { sortByKey, useTableSort } from '@renderer/lib/useTableSort';
+import { focusElement, registerPageShortcuts } from '@renderer/lib/shortcuts';
 import { Modal, ModalActions } from '@renderer/components/Modal';
 import { ProductSearchModal } from '@renderer/components/ProductSearchModal';
 import { ReceiptPreview } from '@renderer/components/ReceiptPreview';
 import { toast } from '@renderer/stores/toastStore';
 import { useCartStore } from '@renderer/stores/cartStore';
+import { useAuthStore } from '@renderer/stores/authStore';
 import { formatDateOnly, formatTimeOnly, localCalendarDate } from '@shared/datetime';
 import type { CartItem, Customer, Product, ReceiptPreview as ReceiptPreviewData, SaleSummary } from '@shared/types';
 
@@ -61,6 +63,10 @@ export function SalesHistoryPage() {
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<SaleSummary | null>(null);
   const [voidId, setVoidId] = useState<string | null>(null);
+  const voidTarget = sales.find((s) => s.id === voidId) ?? null;
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const session = useAuthStore((st) => st.session);
+  const isManager = session?.role === 'manager' || session?.role === 'super_admin';
   const [startDate, setStartDate] = useState(() => localCalendarDate());
   const [endDate, setEndDate] = useState(() => localCalendarDate());
   const [preview, setPreview] = useState<ReceiptPreviewData | null>(null);
@@ -85,6 +91,19 @@ export function SalesHistoryPage() {
   };
 
   useEffect(() => { load(); }, [statusFilter, startDate, endDate]);
+
+  // The till is worked one-handed; this screen had no keyboard vocabulary at all,
+  // unlike Checkout. F1 jumps to the bill search, Esc backs out of a selection.
+  useEffect(() => registerPageShortcuts('/sales', {
+    F1: () => focusElement(searchRef, true),
+    F5: () => load(),
+    Escape: () => {
+      if (voidId) setVoidId(null);
+      else if (pendingEdit) setPendingEdit(null);
+      else if (search) setSearch('');
+      else if (selected) { setSelected(null); setPreview(null); setEditItems([]); }
+    },
+  }));
 
   const filtered = sales.filter((s) =>
     !search || s.saleNumber.toLowerCase().includes(search.toLowerCase()),
@@ -311,7 +330,7 @@ export function SalesHistoryPage() {
     <div className="page-shell">
       <div className="mb-4">
         <h2 className="text-2xl font-bold">Sales History</h2>
-        <p className="text-sm text-slate-500">Click a bill to edit it in Checkout</p>
+        <p className="text-sm text-slate-500">Click a bill to preview it · use Edit to change it in Checkout</p>
       </div>
 
       <div className="panel mb-4 p-4">
@@ -353,10 +372,11 @@ export function SalesHistoryPage() {
           <div className="ml-auto">
             <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Search</label>
             <input
-              placeholder="Bill number…"
+              ref={searchRef}
+              placeholder="Bill number… (F1)"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && load()}
+              onKeyDown={(e) => { if (e.key === 'Enter') load(); }}
               className="w-56 rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
             />
           </div>
@@ -372,8 +392,8 @@ export function SalesHistoryPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-6">
-        <div className="col-span-2 panel max-h-[calc(100vh-320px)] overflow-auto">
+      <div className={selected ? 'grid grid-cols-3 gap-6' : 'grid grid-cols-1'}>
+        <div className={`panel max-h-[calc(100vh-320px)] overflow-auto ${selected ? 'col-span-2' : ''}`}>
           {loading ? (
             <div className="p-12 text-center text-slate-400">Loading sales…</div>
           ) : filtered.length === 0 ? (
@@ -382,16 +402,14 @@ export function SalesHistoryPage() {
               <Button className="mt-4" onClick={() => navigate('/checkout')}>Go to Checkout</Button>
             </div>
           ) : (
-            <table className="w-full text-sm">
+            <table className="w-full table-fixed text-sm">
               <thead className="table-head sticky top-0 z-10">
                 <tr>
-                  <SortableTh label="Bill #" columnKey="sale" onSort={onSort} icon={icon} className="p-3" />
-                  <SortableTh label="Status" columnKey="status" onSort={onSort} icon={icon} className="p-3" />
-                  <SortableTh label="Customer" columnKey="customer" onSort={onSort} icon={icon} className="p-3" />
-                  <SortableTh label="Date" columnKey="date" onSort={onSort} icon={icon} className="p-3" />
-                  <SortableTh label="Time" columnKey="time" onSort={onSort} icon={icon} className="p-3" />
-                  <SortableTh label="Total" columnKey="total" onSort={onSort} icon={icon} className="p-3" align="right" />
-                  <th className="p-3 text-right">Actions</th>
+                  <SortableTh label="Bill #" columnKey="sale" onSort={onSort} icon={icon} className="px-3 py-2 w-[22%]" />
+                  <SortableTh label="Customer" columnKey="customer" onSort={onSort} icon={icon} className="px-3 py-2 w-[13%]" />
+                  <SortableTh label="Date" columnKey="date" onSort={onSort} icon={icon} className="px-3 py-2 w-[17%]" />
+                  <SortableTh label="Total (PKR)" columnKey="total" onSort={onSort} icon={icon} className="px-3 py-2 w-[12%]" align="right" />
+                  <th className="px-3 py-2 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -399,37 +417,61 @@ export function SalesHistoryPage() {
                   <tr
                     key={s.id}
                     className={`border-t cursor-pointer row-hover ${selected?.id === s.id ? 'row-active' : ''}`}
-                    title={s.status === 'completed' ? 'Click to edit this bill in Checkout' : undefined}
-                    onClick={() => {
-                      if (s.status === 'completed') handleEditInCheckout(s);
-                      else if (s.status === 'held') handleResumeHeld(s);
-                      else viewDetail(s.id);
-                    }}
+                    title="Click to preview the receipt"
+                    onClick={() => viewDetail(s.id)}
                   >
-                    <td className="p-3">
-                      <div className="font-mono font-medium text-slate-900 dark:text-slate-100">{s.saleNumber}</div>
-                      <div className="text-xs text-slate-400">{s.items.length} item(s) · {s.paymentMethod}</div>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate font-mono font-medium text-slate-900 dark:text-slate-100">
+                          {s.saleNumber}
+                        </span>
+                        {/* Only exceptions need a badge; a column of "Completed" next to a
+                            "Completed" filter is noise. */}
+                        {s.status !== 'completed' && <StatusBadge status={s.status} />}
+                      </div>
+                      <div className="truncate text-xs text-slate-400">
+                        {s.items.length} item(s) · {s.paymentMethod}
+                      </div>
                     </td>
-                    <td className="p-3"><StatusBadge status={s.status} /></td>
-                    <td className="p-3 text-slate-600 dark:text-slate-300">{s.customerName ?? '—'}</td>
-                    <td className="p-3 text-slate-500 whitespace-nowrap">{formatDateOnly(s.createdAt)}</td>
-                    <td className="p-3 text-slate-500 whitespace-nowrap">{formatTimeOnly(s.createdAt)}</td>
-                    <td className="p-3 text-right font-semibold tabular-nums">PKR {s.totalAmount.toFixed(2)}</td>
-                    <td className="p-3" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex gap-1 flex-wrap justify-end">
+                    <td className="truncate px-3 py-2 text-slate-600 dark:text-slate-300">{s.customerName ?? '—'}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-slate-500">
+                      {formatDateOnly(s.createdAt)}
+                      <span className="ml-2 text-xs text-slate-400">{formatTimeOnly(s.createdAt)}</span>
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-semibold tabular-nums">
+                      {s.totalAmount.toFixed(2)}
+                    </td>
+                    <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                      {/* One line, never wrapping. Edit leads; the destructive action is a
+                          quiet link rather than the loudest thing in the row. */}
+                      <div className="flex flex-nowrap items-center justify-end gap-1 [&>*]:shrink-0">
                         {s.status === 'completed' && (
                           <>
                             <Button size="sm" onClick={() => handleEditInCheckout(s)}>Edit</Button>
                             <Button variant="ghost" size="sm" onClick={() => viewDetail(s.id)}>Receipt</Button>
                             <Button variant="ghost" size="sm" onClick={() => handleReprint(s.id)}>Print</Button>
                             <Button variant="ghost" size="sm" onClick={() => startReturn(s.saleNumber)}>Return</Button>
-                            <Button variant="danger" size="sm" onClick={() => setVoidId(s.id)}>Void</Button>
+                            {isManager && (
+                              <button
+                                type="button"
+                                onClick={() => setVoidId(s.id)}
+                                className="rounded-lg px-2 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40"
+                              >
+                                Void
+                              </button>
+                            )}
                           </>
                         )}
                         {s.status === 'held' && (
                           <>
                             <Button variant="secondary" size="sm" onClick={() => handleResumeHeld(s)}>Resume</Button>
-                            <Button variant="danger" size="sm" onClick={() => handleDiscardHeld(s.id)}>Discard</Button>
+                            <button
+                              type="button"
+                              onClick={() => handleDiscardHeld(s.id)}
+                              className="rounded-lg px-2 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40"
+                            >
+                              Discard
+                            </button>
                           </>
                         )}
                       </div>
@@ -530,8 +572,12 @@ export function SalesHistoryPage() {
             <div className="flex flex-col gap-2">
               {selected.status === 'completed' && (
                 <>
-                  <Button size="sm" onClick={() => handleEditInCheckout(selected)}>Edit in Checkout</Button>
-                  <Button size="sm" variant="secondary" onClick={() => startReturn(selected.saleNumber)}>Process Return</Button>
+                  {/* Returns are always against a bill, so this is where the flow
+                      starts — there is no separate Returns section to hunt for. */}
+                  <Button onClick={() => startReturn(selected.saleNumber)}>
+                    Return items from this bill
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => handleEditInCheckout(selected)}>Edit in Checkout</Button>
                   <Button size="sm" variant="secondary" onClick={() => handleReprint(selected.id)}>Reprint Receipt</Button>
                 </>
               )}
@@ -540,17 +586,50 @@ export function SalesHistoryPage() {
               )}
             </div>
           </div>
-        ) : (
-          <div className="bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-dashed p-6 text-center text-slate-400 text-sm">
-            Select a bill to preview its receipt
-          </div>
-        )}
+        ) : null}
       </div>
 
-      <Modal open={!!voidId} title="Void sale" onClose={() => setVoidId(null)}
-        footer={<ModalActions onCancel={() => setVoidId(null)} onConfirm={handleVoid} confirmLabel="Void sale" confirmVariant="danger" />}
+      <Modal open={!!voidId} title="Void this bill?" onClose={() => setVoidId(null)}
+        footer={
+          <ModalActions
+            onCancel={() => setVoidId(null)}
+            onConfirm={handleVoid}
+            confirmLabel={voidTarget ? `Void ${voidTarget.saleNumber}` : 'Void sale'}
+            confirmVariant="danger"
+          />
+        }
       >
-        <p className="text-slate-600">This cannot be undone. Manager role required.</p>
+        {/* Naming the bill and its amount is the only thing standing between a
+            mis-click and the wrong sale being reversed. */}
+        {voidTarget ? (
+          <div className="space-y-3">
+            <div className="rounded-xl border border-red-200 bg-red-50 p-3 dark:border-red-900 dark:bg-red-950/40">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="font-mono font-semibold text-slate-900 dark:text-slate-100">
+                  {voidTarget.saleNumber}
+                </span>
+                <span className="text-2xl font-bold tabular-nums text-red-700 dark:text-red-300">
+                  PKR {voidTarget.totalAmount.toFixed(2)}
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+                {voidTarget.customerName ? `${voidTarget.customerName} · ` : ''}
+                {formatDateOnly(voidTarget.createdAt)} {formatTimeOnly(voidTarget.createdAt)} ·{' '}
+                {voidTarget.items.length} item(s)
+              </p>
+            </div>
+            <p className="text-sm text-slate-600 dark:text-slate-300">
+              The sale is reversed and{' '}
+              <strong>
+                {voidTarget.items.reduce((sum, i) => sum + i.quantity, 0)} unit(s) go back into stock
+              </strong>
+              . If the customer already paid, give back PKR {voidTarget.totalAmount.toFixed(2)}.
+            </p>
+            <p className="text-sm text-slate-500">This cannot be undone. Manager role required.</p>
+          </div>
+        ) : (
+          <p className="text-slate-600">This cannot be undone. Manager role required.</p>
+        )}
       </Modal>
 
       <Modal open={!!pendingEdit} title="Replace current cart?" onClose={() => setPendingEdit(null)}

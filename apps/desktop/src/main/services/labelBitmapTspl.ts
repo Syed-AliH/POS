@@ -3,7 +3,7 @@ import { captureLabelBatchImage, nativeImageToTsplBitmap } from './labelLabelCap
 import type { LabelSlotContent } from './labelHtmlDocument';
 import type { LabelRollLayout } from './labelRollLayout';
 
-export const LABEL_BITMAP_ENGINE_VERSION = '2026-06-17-per-slot-capture-v32';
+export const LABEL_BITMAP_ENGINE_VERSION = '2026-08-11-per-slot-capture-v33-dpi';
 
 function assertSlotsArray(slots: unknown): asserts slots is LabelSlotContent[] {
   if (!Array.isArray(slots)) {
@@ -29,6 +29,10 @@ function buildBitmapTsplPayload(
   const header = [
     `SIZE ${printableWidthMm} mm, ${printableHeightMm} mm`,
     `GAP ${rollConfig.verticalGapMm} mm, 0 mm`,
+    // Without these the printer keeps whatever was last stored in its memory, which is
+    // why output could be brown and soft with no obvious cause in the app.
+    `DENSITY ${rollConfig.density}`,
+    `SPEED ${rollConfig.speedIps}`,
     'DIRECTION 1',
     'REFERENCE 0,0',
     'CLS',
@@ -50,7 +54,7 @@ export async function buildLabelBitmapTsplPayload(
 ): Promise<Buffer> {
   assertSlotsArray(slots);
   const image = await captureLabelBatchImage(slots, roll, pageSizePx);
-  const { widthBytes, heightPx, data } = nativeImageToTsplBitmap(image, pageSizePx);
+  const { widthBytes, heightPx, data } = nativeImageToTsplBitmap(image);
   return buildBitmapTsplPayload(roll, widthBytes, heightPx, data);
 }
 
@@ -64,7 +68,7 @@ export async function printLabelBitmapTsplBatch(
   assertSlotsArray(slots);
 
   const image = await captureLabelBatchImage(slots, roll, pageSizePx);
-  const { widthBytes, heightPx, data, widthPx } = nativeImageToTsplBitmap(image, pageSizePx);
+  const { widthBytes, heightPx, data, widthPx } = nativeImageToTsplBitmap(image);
   const payload = buildBitmapTsplPayload(roll, widthBytes, heightPx, data);
 
   console.log('[print:label:bitmap]', {
@@ -122,7 +126,8 @@ export async function printLabelBitmapTsplCombined(
       rowCount: rowBatches.length,
       labelCount: slots.length,
       rollHeightMm: roll.printableHeightMm,
-      pageSizePx,
+      dpi: roll.rollConfig.dpi,
+      layoutPx: pageSizePx,
       payloadBytes: payload.length,
       slots: slots.map((s) => ({ slotIndex: s.slotIndex, sku: s.product.sku })),
     });

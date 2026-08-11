@@ -11,7 +11,7 @@ import { WorkflowStepper } from '@renderer/components/WorkflowStepper';
 import { toast } from '@renderer/stores/toastStore';
 import { mark, measure, timeAsync } from '@shared/perf';
 import { useAuthStore } from '@renderer/stores/authStore';
-import type { Customer, Product, SaleSummary, SearchProduct } from '@shared/types';
+import type { Customer, Product, PromoCode, SaleSummary, SearchProduct } from '@shared/types';
 import { useCartStore } from '../stores/cartStore';
 import { findCachedByBarcode, searchCachedProducts, useProductSearchStore } from '../stores/productSearchStore';
 
@@ -77,7 +77,7 @@ export function CheckoutPage() {
     items, lastScannedProductId, discountAmount, discountReason, adjustmentAmount, globalDiscountPercent, promotionIds, promoCodeDiscount, promoCodeId, promoCodeLabel, customer, loyaltyPointsRedeemed, heldSaleId, editingSale,
     addProduct, updateQuantity, updateLineDiscount, setGlobalDiscount, removeItem, clear,
     setDiscount, setPromoCode, clearPromoCode, setAdjustment, setCustomer, setLoyaltyRedemption, restoreHeldSale,
-    getSubtotal, getTotal,
+    getSubtotal,
   } = useCartStore();
 
   const [search, setSearch] = useState('');
@@ -87,7 +87,6 @@ export function CheckoutPage() {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [amountTendered, setAmountTendered] = useState('');
   const [adjustmentInput, setAdjustmentInput] = useState('');
-  const [taxInclusive] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [heldSales, setHeldSales] = useState<SaleSummary[]>([]);
   const [showHeld, setShowHeld] = useState(false);
@@ -101,21 +100,48 @@ export function CheckoutPage() {
   const [appliedPromos, setAppliedPromos] = useState<string[]>([]);
   const [promoCodeInput, setPromoCodeInput] = useState('');
   const [promoCodeApplying, setPromoCodeApplying] = useState(false);
+  const [promoList, setPromoList] = useState<PromoCode[] | null>(null);
+  const [showPromoList, setShowPromoList] = useState(false);
+  const [promoListLoading, setPromoListLoading] = useState(false);
   const [giftCardCode, setGiftCardCode] = useState('');
   const [giftCardBalance, setGiftCardBalance] = useState<number | null>(null);
   const [giftCardLoading, setGiftCardLoading] = useState(false);
-  const [secondaryCurrency, setSecondaryCurrency] = useState('');
-  const [exchangeRate, setExchangeRate] = useState(0);
   const [stockMap, setStockMap] = useState<Record<string, number>>({});
   const [stockWarning, setStockWarning] = useState<{ productName: string; stock: number } | null>(null);
   const [historyProduct, setHistoryProduct] = useState<{ id: string; name: string } | null>(null);
   // Qty cell being typed into — kept as raw text so "-" and an empty box are valid mid-edit.
   const [qtyDraft, setQtyDraft] = useState<{ productId: string; value: string } | null>(null);
+  /** Set only when a charge is attempted with no cash typed — never before. */
+  const [tenderPrompt, setTenderPrompt] = useState(false);
   const latestCartRowRef = useRef<HTMLTableRowElement | null>(null);
 
+  /**
+   * What the bill is actually charged for, per line.
+   *
+   * A negative quantity means "this many units are coming back". The bill therefore
+   * charges for `originalQty - returned`: flipping a line that was sold on this bill
+   * from 1 to -1 takes it off the bill (charge 0), it does not additionally refund a
+   * unit the customer never paid for. Outside edit mode there is no original
+   * quantity, so a return line stays negative and credits the customer as before.
+   */
+  const billedItems = useMemo(() => {
+    const originalQty = editingSale?.originalQtyByProduct ?? {};
+    return items.map((item) => {
+      const billedQty = item.quantity >= 0
+        ? item.quantity
+        : (originalQty[item.productId] ?? 0) - Math.abs(item.quantity);
+      const gross = item.unitPrice * billedQty;
+      return {
+        ...item,
+        billedQty,
+        billedLineTotal: gross - gross * (item.discountPercent / 100),
+      };
+    });
+  }, [items, editingSale]);
+
   const cartItemsInScanOrder = useMemo(
-    () => [...items].sort((a, b) => (a.scannedAt ?? 0) - (b.scannedAt ?? 0)),
-    [items],
+    () => [...billedItems].sort((a, b) => (a.scannedAt ?? 0) - (b.scannedAt ?? 0)),
+    [billedItems],
   );
 
   useEffect(() => {
@@ -138,17 +164,24 @@ export function CheckoutPage() {
 
   const isEditingBill = !!editingSale;
   const loyaltyDiscount = isEditingBill ? 0 : loyaltyPointsRedeemed * redemptionRate;
-  /** One reduce per cart change instead of the store getter re-running each render. */
-  const subtotal = useMemo(() => items.reduce((sum, i) => sum + i.lineTotal, 0), [items]);
-  const total = getTotal(taxInclusive) - loyaltyDiscount;
+
+  const cartItemCount = useMemo(
+    () => billedItems.reduce((sum, i) => sum + Math.abs(i.billedQty), 0),
+    [billedItems],
+  );
+
+  const subtotal = useMemo(
+    () => billedItems.reduce((sum, i) => sum + i.billedLineTotal, 0),
+    [billedItems],
+  );
   /** Sold lines and return lines, kept apart so the panel can show the two sides. */
   const soldTotal = useMemo(
-    () => items.reduce((sum, i) => (i.quantity > 0 ? sum + i.lineTotal : sum), 0),
-    [items],
+    () => billedItems.reduce((sum, i) => (i.billedLineTotal > 0 ? sum + i.billedLineTotal : sum), 0),
+    [billedItems],
   );
   const returnTotal = useMemo(
-    () => items.reduce((sum, i) => (i.quantity < 0 ? sum - i.lineTotal : sum), 0),
-    [items],
+    () => billedItems.reduce((sum, i) => (i.billedLineTotal < 0 ? sum - i.billedLineTotal : sum), 0),
+    [billedItems],
   );
   /**
    * Signed bill total: sold lines minus returned lines, after discounts. Positive means
@@ -156,15 +189,19 @@ export function CheckoutPage() {
    * because a sale row cannot store a negative amount.
    */
   const netTotal = subtotal - discountAmount - promoCodeDiscount + adjustmentAmount - loyaltyDiscount;
+  const total = Math.max(0, netTotal);
   const amountToCollect = Math.max(0, netTotal);
   const amountToRefund = Math.max(0, -netTotal);
   const editCashChange = isEditingBill
     ? Math.max(0, parseFloat(amountTendered || '0') - amountToCollect)
     : 0;
+  /** Something typed, but not enough to cover the bill. */
+  const tenderShort =
+    !isEditingBill && paymentMethod === 'cash' && !!amountTendered.trim() &&
+    parseFloat(amountTendered || '0') < total;
   const change = isEditingBill
     ? editCashChange
     : paymentMethod === 'cash' ? Math.max(0, parseFloat(amountTendered || '0') - total) : 0;
-  const secondaryTotal = exchangeRate > 0 && secondaryCurrency ? total * exchangeRate : null;
 
   /**
    * One place that spells out which way the cash moves, so the banner, the summary
@@ -211,9 +248,9 @@ export function CheckoutPage() {
   // Quantity already in the cart, by product — avoids an items.find() per row per render.
   const cartQtyById = useMemo(() => {
     const map = new Map<string, number>();
-    for (const i of items) map.set(i.productId, (map.get(i.productId) ?? 0) + i.quantity);
+    for (const i of billedItems) map.set(i.productId, (map.get(i.productId) ?? 0) + i.billedQty);
     return map;
-  }, [items]);
+  }, [billedItems]);
 
   const getAvailableStock = useCallback((productId: string, fallbackOnHand = 0) => (
     getOnHandStock(productId, fallbackOnHand) - (cartQtyById.get(productId) ?? 0)
@@ -254,12 +291,10 @@ export function CheckoutPage() {
     api.customers.loyaltyRules().then((r) => {
       if (r.success && r.data?.[0]) setRedemptionRate(r.data[0].redemptionRate);
     });
-    // One settings read covers currency, exchange rate and the auto-print flag;
-    // the charge path used to fetch auto_print_receipt again on every sale.
+    // One settings read for the auto-print flag; the charge path used to fetch
+    // auto_print_receipt again on every sale.
     api.settings.getAll().then((r) => {
       if (r.success && r.data) {
-        setSecondaryCurrency(r.data.secondary_currency ?? '');
-        setExchangeRate(parseFloat(r.data.exchange_rate ?? '0') || 0);
         autoPrintRef.current = r.data.auto_print_receipt !== 'false';
       }
     });
@@ -360,7 +395,7 @@ export function CheckoutPage() {
     const result = await api.sales.create({
       // unitPrice is sent so the sale records exactly the price shown in the cart —
       // a resumed hold keeps its saved prices even if the product was re-priced since.
-      items: items.map((i) => ({ productId: i.productId, quantity: i.quantity, discountPercent: i.discountPercent, unitPrice: i.unitPrice })),
+      items: billedItems.map((i) => ({ productId: i.productId, quantity: i.billedQty, discountPercent: i.discountPercent, unitPrice: i.unitPrice })),
       ...saleCustomerPayload(customer, customerName, customerPhone),
       paymentMethod: 'cash',
       status: 'held',
@@ -407,6 +442,7 @@ export function CheckoutPage() {
     setCustomerName('');
     setCustomerResults([]);
     setAmountTendered('');
+    setTenderPrompt(false);
     setAdjustmentInput('');
     setGiftCardCode('');
     setGiftCardBalance(null);
@@ -425,13 +461,24 @@ export function CheckoutPage() {
       return;
     }
 
+    if (billedItems.every((i) => i.billedQty === 0)) {
+      toast.error(
+        `Every item on ${editingSale.saleNumber} has been returned. Void the bill from `
+        + 'Sales History instead — a bill cannot be saved with no items.',
+      );
+      return;
+    }
+
     setProcessing(true);
     try {
     const result = await timeAsync('bill.update', () => api.sales.update({
       saleId: editingSale.id,
-      items: items.map((i) => ({
+      // The billed quantity is sent, not the return marker: a line flipped to -1 is
+      // charged as `originalQty - 1`, so the bill drops by the price once and stock
+      // is credited with exactly the units handed back.
+      items: billedItems.map((i) => ({
         productId: i.productId,
-        quantity: i.quantity,
+        quantity: i.billedQty,
         discountPercent: i.discountPercent,
         // Lines keep the price the bill was saved at (new lines carry today's price).
         unitPrice: i.unitPrice,
@@ -488,6 +535,14 @@ export function CheckoutPage() {
       return;
     }
     if (!items.length || processing) return;
+
+    // Nothing typed yet: highlight the field and put the cursor in it rather than
+    // failing with a toast the salesman has to read and dismiss.
+    if (paymentMethod === 'cash' && total > 0.009 && !amountTendered.trim()) {
+      setTenderPrompt(true);
+      focusElement(tenderRef, true);
+      return;
+    }
     setProcessing(true);
 
     const tendered = paymentMethod === 'cash' ? parseFloat(amountTendered || '0') : total;
@@ -507,7 +562,7 @@ export function CheckoutPage() {
     const result = await timeAsync('sale.save', () => api.sales.create({
       // unitPrice is sent so the sale records exactly the price shown in the cart —
       // a resumed hold keeps its saved prices even if the product was re-priced since.
-      items: items.map((i) => ({ productId: i.productId, quantity: i.quantity, discountPercent: i.discountPercent, unitPrice: i.unitPrice })),
+      items: billedItems.map((i) => ({ productId: i.productId, quantity: i.billedQty, discountPercent: i.discountPercent, unitPrice: i.unitPrice })),
       ...saleCustomerPayload(customer, customerName, customerPhone),
       paymentMethod,
       amountTendered: paymentMethod === 'cash' ? tendered : undefined,
@@ -522,7 +577,7 @@ export function CheckoutPage() {
 
     if (result.success && result.data) {
       const sale = result.data;
-      const soldQty = items.map((i) => ({ productId: i.productId, quantity: i.quantity }));
+      const soldQty = billedItems.map((i) => ({ productId: i.productId, quantity: i.billedQty }));
 
       // Receipt first and unawaited — the sale is committed, so nothing here may
       // delay the printer or the cart clearing.
@@ -687,19 +742,36 @@ export function CheckoutPage() {
     }, 250);
   };
 
-  const handleQuickAddCustomer = async () => {
-    if (!customerName.trim()) { toast.warning('Enter customer name'); return; }
-    const result = await api.customers.create({ name: customerName.trim(), phone: customerPhone || undefined });
-    if (result.success && result.data) {
-      setCustomer(result.data);
-      setCustomerName(result.data.name);
-      setCustomerPhone(result.data.phone ?? '');
-      toast.success(`Customer: ${result.data.name}`);
-      setCustomerResults([]);
-    } else toast.error(result.error ?? 'Could not add customer');
-  };
 
-  const setExactCash = () => setAmountTendered(total.toFixed(2));
+  /**
+   * Codes the salesman can pick from instead of typing one they have to remember.
+   * Loaded on first open, not on mount, so it costs nothing on the scan path.
+   * Listing is manager-only in both backends; a cashier simply keeps manual entry.
+   */
+  const openPromoList = useCallback(async () => {
+    setShowPromoList((open) => !open);
+    if (promoList !== null || promoListLoading) return;
+    setPromoListLoading(true);
+    const result = await api.promoCodes.list();
+    setPromoListLoading(false);
+    setPromoList(result.success && result.data ? result.data : []);
+  }, [promoList, promoListLoading]);
+
+  /** Why a code cannot be used right now — shown rather than hiding the code. */
+  const promoBlockedReason = useCallback((promo: PromoCode): string | null => {
+    const today = new Date().toISOString().slice(0, 10);
+    if (!promo.isActive) return 'Inactive';
+    if (promo.startDate && promo.startDate.slice(0, 10) > today) return 'Not started';
+    if (promo.endDate && promo.endDate.slice(0, 10) < today) return 'Expired';
+    if (promo.usageLimit != null && promo.usageCount >= promo.usageLimit) return 'Fully used';
+    if (promo.minPurchase != null && subtotal < promo.minPurchase) {
+      return `Needs PKR ${promo.minPurchase.toFixed(0)}`;
+    }
+    return null;
+  }, [subtotal]);
+
+  const promoValueLabel = (promo: PromoCode): string =>
+    promo.type === 'percent' ? `${promo.value}% off` : `PKR ${promo.value.toFixed(0)} off`;
 
   const applyPromoCode = useCallback(async (code: string) => {
     const trimmed = code.trim();
@@ -757,7 +829,9 @@ export function CheckoutPage() {
 
   return (
     <div className="h-full flex flex-col">
-      {!isEditingBill && <WorkflowStepper steps={WORKFLOW_STEPS} currentStep={workflowStep} />}
+      {!isEditingBill && items.length === 0 && (
+        <WorkflowStepper steps={WORKFLOW_STEPS} currentStep={workflowStep} />
+      )}
 
       {editingSale && (
         <div className="mx-4 mt-3 flex items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm dark:border-amber-900 dark:bg-amber-950/40">
@@ -795,8 +869,8 @@ export function CheckoutPage() {
       )}
 
       <div className="flex-1 flex overflow-hidden min-h-0">
-        <div className="flex w-[60%] flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
-          <div className="flex items-center justify-between border-b border-slate-100 p-4 dark:border-slate-800">
+        <div className="flex w-[60%] min-h-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
+          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5 dark:border-slate-800">
             <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">
               Cart ({items.length})
               {heldSaleId && <span className="text-xs text-amber-600 ml-2">Resumed hold</span>}
@@ -813,6 +887,70 @@ export function CheckoutPage() {
                 {editingSale ? 'Cancel (Esc)' : 'Clear (Esc)'}
               </Button>
             </div>
+          </div>
+
+          {/* Customer sits with the bill, not in the payment sidebar. Typing a name or
+              phone is enough — the sale attaches or creates the customer on save. */}
+          <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2 dark:border-slate-800">
+            <div className="relative w-56">
+              <input
+                ref={customerRef}
+                type="tel"
+                placeholder="Customer phone (F5)"
+                value={customerPhone}
+                onChange={(e) => handleCustomerPhoneSearch(e.target.value)}
+                className="h-9 w-full rounded-lg border border-slate-200 px-3 text-sm dark:border-slate-700 dark:bg-slate-900"
+              />
+              {customerResults.length > 0 && (
+                <div className="absolute left-0 top-full z-30 mt-1 max-h-40 w-80 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                  {customerResults.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className="w-full border-b px-3 py-2 text-left text-sm last:border-0 hover:bg-primary-50 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-800"
+                      onClick={() => {
+                        setCustomer(c);
+                        setCustomerPhone(c.phone ?? '');
+                        setCustomerName(c.name);
+                        setCustomerResults([]);
+                        toast.info(`Customer: ${c.name}`);
+                      }}
+                    >
+                      {c.name} · {c.phone ?? '—'} · {c.loyaltyPoints} pts
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <input
+              type="text"
+              placeholder="Customer name (optional)"
+              value={customerName}
+              onChange={(e) => { setCustomerName(e.target.value); if (customer) setCustomer(null); }}
+              className="h-9 w-56 rounded-lg border border-slate-200 px-3 text-sm dark:border-slate-700 dark:bg-slate-900"
+            />
+            {customer && (
+              <div className="flex items-center gap-2 rounded-lg border border-primary-200 bg-primary-50 px-2 py-1 text-sm dark:border-primary-800 dark:bg-primary-950/40">
+                <span className="text-primary-800 dark:text-primary-200">{customer.loyaltyPoints} pts</span>
+                {!isEditingBill && (
+                  <input
+                    type="number"
+                    placeholder="Redeem"
+                    className="h-7 w-20 rounded border px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
+                    value={loyaltyPointsRedeemed || ''}
+                    onChange={(e) => setLoyaltyRedemption(Math.min(parseInt(e.target.value, 10) || 0, customer.loyaltyPoints))}
+                  />
+                )}
+                <button
+                  type="button"
+                  className="px-1 text-slate-400 hover:text-slate-600"
+                  onClick={() => { setCustomer(null); setLoyaltyRedemption(0); }}
+                  title="Unlink customer"
+                >
+                  ×
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="flex-1 overflow-y-auto">
@@ -832,16 +970,16 @@ export function CheckoutPage() {
                 )}
               </div>
             ) : (
-              <table className="w-full">
+              <table className="w-full table-fixed">
                 <thead className="sticky top-0 bg-slate-50 dark:bg-slate-800/90">
                   <tr className="text-left text-sm text-slate-500 dark:text-slate-400">
-                    <th className="p-3 w-12">SR No.</th>
-                    <th className="p-3">Product</th>
-                    <th className="p-3 w-28">Qty</th>
-                    <th className="p-3 w-16">Disc%</th>
-                    <th className="p-3 w-24 text-right">Price</th>
-                    <th className="p-3 w-28 text-right">Total</th>
-                    <th className="p-3 w-16" />
+                    <th className="px-3 py-2 w-10">#</th>
+                    <th className="px-3 py-2">Product</th>
+                    <th className="px-3 py-2 w-32">Qty</th>
+                    <th className="px-3 py-2 w-16">Disc%</th>
+                    <th className="px-3 py-2 w-24 text-right">Price</th>
+                    <th className="px-3 py-2 w-28 text-right">Total</th>
+                    <th className="px-3 py-2 w-10" />
                   </tr>
                 </thead>
                 <tbody>
@@ -864,17 +1002,32 @@ export function CheckoutPage() {
                         title="Double-click for product history"
                         onDoubleClick={() => setHistoryProduct({ id: item.productId, name: item.productName })}
                       >
-                        <td className="p-3 text-slate-500 dark:text-slate-400 font-medium tabular-nums">{index + 1}</td>
-                        <td className="p-3">
-                          <div className="font-medium text-slate-900 dark:text-slate-100">{item.productName}</div>
-                          <div className="text-xs text-slate-400">{item.productSku}</div>
-                          <div className={`text-xs mt-0.5 font-medium ${negativeStock ? 'text-red-600' : available <= 0 ? 'text-amber-600' : lowStock ? 'text-amber-600' : 'text-green-700'}`}>
-                            Available: {available} <span className="text-slate-400 font-normal">({onHand} on hand)</span>
+                        <td className="px-3 py-1.5 text-slate-500 dark:text-slate-400 font-medium tabular-nums">{index + 1}</td>
+                        <td className="px-3 py-1.5">
+                          {/* One line each for name and identity: three stacked lines per
+                              row meant only four products fitted on screen at once. */}
+                          <div className="truncate font-medium text-slate-900 dark:text-slate-100" title={item.productName}>
+                            {item.productName}
+                          </div>
+                          <div className="flex items-center gap-2 text-xs">
+                            <span className="truncate text-slate-400">{item.productSku}</span>
+                            {/* Stock is only worth the space when it is a problem. */}
+                            {negativeStock ? (
+                              <span className="shrink-0 font-medium text-red-600">
+                                Stock {available} ({onHand} on hand)
+                              </span>
+                            ) : available <= 0 ? (
+                              <span className="shrink-0 font-medium text-amber-600">
+                                Last one ({onHand} on hand)
+                              </span>
+                            ) : lowStock ? (
+                              <span className="shrink-0 font-medium text-amber-600">Only {available} left</span>
+                            ) : null}
                           </div>
                         </td>
-                        <td className="p-3" onDoubleClick={(e) => e.stopPropagation()}>
+                        <td className="px-3 py-1.5" onDoubleClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center gap-2">
-                            <button type="button" className="h-10 w-10 rounded bg-slate-100 font-bold dark:bg-slate-800 dark:text-slate-100" onClick={() => stepQuantity(item.productId, item.quantity, -1)}>-</button>
+                            <button type="button" className="h-9 w-9 shrink-0 rounded bg-slate-100 text-lg font-bold leading-none dark:bg-slate-800 dark:text-slate-100" onClick={() => stepQuantity(item.productId, item.quantity, -1)}>-</button>
                             <input
                               type="text"
                               inputMode="numeric"
@@ -893,18 +1046,25 @@ export function CheckoutPage() {
                                 else if (e.key === 'ArrowDown') { e.preventDefault(); setQtyDraft(null); stepQuantity(item.productId, item.quantity, -1); }
                               }}
                               className={cn(
-                                'h-10 w-14 rounded border border-slate-200 text-center font-medium tabular-nums dark:border-slate-700 dark:bg-slate-900',
+                                'h-9 w-12 shrink-0 rounded border border-slate-200 text-center font-medium tabular-nums dark:border-slate-700 dark:bg-slate-900',
                                 item.quantity < 0 ? 'text-red-600 dark:text-red-400' : 'text-slate-900 dark:text-slate-100',
                               )}
                             />
                             <button
                               type="button"
-                              className="h-10 w-10 rounded bg-slate-100 font-bold dark:bg-slate-800 dark:text-slate-100"
+                              className="h-9 w-9 shrink-0 rounded bg-slate-100 text-lg font-bold leading-none dark:bg-slate-800 dark:text-slate-100"
                               onClick={() => stepQuantity(item.productId, item.quantity, 1)}
                             >+</button>
                           </div>
                           {item.quantity < 0 && (
-                            <div className="mt-1 text-xs font-medium text-red-600 dark:text-red-400">Return</div>
+                            <div className="mt-1 text-xs font-medium text-red-600 dark:text-red-400">
+                              {Math.abs(item.quantity)} returned
+                              {isEditingBill
+                                ? item.billedQty === 0
+                                  ? ' — off the bill'
+                                  : ` — billing ${item.billedQty}`
+                                : ''}
+                            </div>
                           )}
                         </td>
                         <td className="p-3">
@@ -912,13 +1072,19 @@ export function CheckoutPage() {
                             type="number" min={0} max={100}
                             value={item.discountPercent || ''}
                             onChange={(e) => updateLineDiscount(item.productId, parseFloat(e.target.value) || 0)}
-                            className="w-14 px-1 py-1 border rounded text-sm text-center"
+                            className="h-9 w-14 rounded border px-1 text-center text-sm dark:border-slate-700 dark:bg-slate-900"
                           />
                         </td>
-                        <td className="p-3 text-right">{item.unitPrice.toFixed(2)}</td>
-                        <td className="p-3 text-right font-semibold">{item.lineTotal.toFixed(2)}</td>
-                        <td className="p-3">
-                          <button type="button" className="text-red-500 text-sm" onClick={() => removeItem(item.productId)}>×</button>
+                        <td className="px-3 py-1.5 text-right tabular-nums">{item.unitPrice.toFixed(2)}</td>
+                        <td className={cn(
+                          'px-3 py-1.5 text-right font-semibold tabular-nums',
+                          item.billedLineTotal < 0 && 'text-red-600 dark:text-red-400',
+                          item.quantity < 0 && item.billedLineTotal === 0 && 'text-slate-400',
+                        )}>
+                          {item.billedLineTotal.toFixed(2)}
+                        </td>
+                        <td className="px-3 py-1.5">
+                          <button type="button" className="px-1 text-lg leading-none text-red-500" onClick={() => removeItem(item.productId)}>×</button>
                         </td>
                       </tr>
                     );
@@ -949,78 +1115,36 @@ export function CheckoutPage() {
                 <span>- PKR {promoCodeDiscount.toFixed(2)}</span>
               </div>
             )}
-            <div className={`flex items-center gap-2 pt-1 ${isEditingBill ? 'hidden' : ''}`}>
-              <input
-                type="text"
-                value={promoCodeInput}
-                onChange={(e) => setPromoCodeInput(e.target.value.toUpperCase())}
-                onKeyDown={(e) => { if (e.key === 'Enter') applyPromoCode(promoCodeInput); }}
-                placeholder="Promo code"
-                disabled={!items.length}
-                className="flex-1 rounded border border-slate-200 px-2 py-1 text-sm font-mono uppercase disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900"
-              />
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => applyPromoCode(promoCodeInput)}
-                disabled={!items.length || !promoCodeInput.trim() || promoCodeApplying}
-              >
-                {promoCodeApplying ? '…' : 'Apply'}
-              </Button>
-            </div>
             {loyaltyDiscount > 0 && (
               <div className="flex justify-between text-sm text-green-700">
                 <span>Loyalty ({loyaltyPointsRedeemed} pts)</span>
                 <span>- PKR {loyaltyDiscount.toFixed(2)}</span>
               </div>
             )}
-            <div className="flex items-center justify-between gap-2 pt-1 text-sm text-slate-700 dark:text-slate-300">
-              <span title="Applies this discount % to every scanned item">Global discount (%)</span>
-              <div className="flex items-center gap-1">
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={globalDiscountPercent || ''}
-                  onChange={(e) => setGlobalDiscount(parseFloat(e.target.value) || 0)}
-                  placeholder="0"
-                  disabled={!items.length}
-                  className="w-24 rounded border border-slate-200 px-2 py-1 text-right text-sm disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900"
-                />
-                <span className="text-xs text-slate-400">%</span>
-              </div>
-            </div>
-            <div className="flex items-center justify-between gap-2 pt-1 text-sm text-slate-700 dark:text-slate-300">
-              <span title="Positive adds a surcharge, negative gives an extra discount">Adjustment (+/-)</span>
-              <div className="flex items-center gap-1">
-                <span className="text-xs text-slate-400">PKR</span>
-                <input
-                  type="number"
-                  value={adjustmentInput}
-                  onChange={(e) => handleAdjustmentChange(e.target.value)}
-                  placeholder="0"
-                  className="w-24 rounded border border-slate-200 px-2 py-1 text-right text-sm dark:border-slate-700 dark:bg-slate-900"
-                />
-              </div>
-            </div>
             {adjustmentAmount !== 0 && (
               <div className={`flex justify-between text-sm ${adjustmentAmount < 0 ? 'text-green-700' : 'text-amber-700'}`}>
                 <span>{adjustmentAmount < 0 ? 'Discount adjustment' : 'Surcharge'}</span>
                 <span>{adjustmentAmount < 0 ? '-' : '+'} PKR {Math.abs(adjustmentAmount).toFixed(2)}</span>
               </div>
             )}
-            <div className="flex justify-between border-t pt-2 text-xl font-bold text-primary-700 dark:border-slate-700 dark:text-primary-400">
-              <span>Total</span><span>PKR {total.toFixed(2)}</span>
-            </div>
-            {secondaryTotal != null && (
-              <div className="flex justify-between text-xs text-slate-500">
-                <span>≈ {secondaryCurrency}</span><span>{secondaryTotal.toFixed(2)}</span>
+            <div className="flex items-baseline justify-between border-t pt-2 dark:border-slate-700">
+              <div>
+                <span className="text-xl font-bold text-primary-700 dark:text-primary-400">Total</span>
+                <span className="ml-2 text-xs text-slate-400">
+                  {cartItemCount} item{cartItemCount === 1 ? '' : 's'}
+                </span>
               </div>
-            )}
+              <span className="text-3xl font-bold tabular-nums text-primary-700 dark:text-primary-400">
+                PKR {total.toFixed(2)}
+              </span>
+            </div>
           </div>
         </div>
 
-        <div className="flex w-[40%] flex-col bg-slate-50 dark:bg-slate-900/50">
+        <div className="flex w-[40%] min-h-0 flex-col bg-slate-50 dark:bg-slate-900/50">
+          {/* The steps scroll; the charge button below never does. On a shorter screen
+              the panel used to run past the bottom and take the charge button with it. */}
+          <div className="flex-1 min-h-0 overflow-y-auto">
           <div className="border-b border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
             <label className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Step 1 — Find product (F1)</label>
             <input
@@ -1062,66 +1186,6 @@ export function CheckoutPage() {
             )}
             {search.length >= 2 && searchResults.length === 0 && (
               <p className="text-sm text-slate-500 mt-2">No products found — try another term or load demo data</p>
-            )}
-          </div>
-
-          <div className="space-y-2 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
-            <label className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Customer (optional, F5)</label>
-            <input
-              ref={customerRef}
-              type="tel"
-              placeholder="Phone (03XX-XXXXXXX)"
-              value={customerPhone}
-              onChange={(e) => handleCustomerPhoneSearch(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
-            />
-            {customerResults.length > 0 && (
-              <div className="max-h-24 overflow-y-auto rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-                {customerResults.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    className="w-full border-b px-3 py-2 text-left text-sm last:border-0 hover:bg-primary-50 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-800"
-                    onClick={() => {
-                      setCustomer(c);
-                      setCustomerPhone(c.phone ?? '');
-                      setCustomerName(c.name);
-                      setCustomerResults([]);
-                      toast.info(`Customer: ${c.name}`);
-                    }}
-                  >
-                    {c.name} · {c.phone ?? '—'} · {c.loyaltyPoints} pts
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="Customer name"
-                value={customerName}
-                onChange={(e) => { setCustomerName(e.target.value); if (customer) setCustomer(null); }}
-                className="flex-1 px-3 py-2 rounded-lg border text-sm"
-              />
-              {!customer && (
-                <Button size="sm" variant="secondary" onClick={handleQuickAddCustomer}>Add</Button>
-              )}
-            </div>
-            {customer && (
-              <div className="flex items-center justify-between text-sm bg-primary-50 p-2 rounded-lg border border-primary-200">
-                <span>Linked · {customer.loyaltyPoints} loyalty pts</span>
-                <div className="flex gap-2 items-center">
-                  <input
-                    type="number"
-                    placeholder="Redeem pts"
-                    hidden={isEditingBill}
-                    className="w-20 px-2 py-1 border rounded text-xs"
-                    value={loyaltyPointsRedeemed || ''}
-                    onChange={(e) => setLoyaltyRedemption(Math.min(parseInt(e.target.value, 10) || 0, customer.loyaltyPoints))}
-                  />
-                  <button type="button" className="text-slate-400" onClick={() => { setCustomer(null); setLoyaltyRedemption(0); }}>×</button>
-                </div>
-              </div>
             )}
           </div>
 
@@ -1169,6 +1233,119 @@ export function CheckoutPage() {
             </div>
           )}
 
+          {/* Discounts live beside the cart rather than inside the running total, so the
+              money summary stays a summary and these stay one click away. */}
+          <div className={`border-b border-slate-200 p-4 dark:border-slate-800 ${isEditingBill ? 'hidden' : ''}`}>
+            <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              Step 2 — Discounts (optional)
+            </label>
+
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={promoCodeInput}
+                onChange={(e) => setPromoCodeInput(e.target.value.toUpperCase())}
+                onKeyDown={(e) => { if (e.key === 'Enter') applyPromoCode(promoCodeInput); }}
+                placeholder="Promo code"
+                disabled={!items.length}
+                className="h-11 flex-1 rounded-lg border border-slate-200 px-3 font-mono text-sm uppercase disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900"
+              />
+              <Button
+                variant="secondary"
+                onClick={() => void openPromoList()}
+                disabled={!items.length}
+                title="Show available promo codes"
+              >
+                {showPromoList ? 'Hide' : 'Choose'}
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => applyPromoCode(promoCodeInput)}
+                disabled={!items.length || !promoCodeInput.trim() || promoCodeApplying}
+              >
+                {promoCodeApplying ? '…' : 'Apply'}
+              </Button>
+            </div>
+
+            {showPromoList && (
+              <div className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                {promoListLoading && (
+                  <p className="px-3 py-3 text-sm text-slate-400">Loading codes…</p>
+                )}
+                {!promoListLoading && promoList?.length === 0 && (
+                  <p className="px-3 py-3 text-sm text-slate-400">
+                    No promo codes available to pick — type one instead.
+                  </p>
+                )}
+                {!promoListLoading && promoList?.map((promo) => {
+                  const blocked = promoBlockedReason(promo);
+                  return (
+                    <button
+                      key={promo.id}
+                      type="button"
+                      disabled={!!blocked || promoCodeApplying}
+                      onClick={() => { setShowPromoList(false); void applyPromoCode(promo.code); }}
+                      className={cn(
+                        'flex w-full items-center justify-between gap-3 border-b px-3 py-2.5 text-left last:border-b-0 dark:border-slate-800',
+                        blocked
+                          ? 'cursor-not-allowed opacity-60'
+                          : 'hover:bg-slate-50 dark:hover:bg-slate-800/60',
+                      )}
+                    >
+                      <span className="min-w-0">
+                        <span className="block font-mono text-sm font-semibold text-slate-900 dark:text-slate-100">
+                          {promo.code}
+                        </span>
+                        {promo.description && (
+                          <span className="block truncate text-xs text-slate-400">{promo.description}</span>
+                        )}
+                      </span>
+                      <span className="shrink-0 text-right">
+                        <span className="block text-sm font-semibold text-green-700 dark:text-green-400">
+                          {promoValueLabel(promo)}
+                        </span>
+                        {/* Say why it cannot be used — a greyed row with no reason is a puzzle. */}
+                        {blocked && <span className="block text-xs text-amber-600">{blocked}</span>}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {promoCodeDiscount > 0 && (
+              <p className="mt-1 text-xs font-medium text-green-700">
+                {promoCodeLabel || 'Promo'} applied — PKR {promoCodeDiscount.toFixed(2)} off
+                <button type="button" className="ml-2 text-red-500" onClick={removePromoCode}>Remove</button>
+              </p>
+            )}
+
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <label className="block text-xs text-slate-500 dark:text-slate-400">
+                Discount on every item (%)
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={globalDiscountPercent || ''}
+                  onChange={(e) => setGlobalDiscount(parseFloat(e.target.value) || 0)}
+                  placeholder="0"
+                  disabled={!items.length}
+                  className="mt-1 h-11 w-full rounded-lg border border-slate-200 px-3 text-right text-sm disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900"
+                />
+              </label>
+              <label className="block text-xs text-slate-500 dark:text-slate-400">
+                Adjust bill (+/- PKR)
+                <input
+                  type="number"
+                  value={adjustmentInput}
+                  onChange={(e) => handleAdjustmentChange(e.target.value)}
+                  placeholder="0"
+                  className="mt-1 h-11 w-full rounded-lg border border-slate-200 px-3 text-right text-sm dark:border-slate-700 dark:bg-slate-900"
+                />
+              </label>
+            </div>
+          </div>
+
           <div className={`border-b border-slate-200 p-4 dark:border-slate-800 ${isEditingBill ? 'hidden' : ''}`}>
             <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Step 3 — Payment</label>
             <div className="flex gap-2">
@@ -1176,7 +1353,7 @@ export function CheckoutPage() {
                 <button
                   key={m}
                   type="button"
-                  onClick={() => setPaymentMethod(m)}
+                  onClick={() => { setPaymentMethod(m); setTenderPrompt(false); }}
                   className={`min-h-[44px] flex-1 rounded-lg py-2.5 text-xs font-medium capitalize ${
                     paymentMethod === m
                       ? 'bg-primary-600 text-white'
@@ -1208,21 +1385,50 @@ export function CheckoutPage() {
 
           {!isEditingBill && paymentMethod === 'cash' && (
             <div className="border-b border-slate-200 p-4 dark:border-slate-800">
-              <label className="text-sm text-slate-600 dark:text-slate-400">Amount tendered (F6)</label>
+              <label
+                htmlFor="amount-tendered"
+                className={cn(
+                  'text-sm font-medium',
+                  tenderPrompt ? 'text-amber-700 dark:text-amber-400' : 'text-slate-600 dark:text-slate-400',
+                )}
+              >
+                Amount tendered (F6)
+              </label>
               <input
+                id="amount-tendered"
                 ref={tenderRef}
                 type="number"
                 value={amountTendered}
-                onChange={(e) => setAmountTendered(e.target.value)}
-                className="w-full mt-1 px-4 py-3 rounded-lg border border-slate-200 text-xl font-bold"
+                aria-invalid={tenderPrompt}
+                onChange={(e) => { setAmountTendered(e.target.value); if (tenderPrompt) setTenderPrompt(false); }}
+                className={cn(
+                  'mt-1 w-full rounded-lg border px-4 py-3 text-xl font-bold outline-none transition-colors dark:bg-slate-900',
+                  tenderPrompt
+                    ? 'border-amber-400 bg-amber-50 ring-2 ring-amber-300 dark:border-amber-600 dark:bg-amber-950/30 dark:ring-amber-900'
+                    : 'border-slate-200 dark:border-slate-700',
+                )}
                 placeholder="0.00"
               />
-              <div className="flex gap-2 mt-2">
-                <Button size="sm" variant="secondary" onClick={setExactCash}>Exact</Button>
-                <Button size="sm" variant="ghost" onClick={() => setAmountTendered(String(Math.ceil(total / 500) * 500))}>+500</Button>
-                <Button size="sm" variant="ghost" onClick={() => setAmountTendered(String(Math.ceil(total / 1000) * 1000))}>+1000</Button>
-              </div>
-              {change > 0 && <p className="mt-2 text-lg font-semibold text-green-700">Change: PKR {change.toFixed(2)}</p>}
+              {tenderPrompt && (
+                <p className="mt-1 text-sm font-medium text-amber-700 dark:text-amber-400">
+                  Enter the amount received
+                </p>
+              )}
+              {change > 0 && (
+                <div className="mt-3 rounded-xl border-2 border-green-300 bg-green-50 p-3 dark:border-green-800 dark:bg-green-950/40">
+                  <div className="text-xs font-bold uppercase tracking-wide text-green-700 dark:text-green-300">
+                    Give change
+                  </div>
+                  <div className="text-3xl font-bold tabular-nums text-green-700 dark:text-green-300">
+                    PKR {change.toFixed(2)}
+                  </div>
+                </div>
+              )}
+              {tenderShort && (
+                <p className="mt-2 text-sm font-medium text-red-600 dark:text-red-400">
+                  Short by PKR {(total - parseFloat(amountTendered || '0')).toFixed(2)}
+                </p>
+              )}
             </div>
           )}
 
@@ -1232,9 +1438,9 @@ export function CheckoutPage() {
             </div>
           )}
 
-          <div className="flex-1" />
+          </div>
 
-          <div className="p-4">
+          <div className="border-t border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/50">
             <Button
               size="lg"
               // Money leaving the till gets the danger colour, so the direction reads

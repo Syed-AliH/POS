@@ -477,7 +477,6 @@ export function defaultLabelElements(): LabelElement[] {
 import {
   labelBarcodeBarWidth,
   labelBarcodeHeightPx,
-  labelBarcodePrintHeightPx,
   labelElementStyle,
   resolveLabelFieldText,
 } from './labelRender';
@@ -498,6 +497,8 @@ export {
   labelFontSizePx,
   labelLetterSpacingPx,
   labelElementPrintStyle,
+  labelTextPreviewStyle,
+  scaleLabelStyleToPreview,
   labelPreviewBarcodeHeightPx,
   labelPreviewFontSizePx,
   labelPreviewLetterSpacingPx,
@@ -731,6 +732,7 @@ export {
   calcPrintableWidth,
   calcRollWidthMm,
   normalizeLabelRollConfig,
+  labelDpiScale,
   resolveLabelDimensions,
   resolvePrintScalePercent,
   type LabelOrientation,

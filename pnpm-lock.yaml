@@ -28,6 +28,9 @@ importers:
       '@mama-babi/db-pg':
         specifier: workspace:*
         version: link:../../packages/db-pg
+      '@mama-babi/printer':
+        specifier: workspace:*
+        version: link:../../packages/printer
       bcryptjs:
         specifier: ^3.0.2
         version: 3.0.3

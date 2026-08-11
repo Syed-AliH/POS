@@ -15,8 +15,14 @@ const CHECKOUT_SHORTCUTS = [
 const WORKFLOW_GUIDE = [
   { step: '1', label: 'Products (manager)', desc: 'Add products or import from Excel' },
   { step: '2', label: 'Checkout', desc: 'F1 search → add to cart → F4 charge' },
-  { step: '3', label: 'Sales', desc: 'View receipt, reprint, or start return' },
-  { step: '4', label: 'Returns', desc: 'Enter sale # → select items → F4 refund' },
+  { step: '3', label: 'Sales', desc: 'Find the bill → preview, reprint, edit or return' },
+  { step: '4', label: 'Returns', desc: 'Open the bill in Sales → Return items → F4 refund' },
+];
+
+const SALES_SHORTCUTS = [
+  { key: 'F1', label: 'Focus bill search' },
+  { key: 'F5', label: 'Reload bills' },
+  { key: 'Esc', label: 'Close dialog / clear selection' },
 ];
 
 const RETURNS_SHORTCUTS = [
@@ -65,7 +71,9 @@ export function ShortcutHelp() {
       ? CHECKOUT_SHORTCUTS
       : location.pathname.includes('/returns')
         ? RETURNS_SHORTCUTS
-        : [];
+        : location.pathname.includes('/sales')
+          ? SALES_SHORTCUTS
+          : [];
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[100]" onClick={() => setOpen(false)}>
