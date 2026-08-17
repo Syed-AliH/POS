@@ -131,10 +131,17 @@ export function CheckoutPage() {
         ? item.quantity
         : (originalQty[item.productId] ?? 0) - Math.abs(item.quantity);
       const gross = item.unitPrice * billedQty;
+      const billedLineTotal = gross - gross * (item.discountPercent / 100);
+      // What the line is worth to the customer on screen: a returned unit that was
+      // already paid for is money coming back, so show the credit rather than 0.00.
+      const returnedUnits = item.quantity < 0 ? Math.abs(item.quantity) : 0;
+      const refundGross = item.unitPrice * returnedUnits;
+      const refund = refundGross - refundGross * (item.discountPercent / 100);
       return {
         ...item,
         billedQty,
-        billedLineTotal: gross - gross * (item.discountPercent / 100),
+        billedLineTotal,
+        displayLineTotal: returnedUnits > 0 ? -refund : billedLineTotal,
       };
     });
   }, [items, editingSale]);
@@ -174,24 +181,26 @@ export function CheckoutPage() {
     () => billedItems.reduce((sum, i) => sum + i.billedLineTotal, 0),
     [billedItems],
   );
-  /** Sold lines and return lines, kept apart so the panel can show the two sides. */
-  const soldTotal = useMemo(
-    () => billedItems.reduce((sum, i) => (i.billedLineTotal > 0 ? sum + i.billedLineTotal : sum), 0),
-    [billedItems],
-  );
+  /** Credit carried by the returned lines, shown beside the settlement. */
   const returnTotal = useMemo(
     () => billedItems.reduce((sum, i) => (i.billedLineTotal < 0 ? sum - i.billedLineTotal : sum), 0),
     [billedItems],
   );
-  /**
-   * Signed bill total: sold lines minus returned lines, after discounts. Positive means
-   * the customer still owes, negative means the shop owes. `total` stays clamped at 0
-   * because a sale row cannot store a negative amount.
-   */
+  /** What the bill is worth now — the goods the customer is keeping, after discounts. */
   const netTotal = subtotal - discountAmount - promoCodeDiscount + adjustmentAmount - loyaltyDiscount;
   const total = Math.max(0, netTotal);
-  const amountToCollect = Math.max(0, netTotal);
-  const amountToRefund = Math.max(0, -netTotal);
+  /**
+   * Cash still to move, and in which direction.
+   *
+   * Editing a bill that was already paid is not a fresh sale: the shop is holding the
+   * customer's money. Settling on the new bill total alone would ask him to pay again
+   * for goods he has already paid for — returning a 24,800 stroller and buying 180 of
+   * pins would read as "take 180" when the shop in fact owes him 24,620.
+   */
+  const alreadyPaid = isEditingBill ? (editingSale?.netPaid ?? 0) : 0;
+  const settlementDelta = total - alreadyPaid;
+  const amountToCollect = Math.max(0, settlementDelta);
+  const amountToRefund = Math.max(0, -settlementDelta);
   const editCashChange = isEditingBill
     ? Math.max(0, parseFloat(amountTendered || '0') - amountToCollect)
     : 0;
@@ -488,9 +497,9 @@ export function CheckoutPage() {
       // stored total matches the figure the cashier just saw.
       discountAmount: subtotal - total,
       discountReason: [discountReason, promoCodeLabel ? `Promo ${promoCodeLabel}` : ''].filter(Boolean).join('; ') || undefined,
-      // The bill is settled in full at the counter each time it is updated, so the
-      // stored tender is the cash taken for this version of the bill.
-      amountTendered: isCash ? received : undefined,
+      // After settling, the shop holds exactly the new bill total — it either collected
+      // the shortfall or handed the excess back — so that is what the bill records.
+      amountTendered: isCash ? total : undefined,
     }));
 
     if (result.success && result.data) {
@@ -1078,10 +1087,9 @@ export function CheckoutPage() {
                         <td className="px-3 py-1.5 text-right tabular-nums">{item.unitPrice.toFixed(2)}</td>
                         <td className={cn(
                           'px-3 py-1.5 text-right font-semibold tabular-nums',
-                          item.billedLineTotal < 0 && 'text-red-600 dark:text-red-400',
-                          item.quantity < 0 && item.billedLineTotal === 0 && 'text-slate-400',
+                          item.displayLineTotal < 0 && 'text-red-600 dark:text-red-400',
                         )}>
-                          {item.billedLineTotal.toFixed(2)}
+                          {item.displayLineTotal.toFixed(2)}
                         </td>
                         <td className="px-3 py-1.5">
                           <button type="button" className="px-1 text-lg leading-none text-red-500" onClick={() => removeItem(item.productId)}>×</button>
@@ -1095,7 +1103,10 @@ export function CheckoutPage() {
           </div>
 
           <div className="space-y-1 border-t border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/80">
-            <div className="flex justify-between text-sm text-slate-700 dark:text-slate-300"><span>Subtotal</span><span>PKR {subtotal.toFixed(2)}</span></div>
+            <div className="flex justify-between text-sm text-slate-700 dark:text-slate-300">
+              <span>{isEditingBill ? 'Bill now (items kept)' : 'Subtotal'}</span>
+              <span>PKR {subtotal.toFixed(2)}</span>
+            </div>
             {discountAmount !== 0 && (
               <div className={`flex justify-between text-sm ${discountAmount > 0 ? 'text-green-700' : 'text-amber-700'}`}>
                 <span>
@@ -1129,13 +1140,30 @@ export function CheckoutPage() {
             )}
             <div className="flex items-baseline justify-between border-t pt-2 dark:border-slate-700">
               <div>
-                <span className="text-xl font-bold text-primary-700 dark:text-primary-400">Total</span>
+                <span className={cn(
+                  'text-xl font-bold',
+                  isEditingBill && settlementDelta < -0.009
+                    ? 'text-red-600 dark:text-red-400'
+                    : 'text-primary-700 dark:text-primary-400',
+                )}>
+                  Total
+                </span>
                 <span className="ml-2 text-xs text-slate-400">
                   {cartItemCount} item{cartItemCount === 1 ? '' : 's'}
+                  {/* On a paid bill the headline figure is the money that actually moves,
+                      so a refund reads as a negative rather than as a sum to collect. */}
+                  {isEditingBill && ` · bill ${total.toFixed(2)} less ${alreadyPaid.toFixed(2)} paid`}
                 </span>
               </div>
-              <span className="text-3xl font-bold tabular-nums text-primary-700 dark:text-primary-400">
-                PKR {total.toFixed(2)}
+              <span className={cn(
+                'text-3xl font-bold tabular-nums',
+                isEditingBill && settlementDelta < -0.009
+                  ? 'text-red-600 dark:text-red-400'
+                  : 'text-primary-700 dark:text-primary-400',
+              )}>
+                PKR {isEditingBill
+                  ? `${settlementDelta < 0 ? '−' : ''}${Math.abs(settlementDelta).toFixed(2)}`
+                  : total.toFixed(2)}
               </span>
             </div>
           </div>
@@ -1192,12 +1220,21 @@ export function CheckoutPage() {
           {isEditingBill && (
             <div className="border-b border-slate-200 p-4 dark:border-slate-800">
               <div className="space-y-1 text-sm text-slate-600 dark:text-slate-400">
-                <div className="flex justify-between"><span>Items</span><span className="tabular-nums">{soldTotal.toFixed(2)}</span></div>
+                {/* The two figures the settlement is derived from, so the salesman can
+                    see why money is going back rather than being asked for. */}
+                <div className="flex justify-between">
+                  <span>Bill now (items kept)</span>
+                  <span className="tabular-nums">{total.toFixed(2)}</span>
+                </div>
                 {returnTotal > 0.009 && (
                   <div className="flex justify-between text-red-600 dark:text-red-400">
-                    <span>Returns</span><span className="tabular-nums">−{returnTotal.toFixed(2)}</span>
+                    <span>Returned</span><span className="tabular-nums">−{returnTotal.toFixed(2)}</span>
                   </div>
                 )}
+                <div className="flex justify-between">
+                  <span>Customer already paid</span>
+                  <span className="tabular-nums">{alreadyPaid.toFixed(2)}</span>
+                </div>
               </div>
               {settlement.direction === 'settled' ? (
                 <div className="mt-2 border-t pt-2 text-sm text-slate-500 dark:border-slate-700">Nothing to pay or refund</div>
