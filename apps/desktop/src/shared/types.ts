@@ -37,6 +37,12 @@ export interface CartItem {
   barcode: string;
   quantity: number;
   unitPrice: number;
+  /**
+   * Retail price when the product is on sale, for display only. The line is charged at
+   * unitPrice; this never enters the total, because a rounded percentage cannot
+   * reproduce the sale price exactly (6300 -> 4090 is 35.079%, and 35% charges 4095).
+   */
+  originalPrice?: number;
   discountPercent: number;
   taxRate: number;
   lineTotal: number;

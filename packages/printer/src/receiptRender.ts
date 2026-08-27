@@ -242,9 +242,22 @@ export function buildReceiptPrintHtml(
           item.discountPercent && item.discountPercent > 0
             ? `<div class="row small muted"><span>${escapeHtml(labels.discount)} ${item.discountPercent}%</span><span></span></div>`
             : '';
+        // A sale item shows what it was and what the customer saved. The saving is
+        // derived from the two prices actually charged, so it cannot drift from them.
+        const saleRow = (() => {
+          if (item.originalPrice == null || item.originalPrice <= item.unitPrice) return '';
+          // The markdown is stated as a percentage only. No money figure here: the
+          // amount column belongs to what was actually charged.
+          const off = Math.round((1 - item.unitPrice / item.originalPrice) * 100);
+          if (off < 1) return '';
+          return `<div class="row small muted"><span>${escapeHtml(labels.was)} ${
+            escapeHtml(fmtMoney(currency, item.originalPrice))
+          } (${off}% ${escapeHtml(labels.off)})</span><span></span></div>`;
+        })();
         return `<div class="item">
           <div class="break item-name">${escapeHtml(item.productName)}</div>
           <div class="row small"><span>${item.quantity} × ${escapeHtml(fmtMoney(currency, item.unitPrice))}</span><span>${escapeHtml(fmtMoney(currency, item.lineTotal))}</span></div>
+          ${saleRow}
           ${discountRow}
         </div>`;
       })

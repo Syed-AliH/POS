@@ -106,6 +106,7 @@ export function SettingsPage() {
         default_tax_rate: '0',
         receipt_printer: settings.receipt_printer ?? '',
         receipt_paper_mm: settings.receipt_paper_mm ?? '58',
+        receipt_ink_level: settings.receipt_ink_level ?? '3',
         label_printer: settings.label_printer ?? '',
         label_print_offset_mm: settings.label_print_offset_mm ?? '0',
         auto_print_receipt: settings.auto_print_receipt ?? 'true',
@@ -240,6 +241,23 @@ export function SettingsPage() {
             Measure the <strong>paper roll</strong>, not the Windows printer page size. POS-80 accepts 80&nbsp;mm rolls
             (~3.1&nbsp;in); if you loaded a 58&nbsp;mm roll, choose 58&nbsp;mm here even on an 80&nbsp;mm printer.
             Receipt Designer width can differ — the layout is scaled to this roll.
+          </p>
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Receipt ink level</label>
+          <select
+            value={settings.receipt_ink_level ?? '3'}
+            onChange={(e) => updateField('receipt_ink_level', e.target.value)}
+            className="w-full px-3 py-2 border rounded-lg"
+          >
+            <option value="1">1 — lightest, thinnest strokes</option>
+            <option value="2">2</option>
+            <option value="3">3 — balanced (default)</option>
+            <option value="4">4 — heavier, for faint receipts</option>
+            <option value="5">5 — heaviest</option>
+          </select>
+          <p className="text-xs text-slate-500">
+            If receipts print <strong>faint or brown</strong>, raise this. If letters look
+            <strong> smudged or filled in</strong>, lower it. This thickens the printed image;
+            it does not change the printer&apos;s own heat setting. Takes effect on the next receipt.
           </p>
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Label printer</label>
           <select value={settings.label_printer ?? ''} onChange={(e) => updateField('label_printer', e.target.value)} className="w-full px-3 py-2 border rounded-lg">

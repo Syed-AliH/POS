@@ -12,6 +12,7 @@ const EDITABLE_SETTINGS = new Set([
   'default_tax_rate',
   'receipt_printer',
   'receipt_paper_mm',
+  'receipt_ink_level',
   'label_printer',
   'label_print_offset_mm',
   'auto_print_receipt',

@@ -2,6 +2,8 @@
 export const DEVICE_LOCAL_SETTING_KEYS = new Set([
   'receipt_printer',
   'receipt_paper_mm',
+  // Ink level depends on this till's head wear and paper, not the shop's settings.
+  'receipt_ink_level',
   'label_printer',
   'label_print_offset_mm',
   'auto_print_receipt',

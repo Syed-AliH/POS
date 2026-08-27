@@ -7,7 +7,12 @@ import {
 import type { ReceiptSale, ReceiptTemplateConfig } from '@mama-babi/printer';
 import { buildRasterPrintHtml } from './labelHtmlDocument';
 import { downsampleRgbaToPrintSize } from './labelRgba';
-import { nativeImageToEscPosReceipt, rgbaToThermalMonochrome, RECEIPT_THERMAL_THRESHOLD } from './receiptEscPosRaster';
+import {
+  nativeImageToEscPosReceipt,
+  receiptThresholdForInkLevel,
+  rgbaToThermalMonochrome,
+  RECEIPT_THERMAL_THRESHOLD,
+} from './receiptEscPosRaster';
 import { sendRawToWindowsPrinter } from './labelRawWindows';
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -49,8 +54,15 @@ function rgbaFromNativeImage(image: NativeImage, expectedW: number, expectedH: n
   return rgba;
 }
 
-function normalizeReceiptBitmap(rgba: Buffer, width: number, height: number): NativeImage {
-  const mono = rgbaToThermalMonochrome(rgba, width, height, RECEIPT_THERMAL_THRESHOLD);
+function normalizeReceiptBitmap(
+  rgba: Buffer,
+  width: number,
+  height: number,
+  threshold: number = RECEIPT_THERMAL_THRESHOLD,
+): NativeImage {
+  // This is where a pixel becomes ink or paper. Any threshold applied after this point
+  // sees an image that is already pure black and white, so it can change nothing.
+  const mono = rgbaToThermalMonochrome(rgba, width, height, threshold);
   return nativeImage.createFromBitmap(mono, { width, height });
 }
 
@@ -221,7 +233,12 @@ async function captureReceiptPng(
       renderWidthPx === outputWidthPx && captureHeight === contentHeight
         ? renderRgba
         : downsampleRgbaToPrintSize(renderRgba, renderWidthPx, captureHeight, outputWidthPx, contentHeight);
-    const png = normalizeReceiptBitmap(rgba, outputWidthPx, contentHeight);
+    const inkThreshold = receiptThresholdForInkLevel(settings.receipt_ink_level);
+    console.log('[print:receipt:capture] ink', {
+      inkLevel: settings.receipt_ink_level ?? '3 (default)',
+      threshold: inkThreshold,
+    });
+    const png = normalizeReceiptBitmap(rgba, outputWidthPx, contentHeight, inkThreshold);
 
     return {
       png,
@@ -259,7 +276,10 @@ export async function printReceiptWysiwyg(
   });
 
   if (!usePreview && printerName) {
-    const escPos = nativeImageToEscPosReceipt(png, { feedLines: 4, cut: true });
+    // Per till: the same receipt prints faint on one head and heavy on another.
+    const threshold = receiptThresholdForInkLevel(settings.receipt_ink_level);
+    const escPos = nativeImageToEscPosReceipt(png, { feedLines: 4, cut: true, threshold });
+    console.log('[print:receipt] escpos', { printerName, inkLevel: settings.receipt_ink_level ?? '3', threshold });
     await sendRawToWindowsPrinter(printerName, escPos);
     return { printed: true };
   }

@@ -120,6 +120,8 @@ export const useCartStore = create<CartState>((set, get) => ({
             barcode: product.barcode,
             quantity: qty,
             unitPrice,
+            // Shown as a "% OFF" chip on the line; the price charged is unchanged.
+            originalPrice: product.retailPrice > unitPrice ? product.retailPrice : undefined,
             discountPercent,
             taxRate: product.taxRate,
             categoryId: product.categoryId,

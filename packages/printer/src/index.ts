@@ -68,6 +68,10 @@ export interface ReceiptTemplateLabels {
   payment?: string;
   tendered?: string;
   change?: string;
+  /** Prefix for the pre-markdown price on a discounted line. */
+  was?: string;
+  /** Suffix after the discount percentage, e.g. "35% off". */
+  off?: string;
 }
 
 export const DEFAULT_RECEIPT_LABELS: Required<ReceiptTemplateLabels> = {
@@ -81,6 +85,8 @@ export const DEFAULT_RECEIPT_LABELS: Required<ReceiptTemplateLabels> = {
   payment: 'Payment:',
   tendered: 'Tendered:',
   change: 'Change:',
+  was: 'Was',
+  off: 'off',
 };
 
 export interface ReceiptTemplateStyle {
@@ -227,6 +233,8 @@ export interface ReceiptSale {
     lineTotal: number;
     /** Per-line discount percentage applied to this item (0 when none). */
     discountPercent?: number;
+    /** Retail price when the item was on sale — prints the customer's saving. */
+    originalPrice?: number;
   }>;
   subtotal: number;
   discountAmount: number;
@@ -400,7 +408,10 @@ export interface LabelProduct {
   name: string;
   sku: string;
   barcode: string;
+  /** What the customer pays — the sale price when one is set. */
   price: number;
+  /** Pre-discount price, for sale labels. Omitted when the product is not discounted. */
+  originalPrice?: number;
 }
 
 export const SAMPLE_LABEL_PRODUCT: LabelProduct = {
@@ -408,6 +419,9 @@ export const SAMPLE_LABEL_PRODUCT: LabelProduct = {
   sku: 'SKU-TO-0001',
   barcode: '8901234567',  // 10 digits → CODE128, matches generated product barcodes
   price: 940,
+  // Carries a markdown so the designer can see and place the struck was-price;
+  // templates without that field ignore it.
+  originalPrice: 1250,
 };
 
 /** Second slot for 2-up label designer / roll previews. */
@@ -416,9 +430,18 @@ export const SAMPLE_LABEL_PRODUCT_2: LabelProduct = {
   sku: 'SKU-TO-0002',
   barcode: '6291108734',  // 10 digits → CODE128
   price: 940,
+  originalPrice: 1100,
 };
 
-export type LabelFieldType = 'name' | 'price' | 'sku' | 'barcode' | 'storeName' | 'customText';
+export type LabelFieldType =
+  | 'name'
+  | 'price'
+  | 'originalPrice'
+  | 'discountPercent'
+  | 'sku'
+  | 'barcode'
+  | 'storeName'
+  | 'customText';
 
 import type { LabelFontId } from './labelFonts';
 
@@ -443,6 +466,10 @@ export interface LabelElement {
   customFontFormat?: 'truetype' | 'opentype' | 'woff' | 'woff2';
   /** Extra space between characters (designer units, same scale as fontSize). */
   letterSpacing?: number;
+  /** Draws a line through the text — an alternative to a WAS/NOW label. */
+  strikethrough?: boolean;
+  /** Rendered before the field's value, e.g. "WAS ". Skipped when the value is empty. */
+  prefix?: string;
 }
 
 export interface LabelLayout {
@@ -462,6 +489,25 @@ export interface LabelPrintLine {
   width?: number;
   displayValue?: boolean;
   position?: 'left' | 'center' | 'right';
+}
+
+/**
+ * Sale label: a WAS price above a prominent NOW price, with the saving as a badge.
+ *
+ * Laid out for 38.1 x 25.4 mm stock. The two prices share a line — struck price small
+ * on the left, sale price large on the right — so the barcode keeps the lower third
+ * and stays scannable.
+ */
+export function saleLabelElements(): LabelElement[] {
+  return [
+    { id: 'store', type: 'storeName', visible: true, x: 50, y: 3, fontSize: 8, align: 'center', fontWeight: 'bold' },
+    { id: 'name', type: 'name', visible: true, x: 5, y: 17, fontSize: 8, align: 'left' },
+    { id: 'was', type: 'originalPrice', visible: true, x: 5, y: 33, fontSize: 8, align: 'left', prefix: 'WAS ' },
+    { id: 'off', type: 'discountPercent', visible: true, x: 95, y: 32, fontSize: 9, align: 'right', fontWeight: 'bold' },
+    { id: 'now', type: 'price', visible: true, x: 5, y: 45, fontSize: 12, align: 'left', fontWeight: 'bold', prefix: 'NOW ' },
+    { id: 'barcode', type: 'barcode', visible: true, x: 5, y: 64, fontSize: 7, align: 'left', barcodeHeightMm: 5 },
+    { id: 'sku', type: 'sku', visible: true, x: 5, y: 88, fontSize: 7, align: 'left' },
+  ];
 }
 
 export function defaultLabelElements(): LabelElement[] {
@@ -716,6 +762,8 @@ export const LABEL_FIELD_META: Record<LabelFieldType, { label: string; icon: str
   storeName: { label: 'Store Name', icon: 'store' },
   name: { label: 'Product Name', icon: 'tag' },
   price: { label: 'Price', icon: 'dollar' },
+  originalPrice: { label: 'Was Price (struck)', icon: 'dollar' },
+  discountPercent: { label: 'Discount % Off', icon: 'tag' },
   sku: { label: 'SKU', icon: 'hash' },
   barcode: { label: 'Barcode', icon: 'barcode' },
   customText: { label: 'Custom Text', icon: 'text' },

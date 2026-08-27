@@ -9,6 +9,8 @@ import {
   normalizeLabelRollConfig,
   SAMPLE_LABEL_PRODUCT,
   SAMPLE_LABEL_PRODUCT_2,
+  MAMABABI_38_1x25_4_2UP_ROLL as SALE_ROLL,
+  saleLabelElements,
   type LabelRollConfig,
 } from '@mama-babi/printer';
 import { Button, PageHeader } from '@mama-babi/ui';
@@ -24,6 +26,8 @@ import { useLabelTemplatesStore } from '@renderer/stores/labelTemplatesStore';
 import type { LabelTemplateSummary } from '@shared/types';
 
 const api = getApi();
+
+const SALE_TEMPLATE_NAME = 'Sale Price 38.1×25.4 2UP';
 
 type Section = 'basic' | 'roll' | 'printer' | 'calibration';
 
@@ -129,6 +133,33 @@ export function LabelTemplateConfigPage() {
     }
   };
 
+  /**
+   * Adds the sale-price template alongside whatever already exists. Nothing here
+   * touches another template: it is a plain create, the same call as "+ New".
+   */
+  const handleCreateSaleTemplate = async () => {
+    const existing = templates.find((t) => t.name === SALE_TEMPLATE_NAME);
+    if (existing) {
+      setDraft(normalizeLabelTemplate(existing));
+      setMessage(`"${SALE_TEMPLATE_NAME}" already exists — opened it`);
+      return;
+    }
+    const result = await api.templates.labelCreate({
+      name: SALE_TEMPLATE_NAME,
+      widthMm: 38.1,
+      heightMm: 25.4,
+      layout: { elements: saleLabelElements(), showBarcodeGraphic: true, storeName },
+      rollConfig: { ...SALE_ROLL },
+    });
+    if (result.success && result.data) {
+      setDraft(normalizeLabelTemplate(result.data));
+      await load();
+      setMessage(`"${SALE_TEMPLATE_NAME}" created — select it when printing sale labels`);
+    } else {
+      setMessage(result.error ?? 'Could not create the sale template');
+    }
+  };
+
   const handleDelete = async () => {
     if (!draft || !confirm(`Delete "${draft.name}"?`)) return;
     const result = await api.templates.labelDelete(draft.id);
@@ -225,6 +256,15 @@ export function LabelTemplateConfigPage() {
               <h3 className="font-semibold text-sm">Templates</h3>
               <Button variant="ghost" size="sm" onClick={handleCreate}>+ New</Button>
             </div>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="mb-3 w-full"
+              onClick={handleCreateSaleTemplate}
+              title="Adds a ready-made template with the was-price struck through"
+            >
+              + Sale price template
+            </Button>
             <div className="space-y-1 max-h-48 overflow-y-auto">
               {templates.map((t) => (
                 <button

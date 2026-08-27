@@ -52,6 +52,10 @@ export function buildSaleSummary(saleId: string): SaleSummary | null {
       barcode: product?.barcode ?? '',
       quantity: item.quantity,
       unitPrice: item.unitPrice,
+      // Retail joined from the product, like unit cost is: a receipt printed at the
+      // counter can then show what the item was before the markdown.
+      originalPrice:
+        product && product.retailPrice > item.unitPrice ? product.retailPrice : undefined,
       discountPercent: item.discountPercent,
       taxRate: item.taxRate,
       lineTotal: item.lineTotal,

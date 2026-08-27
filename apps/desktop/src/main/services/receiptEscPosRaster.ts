@@ -17,6 +17,20 @@ export const RECEIPT_PRINT_DPI = 203;
  */
 export const RECEIPT_THERMAL_THRESHOLD = 128;
 
+/**
+ * Ink level 1-5 -> 1-bit threshold.
+ *
+ * Higher keeps more of the antialiased edge as ink, so strokes print heavier and read
+ * darker on a head that under-burns; too high and the strokes bleed together. This is
+ * image processing only — no printer command is sent, because an unrecognised control
+ * code desynchronises the raster and prints the receipt as garbage characters.
+ */
+export function receiptThresholdForInkLevel(value: unknown): number {
+  const n = Math.round(Number(value));
+  const level = Number.isFinite(n) && n >= 1 && n <= 5 ? n : 3;
+  return [0, 100, 115, 128, 165, 205][level] ?? RECEIPT_THERMAL_THRESHOLD;
+}
+
 /** Xprinter / ESC/POS clones often accept at most 128–255 raster rows per GS v 0 command. */
 const MAX_STRIP_ROWS = 128;
 

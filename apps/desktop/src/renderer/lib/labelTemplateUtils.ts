@@ -48,11 +48,15 @@ export function resolveLabelLayoutForPreview(
 export function productToLabelProduct(
   product: Pick<Product, 'name' | 'sku' | 'barcode' | 'salePrice' | 'retailPrice'>,
 ): LabelProduct {
+  const price = product.salePrice ?? product.retailPrice;
   return {
     name: product.name,
     sku: product.sku,
     barcode: normalizeBarcodeForPrint(product.barcode),
-    price: product.salePrice ?? product.retailPrice,
+    price,
+    // Only a genuine markdown counts: templates without a was-price field ignore this,
+    // and the field renders nothing when the two prices match.
+    originalPrice: product.retailPrice > price ? product.retailPrice : undefined,
   };
 }
 
@@ -70,11 +74,14 @@ export function expandGrnLabelProducts(
   const result: LabelProduct[] = [];
   for (const item of items) {
     const product = products.find((p) => p.id === item.productId);
+    const price = item.unitRetail ?? product?.salePrice ?? product?.retailPrice ?? 0;
+    const retail = product?.retailPrice ?? 0;
     const labelProduct: LabelProduct = {
       name: item.productName || product?.name || 'Product',
       sku: item.productSku || product?.sku || '',
       barcode: normalizeBarcodeForPrint(product?.barcode ?? ''),
-      price: item.unitRetail ?? product?.salePrice ?? product?.retailPrice ?? 0,
+      price,
+      originalPrice: retail > price ? retail : undefined,
     };
     const copies = Math.max(1, item.qty);
     for (let i = 0; i < copies; i++) result.push({ ...labelProduct });

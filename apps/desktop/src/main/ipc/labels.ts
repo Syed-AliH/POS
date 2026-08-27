@@ -11,7 +11,13 @@ import { listLabelTemplates, getLabelTemplateById } from '../services/labelTempl
 import { printLabelsFromTemplate } from '../services/labelPrintTemplate';
 import { normalizeBarcodeForPrint } from '@mama-babi/printer';
 
-type LabelPrintProduct = { name: string; sku: string; barcode: string; price: number };
+type LabelPrintProduct = {
+  name: string;
+  sku: string;
+  barcode: string;
+  price: number;
+  originalPrice?: number;
+};
 
 async function loadProductForLabel(productId: string): Promise<Product | null> {
   if (isCloudMode()) {
@@ -23,11 +29,16 @@ async function loadProductForLabel(productId: string): Promise<Product | null> {
 }
 
 function toLabelPrintProduct(product: Product): LabelPrintProduct {
+  const price = product.salePrice ?? product.retailPrice;
   return {
     name: product.name,
     sku: product.sku,
     barcode: normalizeBarcodeForPrint(product.barcode ?? ''),
-    price: product.salePrice ?? product.retailPrice,
+    price,
+    // Retail is the was-price and sale price is what the customer pays, so a sale
+    // template can strike one through. Absent unless the product is really marked down;
+    // templates without a was-price field ignore it.
+    originalPrice: product.retailPrice > price ? product.retailPrice : undefined,
   };
 }
 

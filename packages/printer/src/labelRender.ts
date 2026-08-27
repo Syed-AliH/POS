@@ -543,6 +543,12 @@ export function labelTextPrintStyle(
     style.letterSpacing = `${letterSpacingPx}px`;
   }
 
+  if (el.strikethrough) {
+    style.textDecoration = 'line-through';
+    // Thermal output is 1-bit: a hairline rule can fall below one dot and vanish.
+    style.textDecorationThickness = '2px';
+  }
+
   if (align === 'center') {
     style.left = `${el.x}%`;
     style.transform = 'translateX(-50%)';
@@ -640,11 +646,38 @@ export function resolveLabelFieldText(
   currency: string,
   element?: LabelElement,
 ): string {
+  const value = resolveLabelFieldValue(type, product, layout, currency, element);
+  if (!value || !element?.prefix) return value;
+  // "NOW" only means something next to a "WAS": printing a sale template for a product
+  // that is not discounted should read as a plain price, not a phantom markdown.
+  const discounted = product.originalPrice != null && product.originalPrice > product.price;
+  if (type === 'price' && !discounted) return value;
+  return `${element.prefix}${value}`;
+}
+
+function resolveLabelFieldValue(
+  type: LabelFieldType,
+  product: LabelProduct,
+  layout: LabelLayout,
+  currency: string,
+  element?: LabelElement,
+): string {
   switch (type) {
     case 'name':
       return product.name;
     case 'price':
       return `${currency} ${product.price.toFixed(2)}`;
+    case 'originalPrice':
+      // Nothing to strike through when the product is not actually discounted.
+      return product.originalPrice != null && product.originalPrice > product.price
+        ? `${currency} ${product.originalPrice.toFixed(2)}`
+        : '';
+    case 'discountPercent': {
+      if (product.originalPrice == null || product.originalPrice <= product.price) return '';
+      const off = Math.round((1 - product.price / product.originalPrice) * 100);
+      // A rounded 0% would read as a discount that is not there.
+      return off >= 1 ? `${off}% OFF` : '';
+    }
     case 'sku':
       return product.sku;
     case 'barcode':

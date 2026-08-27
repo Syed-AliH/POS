@@ -24,6 +24,7 @@ function toReceiptSale(summary: SaleSummary): ReceiptSale {
       unitPrice: i.unitPrice,
       lineTotal: i.lineTotal,
       discountPercent: i.discountPercent,
+      originalPrice: i.originalPrice,
     })),
     subtotal: summary.subtotal,
     discountAmount: summary.discountAmount,

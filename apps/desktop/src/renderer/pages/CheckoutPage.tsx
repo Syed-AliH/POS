@@ -1020,6 +1020,16 @@ export function CheckoutPage() {
                           </div>
                           <div className="flex items-center gap-2 text-xs">
                             <span className="truncate text-slate-400">{item.productSku}</span>
+                            {/* Sale products announce their markdown, so the salesman can
+                                tell the customer without opening the product record. */}
+                            {item.originalPrice != null && item.originalPrice > item.unitPrice && (
+                              <span
+                                className="shrink-0 rounded bg-green-100 px-1.5 font-semibold text-green-700 dark:bg-green-950/60 dark:text-green-300"
+                                title={`Retail ${item.originalPrice.toFixed(2)} — selling at ${item.unitPrice.toFixed(2)}`}
+                              >
+                                {Math.round((1 - item.unitPrice / item.originalPrice) * 100)}% OFF
+                              </span>
+                            )}
                             {/* Stock is only worth the space when it is a problem. */}
                             {negativeStock ? (
                               <span className="shrink-0 font-medium text-red-600">
@@ -1084,7 +1094,14 @@ export function CheckoutPage() {
                             className="h-9 w-14 rounded border px-1 text-center text-sm dark:border-slate-700 dark:bg-slate-900"
                           />
                         </td>
-                        <td className="px-3 py-1.5 text-right tabular-nums">{item.unitPrice.toFixed(2)}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums">
+                          {item.unitPrice.toFixed(2)}
+                          {item.originalPrice != null && item.originalPrice > item.unitPrice && (
+                            <span className="block text-xs text-slate-400 line-through">
+                              {item.originalPrice.toFixed(2)}
+                            </span>
+                          )}
+                        </td>
                         <td className={cn(
                           'px-3 py-1.5 text-right font-semibold tabular-nums',
                           item.displayLineTotal < 0 && 'text-red-600 dark:text-red-400',

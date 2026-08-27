@@ -47,7 +47,12 @@ export async function buildSaleSummaries(db: PostgresClient, rows: SaleRow[]) {
   const productIds = [...new Set(items.map((i) => i.productId))];
   const productInfo = productIds.length
     ? await db
-        .select({ id: products.id, barcode: products.barcode, costPrice: products.costPrice })
+        .select({
+          id: products.id,
+          barcode: products.barcode,
+          costPrice: products.costPrice,
+          retailPrice: products.retailPrice,
+        })
         .from(products)
         .where(inArray(products.id, productIds))
     : [];
@@ -56,6 +61,7 @@ export async function buildSaleSummaries(db: PostgresClient, rows: SaleRow[]) {
   const customerById = new Map(customerRows.map((c) => [c.id, c]));
   const barcodeById = new Map(productInfo.map((p) => [p.id, p.barcode]));
   const costById = new Map(productInfo.map((p) => [p.id, p.costPrice]));
+  const retailById = new Map(productInfo.map((p) => [p.id, p.retailPrice]));
 
   const itemsBySale = new Map<string, typeof items>();
   for (const item of items) {
@@ -76,6 +82,9 @@ export async function buildSaleSummaries(db: PostgresClient, rows: SaleRow[]) {
         barcode: barcodeById.get(item.productId) ?? '',
         quantity: item.quantity,
         unitPrice: item.unitPrice,
+        originalPrice: (retailById.get(item.productId) ?? 0) > item.unitPrice
+          ? retailById.get(item.productId)
+          : undefined,
         unitCost,
         lineCost: unitCost * item.quantity,
         discountPercent: item.discountPercent,
@@ -122,12 +131,18 @@ export async function buildSaleSummary(db: PostgresClient, saleId: string) {
   const itemProductIds = [...new Set(items.map((i) => i.productId))];
   const productInfoRows = itemProductIds.length
     ? await db
-        .select({ id: products.id, barcode: products.barcode, costPrice: products.costPrice })
+        .select({
+          id: products.id,
+          barcode: products.barcode,
+          costPrice: products.costPrice,
+          retailPrice: products.retailPrice,
+        })
         .from(products)
         .where(inArray(products.id, itemProductIds))
     : [];
   const barcodeById = new Map(productInfoRows.map((p) => [p.id, p.barcode]));
   const costById = new Map(productInfoRows.map((p) => [p.id, p.costPrice]));
+  const retailById = new Map(productInfoRows.map((p) => [p.id, p.retailPrice]));
 
   const productRows = items.map((item) => {
     // Cost isn't stored per line, so we report the product's current cost price —
@@ -141,6 +156,11 @@ export async function buildSaleSummary(db: PostgresClient, saleId: string) {
       barcode: barcodeById.get(item.productId) ?? '',
       quantity: item.quantity,
       unitPrice: item.unitPrice,
+      // Same basis as unitCost: the product's current retail, so a receipt can show
+      // the pre-markdown price beside what was actually charged.
+      originalPrice: (retailById.get(item.productId) ?? 0) > item.unitPrice
+        ? retailById.get(item.productId)
+        : undefined,
       unitCost,
       lineCost: unitCost * item.quantity,
       discountPercent: item.discountPercent,
@@ -418,6 +438,10 @@ export async function createSale(
           barcode: product?.barcode ?? '',
           quantity: line.quantity,
           unitPrice: line.unitPrice,
+          // The checkout prints the receipt straight from this response, so the
+          // was-price has to be here too — not only in buildSaleSummary.
+          originalPrice:
+            product && product.retailPrice > line.unitPrice ? product.retailPrice : undefined,
           unitCost,
           lineCost: unitCost * line.quantity,
           discountPercent: line.discountPercent ?? 0,
