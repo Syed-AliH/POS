@@ -35,6 +35,11 @@ export async function ownerRoutes(app: FastifyInstance) {
     });
   });
 
+  app.get('/owner/sales-trend', { preHandler: ownerOnly }, async (request) => {
+    const query = request.query as { startDate?: string; endDate?: string };
+    return reports.getSalesTrend(app.db, query);
+  });
+
   // End of Day reports submitted by POS terminals — admin viewing only.
   app.get('/owner/eod-reports', { preHandler: ownerOnly }, async (request) => {
     const query = request.query as { startDate?: string; endDate?: string; limit?: string };

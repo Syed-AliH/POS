@@ -316,18 +316,27 @@ export function formatReceipt(
     const trimmed = text.slice(0, width);
     return trimmed.padStart(Math.floor((width + trimmed.length) / 2)).slice(0, width);
   };
+  // Splits on the user's own line breaks first, then word-wraps each one to the
+  // printer width independently — a manual numbered list (1. ... / 2. ...) must
+  // stay on separate lines rather than being run together into one paragraph.
   const wrap = (text: string) => {
-    const words = text.split(' ');
     const rows: string[] = [];
-    let row = '';
-    for (const word of words) {
-      const next = row ? `${row} ${word}` : word;
-      if (next.length > width) {
-        if (row) rows.push(row);
-        row = word.slice(0, width);
-      } else row = next;
+    for (const paragraph of text.split('\n')) {
+      if (!paragraph.trim()) {
+        rows.push('');
+        continue;
+      }
+      const words = paragraph.split(' ');
+      let row = '';
+      for (const word of words) {
+        const next = row ? `${row} ${word}` : word;
+        if (next.length > width) {
+          if (row) rows.push(row);
+          row = word.slice(0, width);
+        } else row = next;
+      }
+      if (row) rows.push(row);
     }
-    if (row) rows.push(row);
     return rows;
   };
 
@@ -385,11 +394,10 @@ export function formatReceipt(
 
   lines.push(line);
 
-  const thankYou = footer.thankYouMessage ?? footer.message ?? 'Thank you for your purchase!';
-  if (sections.showThankYou) wrap(thankYou).forEach((r) => lines.push(center(r)));
-
+  // Left-aligned — a numbered list (1. ... 2. ...) reads naturally flush-left, not
+  // centered line-by-line.
   if (sections.showReturnPolicy && footer.returnPolicy) {
-    wrap(footer.returnPolicy).forEach((r) => lines.push(center(r)));
+    wrap(footer.returnPolicy).forEach((r) => lines.push(r));
   }
 
   if (footer.customLine) wrap(footer.customLine).forEach((r) => lines.push(center(r)));
@@ -399,6 +407,11 @@ export function formatReceipt(
     lines.push(center('[ QR CODE ]'));
     lines.push(center(qr.slice(0, width)));
   }
+
+  // Thank-you sits last, right above the closing rule — the final thing a
+  // customer reads.
+  const thankYou = footer.thankYouMessage ?? footer.message ?? 'Thank you for your purchase!';
+  if (sections.showThankYou) wrap(thankYou).forEach((r) => lines.push(center(r)));
 
   lines.push(line);
   return lines.join('\n');

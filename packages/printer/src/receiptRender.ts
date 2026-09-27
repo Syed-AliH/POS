@@ -312,12 +312,10 @@ export function buildReceiptPrintHtml(
     parts.push(`<div class="center rule">${escapeHtml(divider)}</div>`);
   }
 
-  if (sections.showThankYou && thankYou) {
-    parts.push(`<div class="center small py-1">${escapeHtml(thankYou)}</div>`);
-  }
-
+  // Left-aligned — a numbered list (1. ... 2. ...) reads naturally flush-left, not
+  // centered line-by-line.
   if (sections.showReturnPolicy && footer.returnPolicy?.trim()) {
-    parts.push(`<div class="center xs muted pre">${escapeHtml(footer.returnPolicy.trim())}</div>`);
+    parts.push(`<div class="xs muted pre">${escapeHtml(footer.returnPolicy.trim())}</div>`);
   }
 
   if (footer.customLine?.trim()) {
@@ -330,6 +328,12 @@ export function buildReceiptPrintHtml(
     parts.push(
       `<div class="center py-1">${qrPlaceholderHtml(qrSize)}<div class="xs muted mt-1 break">${escapeHtml(qrLabel)}</div></div>`,
     );
+  }
+
+  // Thank-you sits last, right above the closing rule — the final thing a
+  // customer reads.
+  if (sections.showThankYou && thankYou) {
+    parts.push(`<div class="center small py-1">${escapeHtml(thankYou)}</div>`);
   }
 
   if (hasFooter || sections.showQrCode) {

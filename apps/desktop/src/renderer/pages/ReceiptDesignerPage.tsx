@@ -4,6 +4,7 @@ import {
   Eye,
   EyeOff,
   ImagePlus,
+  ListOrdered,
   Printer,
   Save,
   Settings2,
@@ -75,6 +76,23 @@ const CONTENT_SECTIONS: ContentBlock[] = [
   { key: 'dividers', label: 'Divider Lines' },
   { key: 'bodyStyle', label: 'Typography & Sizes' },
 ];
+
+/**
+ * Adds/renumbers "N. " prefixes on every non-blank line. Thermal receipts print
+ * plain text, so a "numbered list" is just literal digits typed into the line —
+ * this button does that renumbering for you instead of you counting by hand.
+ */
+function applyNumberedList(text: string): string {
+  let n = 1;
+  return text
+    .split('\n')
+    .map((line) => {
+      const stripped = line.replace(/^\s*\d+\.\s*/, '');
+      if (!stripped.trim()) return '';
+      return `${n++}. ${stripped}`;
+    })
+    .join('\n');
+}
 
 export function ReceiptDesignerPage() {
   const [templates, setTemplates] = useState<ReceiptTemplate[]>([]);
@@ -193,6 +211,37 @@ export function ReceiptDesignerPage() {
     updateSample({ items: sampleSale.items.filter((_, i) => i !== index) });
   };
 
+  const applyReturnPolicyNumbering = () => {
+    if (!draft) return;
+    updateDraft({ footer: { ...draft.footer, returnPolicy: applyNumberedList(draft.footer.returnPolicy ?? '') } });
+  };
+
+  /** Enter at the end of a numbered line continues the list; Enter on an empty
+   * numbered line ends it — same convention as Word/Notion, just against a plain
+   * textarea since the printed receipt is plain text too. */
+  const handleReturnPolicyKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== 'Enter' || !draft) return;
+    const textarea = e.currentTarget;
+    const value = textarea.value;
+    const cursor = textarea.selectionStart;
+    const lineStart = value.lastIndexOf('\n', cursor - 1) + 1;
+    const match = /^(\d+)\.\s?(.*)$/.exec(value.slice(lineStart, cursor));
+    if (!match) return;
+    e.preventDefault();
+    const [, numStr, rest] = match;
+    if (!rest.trim()) {
+      const newValue = value.slice(0, lineStart) + value.slice(cursor);
+      updateDraft({ footer: { ...draft.footer, returnPolicy: newValue } });
+      requestAnimationFrame(() => textarea.setSelectionRange(lineStart, lineStart));
+      return;
+    }
+    const insertion = `\n${parseInt(numStr, 10) + 1}. `;
+    const newValue = value.slice(0, cursor) + insertion + value.slice(cursor);
+    updateDraft({ footer: { ...draft.footer, returnPolicy: newValue } });
+    const newCursor = cursor + insertion.length;
+    requestAnimationFrame(() => textarea.setSelectionRange(newCursor, newCursor));
+  };
+
   const handleBodyCustomFontUpload = (file: File | undefined) => {
     if (!file) return;
     const allowed = /\.(ttf|otf|woff2?)$/i;
@@ -308,7 +357,7 @@ export function ReceiptDesignerPage() {
   if (!draft) {
     return (
       <div className="page-shell">
-        <PageHeader title="Receipt Designer" subtitle="Loading template…" />
+        <PageHeader title="Receipt Designer" description="Loading template…" />
       </div>
     );
   }
@@ -501,11 +550,55 @@ export function ReceiptDesignerPage() {
         );
       case 'returnPolicy':
         return (
-          <textarea
-            className="form-input w-full min-h-[80px]"
-            value={draft.footer.returnPolicy ?? ''}
-            onChange={(e) => updateDraft({ footer: { ...draft.footer, returnPolicy: e.target.value } })}
-          />
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="secondary" onClick={applyReturnPolicyNumbering}>
+                <ListOrdered className="h-4 w-4 mr-1.5" />
+                Numbered list
+              </Button>
+              <span className="text-xs text-slate-400">
+                Renumbers every line — or press Enter at the end of a numbered line to
+                keep the list going.
+              </span>
+            </div>
+            <textarea
+              className="form-input w-full min-h-[100px]"
+              value={draft.footer.returnPolicy ?? ''}
+              onChange={(e) => updateDraft({ footer: { ...draft.footer, returnPolicy: e.target.value } })}
+              onKeyDown={handleReturnPolicyKeyDown}
+            />
+            <div className="grid grid-cols-2 gap-3 border-t border-slate-100 pt-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Font</label>
+                <select
+                  className="form-input w-full text-sm"
+                  value={bodyStyle.footerFontFamily}
+                  onChange={(e) => updateStyle({ footerFontFamily: e.target.value as ReceiptStoreFontKey })}
+                >
+                  {Object.entries(RECEIPT_STORE_FONTS).map(([k, { label: fontLabel }]) => (
+                    <option key={k} value={k}>{fontLabel}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">
+                  Size — {bodyStyle.footerFontSize}px
+                </label>
+                <input
+                  type="range"
+                  min={7}
+                  max={18}
+                  value={bodyStyle.footerFontSize}
+                  onChange={(e) => updateStyle({ footerFontSize: Number(e.target.value) })}
+                  className="w-full"
+                />
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Font and size are shared with the tax info and custom footer line — the
+              same "Fine print" controls under Typography &amp; Sizes.
+            </p>
+          </div>
         );
       case 'taxInfo':
         return (
@@ -636,7 +729,7 @@ export function ReceiptDesignerPage() {
                 <Button size="sm" variant="ghost" onClick={() => removeSampleItem(i)}>Remove line</Button>
               </div>
             ))}
-            <Button size="sm" variant="outline" onClick={addSampleItem}>Add line item</Button>
+            <Button size="sm" variant="secondary" onClick={addSampleItem}>Add line item</Button>
           </div>
         );
       case 'showSubtotal':
@@ -836,7 +929,7 @@ export function ReceiptDesignerPage() {
                 ['bodyFontSize', 'Body text', 9, 14] as const,
                 ['smallFontSize', 'Small text (item prices)', 8, 12] as const,
                 ['totalFontSize', 'Total row', 10, 16] as const,
-                ['footerFontSize', 'Fine print', 7, 11] as const,
+                ['footerFontSize', 'Fine print (tax info, return policy, custom line)', 7, 18] as const,
               ]).map(([key, label, min, max]) => (
                 <div key={key}>
                   <label className="block text-sm font-medium mb-1">{label} — {bodyStyle[key]}px</label>
@@ -873,10 +966,10 @@ export function ReceiptDesignerPage() {
     <div className="page-shell flex flex-col h-full min-h-0">
       <PageHeader
         title="Receipt Designer"
-        subtitle="Design your thermal receipt with live preview — what you see is what prints."
+        description="Design your thermal receipt with live preview — what you see is what prints."
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={handleTestPrint} disabled={printing}>
+            <Button variant="secondary" size="sm" onClick={handleTestPrint} disabled={printing}>
               <Printer className="h-4 w-4 mr-1.5" />
               {printing ? 'Printing…' : 'Print Test Receipt'}
             </Button>

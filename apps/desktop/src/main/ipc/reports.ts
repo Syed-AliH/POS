@@ -285,13 +285,18 @@ export function handleProfitReport(params?: ReportDateRange): ApiResult<ProfitRe
     const db = getDb();
     const completedSales = completedSalesInRange(params);
     const saleIds = new Set(completedSales.map((s) => s.id));
-    const revenue = completedSales.reduce((sum, s) => sum + s.totalAmount, 0);
     const returnsTotal = returnsInRange(params).reduce((sum, r) => sum + r.totalRefund, 0);
 
+    // A returned line (negative quantity) comes back to stock undamaged — it must not
+    // drag profit into a loss. Only positive-quantity lines count toward revenue and
+    // cost; a return's own contribution is 0, not negative, while any other line in
+    // the same or a different sale is still counted normally.
+    let revenue = 0;
     let estimatedCost = 0;
     for (const item of db.select().from(saleItems).all()) {
-      if (!saleIds.has(item.saleId)) continue;
+      if (!saleIds.has(item.saleId) || item.quantity <= 0) continue;
       const product = db.select().from(products).where(eq(products.id, item.productId)).get();
+      revenue += item.lineTotal;
       estimatedCost += item.quantity * (product?.costPrice ?? 0);
     }
 

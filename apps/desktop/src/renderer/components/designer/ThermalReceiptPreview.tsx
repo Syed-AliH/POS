@@ -210,7 +210,7 @@ export function ThermalReceiptPreview({
 
         {hasMeta && block('showSaleNumber', (
           <div style={{ fontFamily: metaFontFamily }}>
-            {sections.showSaleNumber && <div>{labels.receiptNumber} {displaySale.displaySaleNumber}</div>}
+            {sections.showSaleNumber && <div>{labels.receiptNumber} {displaySale.saleNumber}</div>}
             {sections.showDate && <div>{labels.date} {formatDateTime(displaySale.createdAt)}</div>}
             {sections.showCashier && <div>{labels.cashier} {displaySale.cashierName}</div>}
           </div>
@@ -301,20 +301,23 @@ export function ThermalReceiptPreview({
           <div className="text-center text-slate-400 py-1">{divider}</div>
         ))}
 
-        {sections.showThankYou && (footer.thankYouMessage?.trim() || footer.message?.trim()) && block('thankYou', (
-          <div className="text-center py-1" style={{ fontSize: bodyStyle.smallFontSize, fontFamily: footerFontFamily }}>{footer.thankYouMessage || footer.message}</div>
-        ))}
-
-        {sections.showThankYou && !(footer.thankYouMessage?.trim() || footer.message?.trim()) && designMode && activeSection === 'thankYou' && block('thankYou', (
-          <div className="text-center text-[10px] text-slate-400 italic py-2">Thank you message</div>
-        ))}
-
+        {/* Left-aligned — a numbered list (1. ... 2. ...) reads naturally flush-left,
+            not centered line-by-line. Font size follows the "Fine print" slider
+            (bodyStyle.footerFontSize), same as the actual print output — it was
+            hardcoded here before, so the slider had no visible effect in preview. */}
         {sections.showReturnPolicy && footer.returnPolicy?.trim() && block('returnPolicy', (
-          <div className="text-center text-[9px] text-slate-500 py-1 whitespace-pre-wrap">{footer.returnPolicy}</div>
+          <div
+            className="text-left text-slate-500 py-1 whitespace-pre-wrap"
+            style={{ fontSize: bodyStyle.footerFontSize, fontFamily: footerFontFamily }}
+          >
+            {footer.returnPolicy}
+          </div>
         ))}
 
         {sections.showReturnPolicy && !footer.returnPolicy?.trim() && designMode && activeSection === 'returnPolicy' && block('returnPolicy', (
-          <div className="text-center text-[9px] text-slate-400 italic py-1">Return policy</div>
+          <div className="text-left text-slate-400 italic py-1" style={{ fontSize: bodyStyle.footerFontSize }}>
+            Return policy
+          </div>
         ))}
 
         {footer.customLine?.trim() && block('customFooterLine', (
@@ -328,10 +331,20 @@ export function ThermalReceiptPreview({
         {sections.showQrCode && block('qrCode', (
           <div className="py-1 text-center">
             <QrPlaceholder size={widthMm === 58 ? 56 : 72} />
-            {(footer.qrCodeContent?.trim() || displaySale.displaySaleNumber) && (
-              <div className="text-[9px] text-slate-500 mt-1 break-all">{footer.qrCodeContent?.trim() || displaySale.displaySaleNumber}</div>
+            {(footer.qrCodeContent?.trim() || displaySale.saleNumber) && (
+              <div className="text-[9px] text-slate-500 mt-1 break-all">{footer.qrCodeContent?.trim() || displaySale.saleNumber}</div>
             )}
           </div>
+        ))}
+
+        {/* Thank-you sits last, right above the closing divider — the final thing a
+            customer reads. */}
+        {sections.showThankYou && (footer.thankYouMessage?.trim() || footer.message?.trim()) && block('thankYou', (
+          <div className="text-center py-1" style={{ fontSize: bodyStyle.smallFontSize, fontFamily: footerFontFamily }}>{footer.thankYouMessage || footer.message}</div>
+        ))}
+
+        {sections.showThankYou && !(footer.thankYouMessage?.trim() || footer.message?.trim()) && designMode && activeSection === 'thankYou' && block('thankYou', (
+          <div className="text-center text-[10px] text-slate-400 italic py-2">Thank you message</div>
         ))}
 
         {(hasFooterContent || sections.showQrCode) && bodyStyle.showFooterDivider && bodyStyle.dividerChar && block('dividers', (

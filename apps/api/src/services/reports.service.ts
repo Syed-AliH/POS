@@ -316,7 +316,6 @@ export async function getProfitReport(
     );
 
   const saleIds = new Set(completedSales.map((s) => s.id));
-  const revenue = completedSales.reduce((sum, s) => sum + s.totalAmount, 0);
 
   const returnRows = await db
     .select()
@@ -324,12 +323,19 @@ export async function getProfitReport(
     .where(and(gte(returns.createdAt, startInclusive), lt(returns.createdAt, endExclusive)));
   const returnsTotal = returnRows.reduce((sum, r) => sum + r.totalRefund, 0);
 
+  // A returned line (negative quantity) comes back to stock undamaged — it must not
+  // drag the day's profit into a loss. Only positive-quantity lines count toward
+  // revenue and cost; a return's own contribution is 0, not negative, while any
+  // other line in the same or a different sale is still counted normally.
   const items = await db.select().from(saleItems);
+  const productRows = await db.select().from(products);
+  const costPriceByProduct = new Map(productRows.map((p) => [p.id, p.costPrice]));
+  let revenue = 0;
   let estimatedCost = 0;
   for (const item of items) {
-    if (!saleIds.has(item.saleId)) continue;
-    const [product] = await db.select().from(products).where(eq(products.id, item.productId)).limit(1);
-    estimatedCost += item.quantity * (product?.costPrice ?? 0);
+    if (!saleIds.has(item.saleId) || item.quantity <= 0) continue;
+    revenue += item.lineTotal;
+    estimatedCost += item.quantity * (costPriceByProduct.get(item.productId) ?? 0);
   }
 
   const grossProfit = revenue - estimatedCost;
@@ -344,6 +350,68 @@ export async function getProfitReport(
       returnsTotal,
     },
   };
+}
+
+/** Daily sales/profit points for the trend chart. One row per calendar day that had a completed sale. */
+export async function getSalesTrend(
+  db: PostgresClient,
+  params?: { startDate?: string; endDate?: string },
+) {
+  const range = coerceReportDateRange(params);
+  const { startInclusive, endExclusive } = isoRangeBounds(range);
+
+  const completedSales = await db
+    .select()
+    .from(sales)
+    .where(
+      and(
+        eq(sales.status, 'completed'),
+        gte(sales.createdAt, startInclusive),
+        lt(sales.createdAt, endExclusive),
+      ),
+    );
+  const saleDayById = new Map(completedSales.map((s) => [s.id, s.createdAt.slice(0, 10)]));
+
+  // Same cost basis as getProfitReport: current product cost price, since cost isn't
+  // stored per sale line. One products fetch instead of per-item lookups.
+  const items = await db.select().from(saleItems);
+  const productRows = await db.select().from(products);
+  const costPriceByProduct = new Map(productRows.map((p) => [p.id, p.costPrice]));
+
+  const byDay = new Map<string, { revenue: number; estimatedCost: number; transactionCount: number }>();
+  // Seed a row for every day that had a completed sale, so a return-only day still
+  // shows up (profit 0) and transactionCount counts every bill, not just profitable ones.
+  for (const sale of completedSales) {
+    const day = sale.createdAt.slice(0, 10);
+    const existing = byDay.get(day) ?? { revenue: 0, estimatedCost: 0, transactionCount: 0 };
+    existing.transactionCount += 1;
+    byDay.set(day, existing);
+  }
+
+  // A returned line (negative quantity) comes back to stock undamaged — it must not
+  // drag the day's profit into a loss. Only positive-quantity lines count toward
+  // revenue and cost; a return's own contribution is 0, not negative.
+  for (const item of items) {
+    if (item.quantity <= 0) continue;
+    const day = saleDayById.get(item.saleId);
+    if (!day) continue;
+    const existing = byDay.get(day);
+    if (!existing) continue;
+    existing.revenue += item.lineTotal;
+    existing.estimatedCost += item.quantity * (costPriceByProduct.get(item.productId) ?? 0);
+  }
+
+  const data = [...byDay.entries()]
+    .map(([date, v]) => ({
+      date,
+      revenue: v.revenue,
+      estimatedCost: v.estimatedCost,
+      grossProfit: v.revenue - v.estimatedCost,
+      transactionCount: v.transactionCount,
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  return { success: true as const, data };
 }
 
 type InventoryStockFilter = 'all' | 'negative' | 'zero' | 'low';
