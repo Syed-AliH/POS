@@ -104,6 +104,24 @@ function canModify(user: SessionUser, row: typeof expenses.$inferSelect): string
   return null;
 }
 
+/**
+ * When an expense happened. The owner portal may date an expense a day or two back;
+ * today (or nothing) means "now", an earlier day is stored at midday UTC so it lands
+ * inside that calendar day in every report. Same rule as the portal's
+ * api/_lib/expenses.ts expenseTimestamp.
+ */
+export function expenseTimestamp(expenseDate: string | undefined, now = new Date()): string | { error: string } {
+  const nowIso = now.toISOString();
+  if (!expenseDate || expenseDate === nowIso.slice(0, 10)) return nowIso;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(expenseDate) || Number.isNaN(Date.parse(`${expenseDate}T12:00:00Z`))) {
+    return { error: 'Invalid expense date' };
+  }
+  const days = (Date.parse(`${expenseDate}T12:00:00Z`) - now.getTime()) / 86_400_000;
+  if (days > 1) return { error: 'An expense can’t be dated in the future' };
+  if (days < -366) return { error: 'An expense can’t be dated more than a year back' };
+  return `${expenseDate}T12:00:00.000Z`;
+}
+
 export async function listExpenses(
   db: PostgresClient,
   params?: { startDate?: string; endDate?: string; status?: string; categoryId?: string; limit?: number },
@@ -123,11 +141,13 @@ export async function listExpenses(
 export async function createExpense(
   db: PostgresClient,
   user: SessionUser,
-  input: { categoryId: string; amount: number; notes?: string },
+  input: { categoryId: string; amount: number; notes?: string; expenseDate?: string },
 ) {
   if (!Number.isFinite(input.amount) || input.amount <= 0) {
     return { success: false as const, error: 'Amount must be positive' };
   }
+  const when = expenseTimestamp(input.expenseDate);
+  if (typeof when !== 'string') return { success: false as const, error: when.error };
   const [category] = await db
     .select()
     .from(expenseCategories)
@@ -148,7 +168,7 @@ export async function createExpense(
     notes: input.notes?.trim() || null,
     status: approved ? 'approved' : 'pending',
     approvedBy: approved ? user.id : null,
-    createdAt: now,
+    createdAt: when,
     updatedAt: now,
   });
 
@@ -161,7 +181,7 @@ export async function updateExpense(
   db: PostgresClient,
   user: SessionUser,
   id: string,
-  input: { categoryId?: string; amount?: number; notes?: string | null },
+  input: { categoryId?: string; amount?: number; notes?: string | null; expenseDate?: string },
 ) {
   const row = await loadExpense(db, id);
   if (!row) return { success: false as const, error: 'Expense not found' };
@@ -179,6 +199,11 @@ export async function updateExpense(
   if (input.categoryId) patch.categoryId = input.categoryId;
   if (input.amount !== undefined) patch.amount = input.amount;
   if (input.notes !== undefined) patch.notes = input.notes?.trim() || null;
+  if (input.expenseDate) {
+    const when = expenseTimestamp(input.expenseDate);
+    if (typeof when !== 'string') return { success: false as const, error: when.error };
+    patch.createdAt = when;
+  }
   // A cashier changing an approved expense sends it back for sign-off.
   if (user.role === 'cashier' && row.status === 'approved') {
     patch.status = 'pending';

@@ -537,6 +537,8 @@ export async function getSalesTrend(
   const data = [...byDay.entries()]
     .map(([date, v]) => ({
       date,
+      // What the day's bills came to — Day Close compares the cashier's count to it.
+      totalSales: v.totalSales,
       revenue: v.revenue,
       estimatedCost: v.estimatedCost,
       grossProfit: v.revenue - v.estimatedCost,

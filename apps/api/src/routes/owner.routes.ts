@@ -90,8 +90,30 @@ export async function ownerRoutes(app: FastifyInstance) {
         categoryId: z.string().min(1),
         amount: z.number(),
         notes: z.string().optional(),
+        expenseDate: z.string().optional(),
       })
       .parse(request.body);
     return expenses.createExpense(app.db, { id: user.id, name: user.name, role: user.role }, body);
+  });
+
+  // Owner corrections — served by api/v1/owner/[...path].ts on Vercel.
+  app.patch('/owner/expenses/:id', { preHandler: ownerOnly }, async (request) => {
+    const user = request.user as JwtUser;
+    const { id } = request.params as { id: string };
+    const body = z
+      .object({
+        categoryId: z.string().min(1).optional(),
+        amount: z.number().optional(),
+        notes: z.string().nullable().optional(),
+        expenseDate: z.string().optional(),
+      })
+      .parse(request.body);
+    return expenses.updateExpense(app.db, { id: user.id, name: user.name, role: user.role }, id, body);
+  });
+
+  app.delete('/owner/expenses/:id', { preHandler: ownerOnly }, async (request) => {
+    const user = request.user as JwtUser;
+    const { id } = request.params as { id: string };
+    return expenses.deleteExpense(app.db, { id: user.id, name: user.name, role: user.role }, id);
   });
 }
