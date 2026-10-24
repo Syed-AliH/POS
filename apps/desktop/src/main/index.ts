@@ -17,6 +17,8 @@ import { seedIfEmpty } from './services/seed';
 import { syncSkuPrefixesLocal } from './services/syncSkuPrefixes';
 import { ensureDefaultSettings } from './services/settings';
 import { installMainPerf } from './perf';
+import { stopRawPrinter, warmRawPrinter } from './services/labelRawWindows';
+import { warmReceiptRenderer } from './services/receiptPrintWysiwyg';
 import { mark, measure } from '@shared/perf';
 
 const isDev = !app.isPackaged;
@@ -67,6 +69,13 @@ function createWindow(): void {
 
   mainWindow.webContents.on('preload-error', (_event, path, error) => {
     console.error('[preload] Error loading:', path, error);
+  });
+
+  // Closing the till window closes the app. The hidden receipt renderer is a window
+  // too, so without this 'window-all-closed' never fired once a receipt had been
+  // printed and the app kept running in the background.
+  mainWindow.on('closed', () => {
+    if (process.platform !== 'darwin') app.quit();
   });
 
   mainWindow.on('ready-to-show', () => {
@@ -161,6 +170,10 @@ app.whenReady().then(async () => {
   createWindow();
   measure('startup.main');
   initAutoUpdater();
+  // Compiles the raw-print shim and loads the receipt renderer now, while the shop
+  // opens, so even the first receipt of the day prints straight away.
+  warmRawPrinter();
+  void warmReceiptRenderer();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -174,4 +187,5 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   stopBackupSchedule();
   stopBundledApi();
+  stopRawPrinter();
 });

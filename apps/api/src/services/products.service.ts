@@ -141,12 +141,13 @@ export async function advancedSearchProducts(
     }
   }
 
-  const hasFilter = !!(sku || master || refine);
+  // Uncapped, like filterProductsByAdvancedSearch on the till: a 500/200-row cap hid
+  // products once the catalogue outgrew it.
   let rows = await db
     .select()
     .from(products)
     .where(and(...conditions))
-    .limit(hasFilter ? 2000 : 500);
+    .orderBy(products.name);
 
   if (master) {
     const prefix = master.toLowerCase();
@@ -154,14 +155,20 @@ export async function advancedSearchProducts(
   }
   if (refine) rows = rows.filter((row) => matchesWordPrefix(row.name, refine));
 
-  const max = hasFilter ? 200 : 500;
-  return { success: true as const, data: rows.slice(0, max).map(mapProduct) };
+  return { success: true as const, data: rows.map(mapProduct) };
 }
 
+/**
+ * The whole catalogue unless a limit is asked for. It used to default to 500 rows and
+ * filter by status *after* the cap, so once the shop passed 500 products the newest
+ * ones (and any active ones past row 500) silently vanished from the Products page,
+ * GRN product lists and anything else that called this without a limit.
+ */
 export async function listProducts(db: PostgresClient, params?: { status?: string; limit?: number }) {
-  const limit = params?.limit ?? 500;
-  let rows = await db.select().from(products).where(eq(products.isDeleted, false)).limit(limit);
-  if (params?.status) rows = rows.filter((r) => r.status === params.status);
+  const conditions = [eq(products.isDeleted, false)];
+  if (params?.status) conditions.push(eq(products.status, params.status as 'active' | 'archived' | 'discontinued'));
+  const query = db.select().from(products).where(and(...conditions)).orderBy(products.name);
+  const rows = params?.limit && params.limit > 0 ? await query.limit(params.limit) : await query;
   return { success: true as const, data: rows.map(mapProduct) };
 }
 
@@ -169,6 +176,68 @@ export async function getProduct(db: PostgresClient, id: string): Promise<ApiRes
   const [row] = await db.select().from(products).where(eq(products.id, id)).limit(1);
   if (!row) return { success: false, error: 'Product not found' };
   return { success: true, data: mapProduct(row) };
+}
+
+/**
+ * Owner-portal catalogue in local dev — mirrors searchOwnerProducts in
+ * apps/owner-portal/api/_lib/products.ts, which serves the same route on Vercel.
+ */
+export async function getOwnerProducts(db: PostgresClient, params?: { search?: string; limit?: number }) {
+  const limit = Math.min(Math.max(params?.limit ?? 50, 1), 5000);
+  const search = params?.search?.trim().toLowerCase();
+  const conditions = [eq(products.isDeleted, false)];
+  if (search) {
+    const like = `%${escapeLike(search)}%`;
+    conditions.push(
+      or(
+        sql`lower(${products.name}) like ${like}`,
+        sql`lower(${products.sku}) like ${like}`,
+        sql`lower(coalesce(${products.barcode}, '')) like ${like}`,
+      )!,
+    );
+  }
+  const rows = await db
+    .select({ product: products, categoryName: categories.name })
+    .from(products)
+    .leftJoin(categories, eq(categories.id, products.categoryId))
+    .where(and(...conditions))
+    .orderBy(products.name)
+    .limit(limit);
+
+  return {
+    success: true as const,
+    data: rows.map(({ product: p, categoryName }) => {
+      const sellingPrice = p.salePrice ?? p.retailPrice;
+      const profit = sellingPrice - p.costPrice;
+      return {
+        id: p.id,
+        name: p.name,
+        sku: p.sku,
+        barcode: p.barcode,
+        categoryName,
+        costPrice: p.costPrice,
+        retailPrice: p.retailPrice,
+        salePrice: p.salePrice,
+        sellingPrice,
+        stockQty: p.stockQty,
+        status: p.status,
+        profit,
+        marginPercent: sellingPrice > 0 ? (profit / sellingPrice) * 100 : 0,
+      };
+    }),
+  };
+}
+
+/**
+ * Several products in one query, for callers that would otherwise fetch them one by
+ * one — label printing for a large GRN used to make a request per line. Missing ids
+ * are simply absent from the result.
+ */
+export async function getProductsByIds(db: PostgresClient, ids: string[]) {
+  const unique = [...new Set(ids)].slice(0, 5000);
+  if (!unique.length) return { success: true as const, data: [] };
+  const rows = await db.select().from(products).where(inArrayIds(unique));
+  return { success: true as const, data: rows.map(mapProduct) };
 }
 
 export async function barcodeLookup(db: PostgresClient, barcode: string) {

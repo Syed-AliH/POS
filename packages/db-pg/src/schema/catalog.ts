@@ -148,6 +148,12 @@ export const eodReports = pgTable('eod_reports', {
   totalExpenses: doublePrecision('total_expenses').notNull().default(0),
   dailySales: doublePrecision('daily_sales').notNull().default(0),
   pdfBase64: text('pdf_base64').notNull(),
+  // The itemized lines the cashier typed into the EOD form (amount + description),
+  // as JSON — previously only the lump totalExpenses survived outside the PDF.
+  expenseLinesJson: text('expense_lines_json'),
+  // Cash handed to the owner at close: a cash movement out of the drawer, kept apart
+  // from expenses so it never lowers profit or inflates the expense total.
+  cashToOwner: doublePrecision('cash_to_owner').notNull().default(0),
   ...syncColumns,
   ...timestamps,
 });

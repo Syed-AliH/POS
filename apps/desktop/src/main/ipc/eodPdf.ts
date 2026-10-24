@@ -31,6 +31,10 @@ export interface EodSubmitInput {
   totalCashCount: number;
   totalExpenses: number;
   dailySales: number;
+  /** The day's expenses (from the Expenses tab) as they stood at EOD — a snapshot. */
+  expenseLines?: Array<{ amount: number; description?: string }>;
+  /** Cash handed to the owner at close — a cash movement, not an expense. */
+  cashToOwner?: number;
 }
 
 /**
@@ -85,6 +89,8 @@ export async function handleEodSubmitReport(
       totalExpenses: input.totalExpenses,
       dailySales: input.dailySales,
       pdfBase64: pdf.toString('base64'),
+      expenseLines: input.expenseLines,
+      cashToOwner: input.cashToOwner,
     });
 
     if (!upload.success || !upload.data) {

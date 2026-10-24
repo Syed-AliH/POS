@@ -1,12 +1,29 @@
-import { and, desc, eq, gte, lte } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { v4 as uuid } from 'uuid';
 import { expenseCategories, expenses, shifts, users } from '@mama-babi/db-schema';
-import type { ApiResult, CreateExpenseInput, ExpenseCategory, ExpenseListParams, ExpenseSummary } from '@shared/types';
+import type {
+  ApiResult,
+  CreateExpenseInput,
+  ExpenseCategory,
+  ExpenseListParams,
+  ExpenseSummary,
+  UpdateExpenseInput,
+  UserSession,
+} from '@shared/types';
 import { getDb } from '../db';
 import { coerceReportDateRange, localCalendarDate } from '../lib/reportDateRange';
 import { requireRole, requireSession } from '../session';
 import { logAudit } from '../services/audit';
 import { getSetting } from '../services/settings';
+
+// Offline-mode copy of apps/api expenses.service.ts — in the bundled (cloud) setup the
+// IPC channels are forwarded there by withCloud and these never run. Keep the rules
+// (who may edit, what counts) in step with it.
+
+/** Counts toward a day's total: not deleted, not rejected — see countedExpense in apps/api. */
+export function isCountedExpense(row: { isDeleted: boolean; status: string }): boolean {
+  return !row.isDeleted && row.status !== 'rejected';
+}
 
 export function handleExpenseCategories(): ApiResult<ExpenseCategory[]> {
   try {
@@ -39,10 +56,25 @@ function mapExpense(row: typeof expenses.$inferSelect): ExpenseSummary {
   };
 }
 
+function loadExpense(id: string) {
+  const row = getDb().select().from(expenses).where(eq(expenses.id, id)).get();
+  return row && !row.isDeleted ? row : null;
+}
+
+/** Managers change any expense; a cashier only their own, on the day it was entered. */
+function canModify(session: UserSession, row: typeof expenses.$inferSelect): string | null {
+  if (session.role !== 'cashier') return null;
+  if (row.paidBy !== session.id) return 'Only a manager can change another person’s expense';
+  if (localCalendarDate(new Date(row.createdAt)) !== localCalendarDate()) {
+    return 'Only a manager can change an expense from an earlier day';
+  }
+  return null;
+}
+
 export function handleExpenseCreate(input: CreateExpenseInput): ApiResult<ExpenseSummary> {
   try {
     const session = requireSession();
-    if (input.amount <= 0) return { success: false, error: 'Amount must be positive' };
+    if (!(input.amount > 0)) return { success: false, error: 'Amount must be positive' };
 
     const db = getDb();
     const cat = db.select().from(expenseCategories).where(eq(expenseCategories.id, input.categoryId)).get();
@@ -63,7 +95,7 @@ export function handleExpenseCreate(input: CreateExpenseInput): ApiResult<Expens
       categoryId: input.categoryId,
       amount: input.amount,
       paidBy: session.id,
-      notes: input.notes ?? null,
+      notes: input.notes?.trim() || null,
       shiftId: openShift?.id ?? null,
       status: session.role === 'cashier' ? 'pending' : 'approved',
       approvedBy: session.role === 'cashier' ? null : session.id,
@@ -74,7 +106,7 @@ export function handleExpenseCreate(input: CreateExpenseInput): ApiResult<Expens
     }).run();
 
     logAudit('expenses', 'create', id, undefined, { amount: input.amount });
-    return { success: true, data: mapExpense(db.select().from(expenses).where(eq(expenses.id, id)).get()!) };
+    return { success: true, data: mapExpense(loadExpense(id)!) };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Create failed' };
   }
@@ -82,24 +114,26 @@ export function handleExpenseCreate(input: CreateExpenseInput): ApiResult<Expens
 
 export function handleExpenseList(params?: ExpenseListParams | number): ApiResult<ExpenseSummary[]> {
   try {
-    requireRole('super_admin', 'manager');
+    // Cashiers record the day's expenses and EOD reads them back, so listing is open
+    // to every signed-in role; approving stays manager-only.
+    requireSession();
     const db = getDb();
     const opts = typeof params === 'number' ? { limit: params } : params ?? {};
-    const limit = opts.limit ?? 50;
-    let rows = db.select().from(expenses).orderBy(desc(expenses.createdAt)).limit(limit * 5).all();
+    const limit = opts.limit ?? 200;
+    const { startDate, endDate } = coerceReportDateRange({ startDate: opts.startDate, endDate: opts.endDate });
 
-    if (opts.categoryId) rows = rows.filter((r) => r.categoryId === opts.categoryId);
-    if (opts.status) rows = rows.filter((r) => r.status === opts.status);
-    if (opts.startDate || opts.endDate) {
-      const { startDate, endDate } = coerceReportDateRange({
-        startDate: opts.startDate,
-        endDate: opts.endDate,
-      });
-      rows = rows.filter((r) => {
+    const rows = db
+      .select()
+      .from(expenses)
+      .where(eq(expenses.isDeleted, false))
+      .orderBy(desc(expenses.createdAt))
+      .all()
+      .filter((r) => {
+        if (opts.categoryId && r.categoryId !== opts.categoryId) return false;
+        if (opts.status && r.status !== opts.status) return false;
         const day = localCalendarDate(new Date(r.createdAt));
         return day >= startDate && day <= endDate;
       });
-    }
 
     return { success: true, data: rows.slice(0, limit).map(mapExpense) };
   } catch (e) {
@@ -107,11 +141,64 @@ export function handleExpenseList(params?: ExpenseListParams | number): ApiResul
   }
 }
 
+export function handleExpenseUpdate(id: string, input: UpdateExpenseInput): ApiResult<ExpenseSummary> {
+  try {
+    const session = requireSession();
+    const row = loadExpense(id);
+    if (!row) return { success: false, error: 'Expense not found' };
+    const denied = canModify(session, row);
+    if (denied) return { success: false, error: denied };
+    if (input.amount !== undefined && !(input.amount > 0)) return { success: false, error: 'Amount must be positive' };
+
+    const db = getDb();
+    if (input.categoryId && !db.select().from(expenseCategories).where(eq(expenseCategories.id, input.categoryId)).get()) {
+      return { success: false, error: 'Category not found' };
+    }
+
+    const patch: Partial<typeof expenses.$inferInsert> = { updatedAt: new Date().toISOString() };
+    if (input.categoryId) patch.categoryId = input.categoryId;
+    if (input.amount !== undefined) patch.amount = input.amount;
+    if (input.notes !== undefined) patch.notes = input.notes?.trim() || null;
+    // A cashier changing an approved expense sends it back for sign-off.
+    if (session.role === 'cashier' && row.status === 'approved') {
+      patch.status = 'pending';
+      patch.approvedBy = null;
+    }
+    db.update(expenses).set(patch).where(eq(expenses.id, id)).run();
+
+    logAudit('expenses', 'update', id, { amount: row.amount, notes: row.notes }, { amount: input.amount, notes: input.notes });
+    return { success: true, data: mapExpense(loadExpense(id)!) };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Update failed' };
+  }
+}
+
+/** Soft delete — the row stays for the audit trail but stops counting anywhere. */
+export function handleExpenseDelete(id: string): ApiResult<void> {
+  try {
+    const session = requireSession();
+    const row = loadExpense(id);
+    if (!row) return { success: false, error: 'Expense not found' };
+    const denied = canModify(session, row);
+    if (denied) return { success: false, error: denied };
+
+    getDb()
+      .update(expenses)
+      .set({ isDeleted: true, updatedAt: new Date().toISOString() })
+      .where(eq(expenses.id, id))
+      .run();
+    logAudit('expenses', 'delete', id, { amount: row.amount });
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Delete failed' };
+  }
+}
+
 export function handleExpenseApprove(id: string): ApiResult<ExpenseSummary> {
   try {
     const session = requireRole('super_admin', 'manager');
     const db = getDb();
-    const row = db.select().from(expenses).where(eq(expenses.id, id)).get();
+    const row = loadExpense(id);
     if (!row) return { success: false, error: 'Expense not found' };
 
     const now = new Date().toISOString();
@@ -121,7 +208,7 @@ export function handleExpenseApprove(id: string): ApiResult<ExpenseSummary> {
       .run();
 
     logAudit('expenses', 'approve', id);
-    return { success: true, data: mapExpense(db.select().from(expenses).where(eq(expenses.id, id)).get()!) };
+    return { success: true, data: mapExpense(loadExpense(id)!) };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Approve failed' };
   }

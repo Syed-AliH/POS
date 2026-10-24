@@ -63,7 +63,8 @@ export function filterProductsByAdvancedSearch<T extends { name: string; sku: st
     filtered = filtered.filter((r) => matchesRefineSearch(r.name, refine));
   }
 
-  const hasFilter = !!(input.sku?.trim() || input.master?.trim() || input.refine?.trim());
-  const max = limit ?? (hasFilter ? 200 : 500);
-  return filtered.slice(0, max);
+  // No default cap: this filters an in-memory catalogue, and a cap (it was 500 with no
+  // filter, 200 with one) silently dropped products from product search once the shop
+  // passed 500 items — browsing never showed the rest, a broad filter stopped at 200.
+  return limit != null ? filtered.slice(0, limit) : filtered;
 }

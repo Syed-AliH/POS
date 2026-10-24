@@ -65,7 +65,10 @@ export interface SaleSummary {
   discountReason?: string | null;
   taxAmount: number;
   totalAmount: number;
-  paymentMethod: 'cash' | 'card' | 'bank_transfer' | 'wallet' | 'online';
+  paymentMethod: PaymentMethod;
+  /** For a 'split' bill: the cash share. The rest (totalAmount − this) went through splitOtherMethod. */
+  splitCashAmount?: number | null;
+  splitOtherMethod?: SplitOtherMethod | null;
   amountTendered: number | null;
   changeGiven: number | null;
   status: 'completed' | 'held' | 'voided' | 'returned';
@@ -132,7 +135,9 @@ export interface CreateSaleInput {
   adjustmentAmount?: number;
   loyaltyPointsRedeemed?: number;
   promotionIds?: string[];
-  paymentMethod: 'cash' | 'card' | 'bank_transfer' | 'wallet' | 'online';
+  paymentMethod: PaymentMethod;
+  /** Required when paymentMethod is 'split': the cash share and how the rest was paid. */
+  split?: SplitPaymentInput;
   amountTendered?: number;
   giftCardCode?: string;
   notes?: string;
@@ -252,12 +257,21 @@ export interface ShiftSummary {
   difference?: number;
 }
 
+export type PaymentMethod = 'cash' | 'card' | 'bank_transfer' | 'wallet' | 'online' | 'split';
+export type SplitOtherMethod = 'card' | 'online';
+export interface SplitPaymentInput {
+  cashAmount: number;
+  otherMethod: SplitOtherMethod;
+}
+
 export interface EodReport {
   date: string;
   totalSales: number;
   transactionCount: number;
+  /** Includes the cash share of split bills — this is drawer cash. */
   cashSales: number;
   cardSales: number;
+  onlineSales?: number;
   walletSales: number;
   returnsTotal: number;
   expensesTotal: number;
@@ -313,6 +327,9 @@ export interface ReceiptPreview {
   paymentMethod: string;
   amountTendered: number | null;
   changeGiven: number | null;
+  /** Set on a 'split' bill: the cash share; the rest went through splitOtherMethod. */
+  splitCashAmount?: number | null;
+  splitOtherMethod?: SplitOtherMethod | null;
   footerMessage: string;
 }
 
@@ -762,6 +779,12 @@ export interface CreateExpenseInput {
   notes?: string;
 }
 
+export interface UpdateExpenseInput {
+  categoryId?: string;
+  amount?: number;
+  notes?: string | null;
+}
+
 export interface AuditLogEntry {
   id: string;
   userId: string | null;
@@ -875,12 +898,18 @@ export interface InventoryReportSummary {
 }
 
 export interface ProfitReport {
+  /** Profit basis: line totals less bill discounts and Returns-screen refunds. Not "Sales". */
   revenue: number;
   estimatedCost: number;
   grossProfit: number;
   marginPercent: number;
   transactionCount: number;
   returnsTotal: number;
+  /**
+   * Sum of bill totals — what customers were charged. Shown as "Sales" on the desktop
+   * and the owner portal alike, so both read the same figure for the same period.
+   */
+  totalSales: number;
 }
 
 export interface SyncQueueItem {

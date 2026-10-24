@@ -30,9 +30,21 @@ export function ReceiptPreview({ data, className }: { data: ReceiptPreviewData; 
         {data.discountAmount > 0 && <div className="flex justify-between"><span>Discount</span><span>-{data.discountAmount.toFixed(2)}</span></div>}
         {data.taxAmount > 0 && <div className="flex justify-between"><span>Tax</span><span>{data.taxAmount.toFixed(2)}</span></div>}
         <div className="flex justify-between font-bold text-sm"><span>Total</span><span>PKR {data.totalAmount.toFixed(2)}</span></div>
-        <div className="flex justify-between capitalize"><span>{data.paymentMethod.replace('_', ' ')}</span></div>
-        {data.amountTendered != null && <div className="flex justify-between"><span>Tendered</span><span>{data.amountTendered.toFixed(2)}</span></div>}
-        {data.changeGiven != null && data.changeGiven > 0 && <div className="flex justify-between"><span>Change</span><span>{data.changeGiven.toFixed(2)}</span></div>}
+        {data.paymentMethod === 'split' && data.splitCashAmount != null ? (
+          <>
+            <div className="flex justify-between"><span>Cash</span><span>{data.splitCashAmount.toFixed(2)}</span></div>
+            <div className="flex justify-between">
+              <span>{data.splitOtherMethod === 'online' ? 'Online' : 'Card'}</span>
+              <span>{(data.totalAmount - data.splitCashAmount).toFixed(2)}</span>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex justify-between capitalize"><span>{data.paymentMethod.replace('_', ' ')}</span></div>
+            {data.amountTendered != null && <div className="flex justify-between"><span>Tendered</span><span>{data.amountTendered.toFixed(2)}</span></div>}
+            {data.changeGiven != null && data.changeGiven > 0 && <div className="flex justify-between"><span>Change</span><span>{data.changeGiven.toFixed(2)}</span></div>}
+          </>
+        )}
       </div>
       <div className="text-center text-xs text-slate-500 mt-3 border-t pt-2">{data.footerMessage}</div>
     </div>

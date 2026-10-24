@@ -17,7 +17,7 @@ import { findCachedByBarcode, searchCachedProducts, useProductSearchStore } from
 
 const api = getApi();
 
-type PaymentMethod = 'cash' | 'card' | 'wallet' | 'online';
+type PaymentMethod = 'cash' | 'card' | 'wallet' | 'online' | 'split';
 
 function saleCustomerPayload(
   customer: Customer | null,
@@ -86,6 +86,12 @@ export function CheckoutPage() {
   const [productCount, setProductCount] = useState<number | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [amountTendered, setAmountTendered] = useState('');
+  // Split payment: part cash, the rest by card or online. The non-cash amount fills in
+  // as "whatever cash doesn't cover" until the cashier types it themselves.
+  const [splitCashInput, setSplitCashInput] = useState('');
+  const [splitOtherInput, setSplitOtherInput] = useState('');
+  const [splitOtherTouched, setSplitOtherTouched] = useState(false);
+  const [splitOtherMethod, setSplitOtherMethod] = useState<'card' | 'online'>('card');
   const [adjustmentInput, setAdjustmentInput] = useState('');
   const [processing, setProcessing] = useState(false);
   const [heldSales, setHeldSales] = useState<SaleSummary[]>([]);
@@ -204,6 +210,15 @@ export function CheckoutPage() {
   const editCashChange = isEditingBill
     ? Math.max(0, parseFloat(amountTendered || '0') - amountToCollect)
     : 0;
+  const roundMoney = (n: number) => Math.round(n * 100) / 100;
+  const splitCash = roundMoney(Math.max(0, parseFloat(splitCashInput || '0') || 0));
+  const splitOther = splitOtherTouched
+    ? roundMoney(Math.max(0, parseFloat(splitOtherInput || '0') || 0))
+    : roundMoney(Math.max(0, total - splitCash));
+  /** Positive: still owed. Negative: the two parts add up to more than the bill. */
+  const splitRemaining = roundMoney(total - splitCash - splitOther);
+  const splitReady = splitCash > 0 && splitOther > 0 && Math.abs(splitRemaining) < 0.01;
+
   /** Something typed, but not enough to cover the bill. */
   const tenderShort =
     !isEditingBill && paymentMethod === 'cash' && !!amountTendered.trim() &&
@@ -243,7 +258,7 @@ export function CheckoutPage() {
     ? 0
     : isEditingBill
       ? (amountToCollect > 0.009 && !amountTendered ? 1 : 2)
-      : paymentMethod === 'cash' && !amountTendered ? 1 : 2;
+      : (paymentMethod === 'cash' && !amountTendered) || (paymentMethod === 'split' && !splitReady) ? 1 : 2;
 
   /** Reloads the cached catalogue (stock included) — used after a bill edit. */
   const refreshStockMap = useCallback(async () => {
@@ -455,6 +470,9 @@ export function CheckoutPage() {
     setAdjustmentInput('');
     setGiftCardCode('');
     setGiftCardBalance(null);
+    setSplitCashInput('');
+    setSplitOtherInput('');
+    setSplitOtherTouched(false);
   };
 
   /**
@@ -565,6 +583,20 @@ export function CheckoutPage() {
       setProcessing(false);
       return;
     }
+    if (paymentMethod === 'split' && !splitReady) {
+      toast.error(
+        splitCash <= 0
+          ? 'Enter the cash part of the payment'
+          : splitRemaining > 0
+            ? `PKR ${splitRemaining.toFixed(2)} still to be paid — the two parts must add up to the bill`
+            : splitRemaining < 0
+              ? `The two parts are PKR ${Math.abs(splitRemaining).toFixed(2)} more than the bill`
+              : 'For a cash-only payment choose Cash',
+      );
+      focusElement(tenderRef, true);
+      setProcessing(false);
+      return;
+    }
 
     mark('charge.buttonToCartCleared');
     try {
@@ -574,7 +606,8 @@ export function CheckoutPage() {
       items: billedItems.map((i) => ({ productId: i.productId, quantity: i.billedQty, discountPercent: i.discountPercent, unitPrice: i.unitPrice })),
       ...saleCustomerPayload(customer, customerName, customerPhone),
       paymentMethod,
-      amountTendered: paymentMethod === 'cash' ? tendered : undefined,
+      amountTendered: paymentMethod === 'cash' ? tendered : paymentMethod === 'split' ? splitCash : undefined,
+      split: paymentMethod === 'split' ? { cashAmount: splitCash, otherMethod: splitOtherMethod } : undefined,
       discountAmount: (discountAmount + promoCodeDiscount) || undefined,
       discountReason: [discountReason, promoCodeLabel ? `Promo ${promoCodeLabel}` : ''].filter(Boolean).join('; ') || undefined,
       adjustmentAmount: adjustmentAmount || undefined,
@@ -633,7 +666,7 @@ export function CheckoutPage() {
       F4: () => handleChargeRef.current(),
       'Ctrl+S': () => handleChargeRef.current({ forcePrint: true }),
       F5: () => focusElement(customerRef, true),
-      F6: () => { if (paymentMethod === 'cash') focusElement(tenderRef, true); },
+      F6: () => { if (paymentMethod === 'cash' || paymentMethod === 'split') focusElement(tenderRef, true); },
       Escape: () => {
         if (showHeld) setShowHeld(false);
         else if (items.length) setShowClearConfirm(true);
@@ -647,7 +680,14 @@ export function CheckoutPage() {
   useEffect(() => {
     const handleBarcode = (e: KeyboardEvent) => {
       if (getActiveRoute() !== '/checkout') return;
-      if ([searchRef, customerRef, tenderRef].some((r) => r.current === document.activeElement)) return;
+      // Typing into any field (tender, split amounts, adjustment, line qty) is not a
+      // scan — fast digits followed by Enter must not also look up a product.
+      const focused = document.activeElement;
+      if (
+        focused instanceof HTMLInputElement ||
+        focused instanceof HTMLTextAreaElement ||
+        focused instanceof HTMLSelectElement
+      ) return;
       if (showHeldRef.current) return;
       if (/^F\d{1,2}$/i.test(e.key) || e.key === 'Escape' || e.altKey) return;
       if (e.key === 'Enter' && barcodeBufferRef.current.length >= 4) {
@@ -1060,7 +1100,9 @@ export function CheckoutPage() {
                               onBlur={() => commitQtyDraft(item.productId, item.quantity)}
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
-                                else if (e.key === 'Escape') { setQtyDraft(null); e.currentTarget.blur(); }
+                                // preventDefault marks Esc as handled so the page's
+                                // "Clear cart?" shortcut doesn't fire as well.
+                                else if (e.key === 'Escape') { e.preventDefault(); setQtyDraft(null); e.currentTarget.blur(); }
                                 else if (e.key === 'ArrowUp') { e.preventDefault(); setQtyDraft(null); stepQuantity(item.productId, item.quantity, 1); }
                                 else if (e.key === 'ArrowDown') { e.preventDefault(); setQtyDraft(null); stepQuantity(item.productId, item.quantity, -1); }
                               }}
@@ -1403,7 +1445,7 @@ export function CheckoutPage() {
           <div className={`border-b border-slate-200 p-4 dark:border-slate-800 ${isEditingBill ? 'hidden' : ''}`}>
             <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Step 3 — Payment</label>
             <div className="flex gap-2">
-              {(['cash', 'card', 'online', 'wallet'] as PaymentMethod[]).map((m) => (
+              {(['cash', 'card', 'online', 'split', 'wallet'] as PaymentMethod[]).map((m) => (
                 <button
                   key={m}
                   type="button"
@@ -1414,7 +1456,7 @@ export function CheckoutPage() {
                       : 'border border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200'
                   }`}
                 >
-                  {m === 'wallet' ? 'Gift Card' : m === 'online' ? 'Online' : m.replace('_', ' ')}
+                  {m === 'wallet' ? 'Gift Card' : m === 'online' ? 'Online' : m === 'split' ? 'Split' : m.replace('_', ' ')}
                 </button>
               ))}
             </div>
@@ -1486,6 +1528,84 @@ export function CheckoutPage() {
             </div>
           )}
 
+          {!isEditingBill && paymentMethod === 'split' && (
+            <div className="space-y-3 border-b border-slate-200 p-4 dark:border-slate-800">
+              <div>
+                <label htmlFor="split-cash" className="text-sm font-medium text-slate-600 dark:text-slate-400">
+                  Cash received (F6)
+                </label>
+                <input
+                  id="split-cash"
+                  ref={tenderRef}
+                  type="number"
+                  min={0}
+                  value={splitCashInput}
+                  onChange={(e) => setSplitCashInput(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-4 py-3 text-xl font-bold outline-none dark:border-slate-700 dark:bg-slate-900"
+                  placeholder="0.00"
+                />
+              </div>
+              <div>
+                <div className="flex items-center justify-between">
+                  <label htmlFor="split-other" className="text-sm font-medium text-slate-600 dark:text-slate-400">
+                    Rest paid by
+                  </label>
+                  <div className="flex gap-1" role="group" aria-label="Non-cash method">
+                    {(['card', 'online'] as const).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setSplitOtherMethod(m)}
+                        className={cn(
+                          'rounded-md px-3 py-1 text-xs font-medium capitalize',
+                          splitOtherMethod === m
+                            ? 'bg-primary-600 text-white'
+                            : 'border border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300',
+                        )}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <input
+                  id="split-other"
+                  type="number"
+                  min={0}
+                  value={splitOtherTouched ? splitOtherInput : splitOther ? String(splitOther) : ''}
+                  onChange={(e) => { setSplitOtherTouched(true); setSplitOtherInput(e.target.value); }}
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-4 py-3 text-xl font-bold outline-none dark:border-slate-700 dark:bg-slate-900"
+                  placeholder="0.00"
+                />
+                {splitOtherTouched && (
+                  <button
+                    type="button"
+                    className="mt-1 text-xs text-primary-700 underline dark:text-primary-400"
+                    onClick={() => { setSplitOtherTouched(false); setSplitOtherInput(''); }}
+                  >
+                    Fill in the rest automatically
+                  </button>
+                )}
+              </div>
+              <div
+                className={cn(
+                  'rounded-lg px-3 py-2 text-sm font-semibold tabular-nums',
+                  splitReady
+                    ? 'bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300'
+                    : 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300',
+                )}
+              >
+                {splitReady
+                  ? `Fully paid — cash PKR ${splitCash.toFixed(2)} + ${splitOtherMethod} PKR ${splitOther.toFixed(2)}`
+                  : splitRemaining > 0
+                    ? `Remaining: PKR ${splitRemaining.toFixed(2)}`
+                    : splitRemaining < 0
+                      ? `Over by PKR ${Math.abs(splitRemaining).toFixed(2)} — the parts must equal the bill`
+                      : 'Enter the cash part'}
+              </div>
+            </div>
+          )}
+
           {!isEditingBill && (paymentMethod === 'card' || paymentMethod === 'online') && (
             <div className="border-b border-slate-200 p-4 text-sm text-slate-500 dark:border-slate-800 dark:text-slate-400">
               {paymentMethod === 'online' ? 'Online payment' : 'Card payment'} — press <strong>F4</strong> to charge PKR {total.toFixed(2)}
@@ -1504,7 +1624,8 @@ export function CheckoutPage() {
               onClick={() => handleCharge()}
               disabled={
                 processing || items.length === 0 ||
-                (!isEditingBill && paymentMethod === 'wallet' && (!giftCardCode || (giftCardBalance != null && giftCardBalance < total)))
+                (!isEditingBill && paymentMethod === 'wallet' && (!giftCardCode || (giftCardBalance != null && giftCardBalance < total))) ||
+                (!isEditingBill && paymentMethod === 'split' && !splitReady)
               }
             >
               {processing

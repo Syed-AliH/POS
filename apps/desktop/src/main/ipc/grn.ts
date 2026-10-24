@@ -1,4 +1,4 @@
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, like, lte, sql, type SQL } from 'drizzle-orm';
 import { v4 as uuid } from 'uuid';
 import {
   grnHeaders,
@@ -20,46 +20,138 @@ import {
   type GrnPaymentType,
 } from '../services/supplierCredit';
 
-function mapGrn(grnId: string): GrnSummary | null {
+/** The database or a transaction on it — the helpers below run inside either. */
+type Db = ReturnType<typeof getDb> | Parameters<Parameters<ReturnType<typeof getDb>['transaction']>[0]>[0];
+type GrnItemInput = { productId: string; qty: number; unitCost: number; unitRetail?: number };
+
+/** Keeps a bulk insert well under SQLite's bound-variable limit. */
+function chunks<T>(rows: T[], size = 500): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size));
+  return out;
+}
+
+/**
+ * Load several GRNs with vendor, creator and lines in two queries, in `grnIds` order.
+ * Mirrors mapGrns in apps/api grn.service.ts — the per-line product lookups it
+ * replaces are what made a big records list crawl in cloud mode.
+ */
+function mapGrns(grnIds: string[]): GrnSummary[] {
+  if (!grnIds.length) return [];
   const db = getDb();
-  const header = db.select().from(grnHeaders).where(eq(grnHeaders.id, grnId)).get();
-  if (!header) return null;
+  const headerRows = db
+    .select({ header: grnHeaders, vendorName: vendors.name, creatorName: users.name })
+    .from(grnHeaders)
+    .leftJoin(vendors, eq(vendors.id, grnHeaders.vendorId))
+    .leftJoin(users, eq(users.id, grnHeaders.createdBy))
+    .where(inArray(grnHeaders.id, grnIds))
+    .all();
+  const lineRows = db
+    .select({
+      line: grnLines,
+      productName: products.name,
+      productSku: products.sku,
+      productRetail: products.retailPrice,
+    })
+    .from(grnLines)
+    .leftJoin(products, eq(products.id, grnLines.productId))
+    .where(inArray(grnLines.grnId, grnIds))
+    .all();
 
-  const vendor = db.select().from(vendors).where(eq(vendors.id, header.vendorId)).get();
-  const creator = db.select().from(users).where(eq(users.id, header.createdBy)).get();
-  const lines = db.select().from(grnLines).where(eq(grnLines.grnId, grnId)).all();
-
-  const items = lines.map((line) => {
-    const product = db.select().from(products).where(eq(products.id, line.productId)).get();
-    return {
+  const itemsByGrn = new Map<string, GrnSummary['items']>();
+  for (const { line, productName, productSku, productRetail } of lineRows) {
+    const list = itemsByGrn.get(line.grnId) ?? [];
+    list.push({
       id: line.id,
       productId: line.productId,
-      productName: product?.name ?? 'Unknown',
-      productSku: product?.sku ?? '',
+      productName: productName ?? 'Unknown',
+      productSku: productSku ?? '',
       qty: line.qty,
       unitCost: line.unitCost,
-      unitRetail: line.unitRetail ?? product?.retailPrice ?? 0,
+      unitRetail: line.unitRetail ?? productRetail ?? 0,
       lineTotal: line.lineTotal,
-    };
-  });
+    });
+    itemsByGrn.set(line.grnId, list);
+  }
 
-  return {
-    id: header.id,
-    grnNumber: header.grnNumber,
-    vendorId: header.vendorId,
-    vendorName: vendor?.name ?? 'Unknown',
-    invoiceNumber: header.invoiceNumber,
-    invoiceTotal: header.invoiceTotal,
-    linesTotal: items.reduce((sum, i) => sum + i.lineTotal, 0),
-    receivedDate: header.receivedDate,
-    status: header.status,
-    paymentType: (header.paymentType ?? 'cash') as GrnPaymentType,
-    notes: header.notes,
-    createdByName: creator?.name ?? 'Unknown',
-    createdAt: header.createdAt,
-    updatedAt: header.updatedAt,
-    items,
-  };
+  const headerById = new Map(headerRows.map((r) => [r.header.id, r]));
+  return grnIds.flatMap((id) => {
+    const row = headerById.get(id);
+    if (!row) return [];
+    const { header } = row;
+    const items = itemsByGrn.get(id) ?? [];
+    return [{
+      id: header.id,
+      grnNumber: header.grnNumber,
+      vendorId: header.vendorId,
+      vendorName: row.vendorName ?? 'Unknown',
+      invoiceNumber: header.invoiceNumber,
+      invoiceTotal: header.invoiceTotal,
+      linesTotal: items.reduce((sum, i) => sum + i.lineTotal, 0),
+      receivedDate: header.receivedDate,
+      status: header.status,
+      paymentType: (header.paymentType ?? 'cash') as GrnPaymentType,
+      notes: header.notes,
+      createdByName: row.creatorName ?? 'Unknown',
+      createdAt: header.createdAt,
+      updatedAt: header.updatedAt,
+      items,
+    }];
+  });
+}
+
+function mapGrn(grnId: string): GrnSummary | null {
+  return mapGrns([grnId])[0] ?? null;
+}
+
+function retailPriceById(db: Db, ids: string[]): Map<string, number> {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return new Map();
+  const rows = db
+    .select({ id: products.id, retailPrice: products.retailPrice })
+    .from(products)
+    .where(inArray(products.id, unique))
+    .all();
+  return new Map(rows.map((r) => [r.id, r.retailPrice]));
+}
+
+function buildLineRows(
+  grnId: string,
+  items: GrnItemInput[],
+  retailById: Map<string, number>,
+  now: string,
+  deviceId: string,
+  branchId: string,
+) {
+  return items.map((item) => ({
+    id: uuid(),
+    grnId,
+    productId: item.productId,
+    qty: item.qty,
+    unitCost: item.unitCost,
+    unitRetail: item.unitRetail ?? retailById.get(item.productId) ?? 0,
+    lineTotal: item.qty * item.unitCost,
+    deviceId,
+    branchId,
+    createdAt: now,
+    updatedAt: now,
+  }));
+}
+
+/**
+ * Add a signed quantity to each product's stock. Always relative (`stock_qty + delta`),
+ * never a read-then-write, so a concurrent sale's decrement is never overwritten.
+ */
+function addStock(tx: Db, items: Array<{ productId: string; qty: number }>, sign: 1 | -1, now: string): void {
+  const deltas = new Map<string, number>();
+  for (const item of items) deltas.set(item.productId, (deltas.get(item.productId) ?? 0) + sign * item.qty);
+  for (const [productId, delta] of deltas) {
+    if (delta === 0) continue;
+    tx.update(products)
+      .set({ stockQty: sql`${products.stockQty} + ${delta}`, updatedAt: now })
+      .where(eq(products.id, productId))
+      .run();
+  }
 }
 
 export function handleGrnCreate(input: CreateGrnInput): ApiResult<GrnSummary> {
@@ -80,25 +172,10 @@ export function handleGrnCreate(input: CreateGrnInput): ApiResult<GrnSummary> {
     const receivedDate = input.receivedDate ?? now.slice(0, 10);
     const paymentType: GrnPaymentType = input.paymentType ?? (vendor.preferredPaymentType as GrnPaymentType) ?? 'cash';
 
-    const lineRows = input.items.map((item) => {
-      const product = db.select().from(products).where(eq(products.id, item.productId)).get();
-      if (!product) throw new Error(`Product not found: ${item.productId}`);
-      const lineTotal = item.qty * item.unitCost;
-      const unitRetail = item.unitRetail ?? product.retailPrice;
-      return {
-        id: uuid(),
-        grnId,
-        productId: item.productId,
-        qty: item.qty,
-        unitCost: item.unitCost,
-        unitRetail,
-        lineTotal,
-        deviceId,
-        branchId,
-        createdAt: now,
-        updatedAt: now,
-      };
-    });
+    const retailById = retailPriceById(db, input.items.map((i) => i.productId));
+    const missing = input.items.find((i) => !retailById.has(i.productId));
+    if (missing) throw new Error(`Product not found: ${missing.productId}`);
+    const lineRows = buildLineRows(grnId, input.items, retailById, now, deviceId, branchId);
 
     const linesTotal = lineRows.reduce((sum, l) => sum + l.lineTotal, 0);
 
@@ -120,8 +197,8 @@ export function handleGrnCreate(input: CreateGrnInput): ApiResult<GrnSummary> {
         updatedAt: now,
       }).run();
 
-      for (const line of lineRows) {
-        tx.insert(grnLines).values(line).run();
+      for (const chunk of chunks(lineRows)) {
+        tx.insert(grnLines).values(chunk).run();
       }
     });
 
@@ -139,24 +216,25 @@ export function handleGrnList(params?: GrnListParams): ApiResult<GrnSummary[]> {
   try {
     requireRole('super_admin', 'manager');
     const db = getDb();
-    const limit = params?.limit ?? 50;
-    let rows = db.select().from(grnHeaders).orderBy(desc(grnHeaders.createdAt)).limit(limit * 3).all();
+    const limit = Math.min(params?.limit ?? 50, 500);
+    // Filters run in the database. They used to run in JS over the newest `limit * 3`
+    // headers, so a vendor or date filter silently missed anything older than that.
+    const conditions: SQL[] = [];
+    if (params?.status) conditions.push(eq(grnHeaders.status, params.status as GrnSummary['status']));
+    if (params?.vendorId) conditions.push(eq(grnHeaders.vendorId, params.vendorId));
+    // SQLite LIKE is case-insensitive for ASCII, matching the old lowercase compare.
+    if (params?.grnNumber?.trim()) conditions.push(like(grnHeaders.grnNumber, `%${params.grnNumber.trim()}%`));
+    if (params?.startDate) conditions.push(gte(grnHeaders.receivedDate, params.startDate));
+    if (params?.endDate) conditions.push(lte(grnHeaders.receivedDate, params.endDate));
 
-    if (params?.status) rows = rows.filter((r) => r.status === params.status);
-    if (params?.vendorId) rows = rows.filter((r) => r.vendorId === params.vendorId);
-    if (params?.grnNumber?.trim()) {
-      const q = params.grnNumber.trim().toLowerCase();
-      rows = rows.filter((r) => r.grnNumber.toLowerCase().includes(q));
-    }
-    if (params?.startDate) {
-      rows = rows.filter((r) => r.receivedDate >= params.startDate!);
-    }
-    if (params?.endDate) {
-      rows = rows.filter((r) => r.receivedDate <= params.endDate!);
-    }
-
-    const summaries = rows.slice(0, limit).map((r) => mapGrn(r.id)).filter(Boolean) as GrnSummary[];
-    return { success: true, data: summaries };
+    const rows = db
+      .select({ id: grnHeaders.id })
+      .from(grnHeaders)
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(desc(grnHeaders.createdAt))
+      .limit(limit)
+      .all();
+    return { success: true, data: mapGrns(rows.map((r) => r.id)) };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'GRN list failed' };
   }
@@ -188,55 +266,29 @@ export function handleGrnFinalize(id: string): ApiResult<GrnSummary> {
     const deviceId = getSetting('device_id') ?? 'local-device';
     const branchId = getSetting('branch_id') ?? 'main';
 
+    // Declared out here because the audit entry below needs it too; inside the
+    // transaction it threw a ReferenceError after the GRN had already committed,
+    // so a successful finalize was reported as a failure.
+    const linesTotal = lines.reduce((sum, l) => sum + l.lineTotal, 0);
+
     db.transaction((tx) => {
-      const linesTotal = lines.reduce((sum, l) => sum + l.lineTotal, 0);
       tx.update(grnHeaders)
         .set({ status: 'finalized', invoiceTotal: linesTotal, updatedAt: now })
         .where(eq(grnHeaders.id, id))
         .run();
 
-      const affectedProductIds: string[] = [];
+      applyFinalizedGrnLineEffects(
+        tx,
+        id,
+        header.grnNumber,
+        header.vendorId,
+        lines.map((l) => ({ productId: l.productId, qty: l.qty, unitCost: l.unitCost })),
+        now,
+        deviceId,
+        branchId,
+      );
 
-      for (const line of lines) {
-        const product = tx.select().from(products).where(eq(products.id, line.productId)).get()!;
-        affectedProductIds.push(line.productId);
-        tx.update(products)
-          .set({
-            stockQty: product.stockQty + line.qty,
-            updatedAt: now,
-          })
-          .where(eq(products.id, line.productId))
-          .run();
-
-        tx.insert(inventoryMovements).values({
-          id: uuid(),
-          productId: line.productId,
-          type: 'purchase',
-          qtyChange: line.qty,
-          referenceId: id,
-          notes: `GRN ${header.grnNumber}`,
-          deviceId,
-          branchId,
-          createdAt: now,
-          updatedAt: now,
-        }).run();
-
-        tx.insert(productCostHistory).values({
-          id: uuid(),
-          productId: line.productId,
-          vendorId: header.vendorId,
-          costPrice: line.unitCost,
-          qty: line.qty,
-          sourceType: 'grn',
-          sourceId: id,
-          deviceId,
-          branchId,
-          createdAt: now,
-          updatedAt: now,
-        }).run();
-      }
-
-      syncProductsFromLatestGrn(tx, affectedProductIds, now);
+      syncProductsFromLatestGrn(tx, lines.map((l) => l.productId), now);
     });
 
     const paymentType = (header.paymentType ?? 'cash') as GrnPaymentType;
@@ -253,34 +305,37 @@ export function handleGrnFinalize(id: string): ApiResult<GrnSummary> {
 
 /** Apply master product cost/retail from the most recent finalized GRN line per product. */
 function syncProductsFromLatestGrn(
-  tx: ReturnType<typeof getDb>,
+  tx: Db,
   productIds: string[],
   now: string,
 ): void {
   const uniqueIds = [...new Set(productIds)];
-  for (const productId of uniqueIds) {
-    const product = tx.select().from(products).where(eq(products.id, productId)).get();
-    if (!product) continue;
+  if (!uniqueIds.length) return;
 
-    const lines = tx.select().from(grnLines).where(eq(grnLines.productId, productId)).all();
-    let latestLine: (typeof lines)[number] | null = null;
-    let latestGrnCreatedAt = '';
+  // One query for every product's finalized lines, newest GRN first — the first row
+  // seen per product is its latest. Replaces a header lookup per line per product.
+  const lines = tx
+    .select({
+      productId: grnLines.productId,
+      unitCost: grnLines.unitCost,
+      unitRetail: grnLines.unitRetail,
+    })
+    .from(grnLines)
+    .innerJoin(grnHeaders, eq(grnHeaders.id, grnLines.grnId))
+    .where(and(eq(grnHeaders.status, 'finalized'), inArray(grnLines.productId, uniqueIds)))
+    .orderBy(desc(grnHeaders.createdAt))
+    .all();
 
-    for (const line of lines) {
-      const header = tx.select().from(grnHeaders).where(eq(grnHeaders.id, line.grnId)).get();
-      if (!header || header.status !== 'finalized') continue;
-      if (!latestLine || header.createdAt > latestGrnCreatedAt) {
-        latestLine = line;
-        latestGrnCreatedAt = header.createdAt;
-      }
-    }
+  const latestByProduct = new Map<string, (typeof lines)[number]>();
+  for (const line of lines) {
+    if (!latestByProduct.has(line.productId)) latestByProduct.set(line.productId, line);
+  }
 
-    if (!latestLine) continue;
-
-    const retailPrice = latestLine.unitRetail ?? product.retailPrice;
+  // A product with no finalized GRN left (e.g. its only GRN was voided) keeps its prices.
+  for (const [productId, latestLine] of latestByProduct) {
     tx.update(products)
       .set({
-        retailPrice,
+        retailPrice: latestLine.unitRetail ?? sql`${products.retailPrice}`,
         costPrice: latestLine.unitCost,
         updatedAt: now,
       })
@@ -290,81 +345,63 @@ function syncProductsFromLatestGrn(
 }
 
 function reverseFinalizedGrnEffects(
-  tx: ReturnType<typeof getDb>,
+  tx: Db,
   grnId: string,
   oldLines: Array<{ productId: string; qty: number }>,
   now: string,
 ): void {
-  for (const line of oldLines) {
-    const product = tx.select().from(products).where(eq(products.id, line.productId)).get();
-    if (!product) continue;
-    tx.update(products)
-      .set({ stockQty: product.stockQty - line.qty, updatedAt: now })
-      .where(eq(products.id, line.productId))
-      .run();
-  }
-
-  const movements = tx.select().from(inventoryMovements).where(eq(inventoryMovements.referenceId, grnId)).all();
-  for (const movement of movements) {
-    tx.delete(inventoryMovements).where(eq(inventoryMovements.id, movement.id)).run();
-  }
-
-  const costRows = tx.select().from(productCostHistory).where(eq(productCostHistory.sourceId, grnId)).all();
-  for (const row of costRows) {
-    tx.delete(productCostHistory).where(eq(productCostHistory.id, row.id)).run();
-  }
+  addStock(tx, oldLines, -1, now);
+  tx.delete(inventoryMovements).where(eq(inventoryMovements.referenceId, grnId)).run();
+  tx.delete(productCostHistory).where(eq(productCostHistory.sourceId, grnId)).run();
 }
 
 function applyFinalizedGrnLineEffects(
-  tx: ReturnType<typeof getDb>,
+  tx: Db,
   grnId: string,
   grnNumber: string,
   vendorId: string,
-  items: Array<{ productId: string; qty: number; unitCost: number; unitRetail?: number }>,
+  items: GrnItemInput[],
   now: string,
   deviceId: string,
   branchId: string,
 ): void {
-  const affectedProductIds: string[] = [];
+  const known = retailPriceById(tx, items.map((i) => i.productId));
+  const missing = items.find((i) => !known.has(i.productId));
+  if (missing) throw new Error(`Product not found: ${missing.productId}`);
 
-  for (const item of items) {
-    const product = tx.select().from(products).where(eq(products.id, item.productId)).get();
-    if (!product) throw new Error(`Product not found: ${item.productId}`);
-    affectedProductIds.push(item.productId);
-    tx.update(products)
-      .set({
-        stockQty: product.stockQty + item.qty,
+  addStock(tx, items, 1, now);
+
+  for (const chunk of chunks(items)) {
+    tx.insert(inventoryMovements).values(
+      chunk.map((item) => ({
+        id: uuid(),
+        productId: item.productId,
+        type: 'purchase' as const,
+        qtyChange: item.qty,
+        referenceId: grnId,
+        notes: `GRN ${grnNumber}`,
+        deviceId,
+        branchId,
+        createdAt: now,
         updatedAt: now,
-      })
-      .where(eq(products.id, item.productId))
-      .run();
+      })),
+    ).run();
 
-    tx.insert(inventoryMovements).values({
-      id: uuid(),
-      productId: item.productId,
-      type: 'purchase',
-      qtyChange: item.qty,
-      referenceId: grnId,
-      notes: `GRN ${grnNumber}`,
-      deviceId,
-      branchId,
-      createdAt: now,
-      updatedAt: now,
-    }).run();
-
-    tx.insert(productCostHistory).values({
-      id: uuid(),
-      productId: item.productId,
-      vendorId,
-      costPrice: item.unitCost,
-      qty: item.qty,
-      sourceType: 'grn',
-      sourceId: grnId,
-      deviceId,
-      branchId,
-      createdAt: now,
-      updatedAt: now,
-    }).run();
+    tx.insert(productCostHistory).values(
+      chunk.map((item) => ({
+        id: uuid(),
+        productId: item.productId,
+        vendorId,
+        costPrice: item.unitCost,
+        qty: item.qty,
+        sourceType: 'grn' as const,
+        sourceId: grnId,
+        deviceId,
+        branchId,
+        createdAt: now,
+        updatedAt: now,
+      })),
+    ).run();
   }
 }
 
@@ -406,29 +443,14 @@ export function handleGrnUpdate(id: string, input: UpdateGrnInput): ApiResult<Gr
       if (input.notes !== undefined) headerPatch.notes = input.notes || null;
 
       if (input.items) {
-        for (const line of oldLines) {
-          tx.delete(grnLines).where(eq(grnLines.id, line.id)).run();
-        }
-        const linesTotal = input.items.reduce((sum, item) => sum + item.qty * item.unitCost, 0);
-        headerPatch.invoiceTotal = linesTotal;
-        for (const item of input.items) {
-          const product = tx.select().from(products).where(eq(products.id, item.productId)).get();
-          if (!product) throw new Error(`Product not found: ${item.productId}`);
-          const lineTotal = item.qty * item.unitCost;
-          const unitRetail = item.unitRetail ?? product.retailPrice;
-          tx.insert(grnLines).values({
-            id: uuid(),
-            grnId: id,
-            productId: item.productId,
-            qty: item.qty,
-            unitCost: item.unitCost,
-            unitRetail,
-            lineTotal,
-            deviceId,
-            branchId,
-            createdAt: now,
-            updatedAt: now,
-          }).run();
+        tx.delete(grnLines).where(eq(grnLines.grnId, id)).run();
+        const retailById = retailPriceById(tx, input.items.map((i) => i.productId));
+        const missing = input.items.find((i) => !retailById.has(i.productId));
+        if (missing) throw new Error(`Product not found: ${missing.productId}`);
+        const lineRows = buildLineRows(id, input.items, retailById, now, deviceId, branchId);
+        headerPatch.invoiceTotal = lineRows.reduce((sum, l) => sum + l.lineTotal, 0);
+        for (const chunk of chunks(lineRows)) {
+          tx.insert(grnLines).values(chunk).run();
         }
 
         input.items.forEach((item) => affectedProductIds.add(item.productId));

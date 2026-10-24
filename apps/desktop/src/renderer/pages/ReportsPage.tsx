@@ -88,8 +88,14 @@ export function ReportsPage() {
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
         <div className="panel p-4">
           <p className="text-sm text-slate-500">Sales</p>
-          <p className="text-2xl font-bold text-primary-700">PKR {(profit?.revenue ?? summary.totalSales).toFixed(0)}</p>
+          {/* Bill totals — the same figure the owner portal shows as Total Sales. */}
+          <p className="text-2xl font-bold text-primary-700">PKR {(profit?.totalSales ?? summary.totalSales).toFixed(0)}</p>
           <p className="text-xs text-slate-400">{profit?.transactionCount ?? summary.transactionCount} transactions</p>
+          {profit && Math.abs(profit.revenue - profit.totalSales) >= 1 && (
+            <p className="text-xs text-slate-400" title="Line totals less bill discounts and Returns-screen refunds — the base profit is worked out on">
+              Net revenue for profit: PKR {profit.revenue.toFixed(0)}
+            </p>
+          )}
         </div>
         {profit && (
           <>

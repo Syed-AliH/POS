@@ -7,6 +7,13 @@ import { coerceReportDateRange, createdAtInLocalRange, formatReportPeriod } from
 import { requireRole, requireSession } from '../session';
 import { logAudit } from '../services/audit';
 import { getSetting } from '../services/settings';
+import { isCountedExpense } from './expenses';
+import { paymentShares, reportableSalesFilter, shareFor } from './reports';
+
+/** Only cash refunds leave the drawer — store credit and loyalty refunds don't. */
+function cashRefundTotal(rows: Array<{ refundMethod: string; totalRefund: number }>): number {
+  return rows.filter((r) => r.refundMethod === 'cash').reduce((sum, r) => sum + r.totalRefund, 0);
+}
 
 function mapShift(row: typeof shifts.$inferSelect): ShiftSummary {
   const db = getDb();
@@ -73,22 +80,38 @@ export function handleShiftEnd(closingFloat: number): ApiResult<ShiftSummary> {
 
     const start = shift.startTime;
     const end = now;
-    const cashSales = db
-      .select()
-      .from(sales)
-      .where(
-        and(
-          eq(sales.cashierId, session.id),
-          eq(sales.status, 'completed'),
-          eq(sales.paymentMethod, 'cash'),
-          gte(sales.createdAt, start),
-          lte(sales.createdAt, end),
-        ),
-      )
-      .all()
-      .reduce((sum, s) => sum + s.totalAmount, 0);
+    // Drawer cash: cash bills plus the cash share of split bills.
+    const cashSales = shareFor(
+      db
+        .select()
+        .from(sales)
+        .where(
+          and(
+            eq(sales.cashierId, session.id),
+            reportableSalesFilter(),
+            gte(sales.createdAt, start),
+            lte(sales.createdAt, end),
+          ),
+        )
+        .all(),
+      'cash',
+    );
 
-    const expectedCash = shift.openingFloat + cashSales;
+    const cashRefunds = cashRefundTotal(
+      db
+        .select()
+        .from(returns)
+        .where(
+          and(
+            eq(returns.processedBy, session.id),
+            gte(returns.createdAt, start),
+            lte(returns.createdAt, end),
+          ),
+        )
+        .all(),
+    );
+
+    const expectedCash = shift.openingFloat + cashSales - cashRefunds;
     const difference = closingFloat - expectedCash;
 
     db.update(shifts)
@@ -140,7 +163,7 @@ export function handleEodReport(params?: ReportDateRange | string): ApiResult<Eo
     const daySales = db
       .select()
       .from(sales)
-      .where(and(eq(sales.status, 'completed'), createdAtInLocalRange(sales.createdAt, range)))
+      .where(and(reportableSalesFilter(), createdAtInLocalRange(sales.createdAt, range)))
       .all();
 
     const dayReturns = db
@@ -152,18 +175,21 @@ export function handleEodReport(params?: ReportDateRange | string): ApiResult<Eo
     const dayExpenses = db
       .select()
       .from(expenses)
-      .where(and(eq(expenses.status, 'approved'), createdAtInLocalRange(expenses.createdAt, range)))
-      .all();
+      .where(createdAtInLocalRange(expenses.createdAt, range))
+      .all()
+      // Same rule as the Expenses tab, cloud EOD and the portal: not deleted, not rejected.
+      .filter(isCountedExpense);
 
-    const cashSales = daySales.filter((s) => s.paymentMethod === 'cash').reduce((sum, s) => sum + s.totalAmount, 0);
-    const cardSales = daySales.filter((s) => s.paymentMethod === 'card').reduce((sum, s) => sum + s.totalAmount, 0);
-    const walletSales = daySales.filter((s) => s.paymentMethod === 'wallet').reduce((sum, s) => sum + s.totalAmount, 0);
+    const cashSales = shareFor(daySales, 'cash');
+    const cardSales = shareFor(daySales, 'card');
+    const onlineSales = shareFor(daySales, 'online');
+    const walletSales = shareFor(daySales, 'wallet');
     const returnsTotal = dayReturns.reduce((sum, r) => sum + r.totalRefund, 0);
     const expensesTotal = dayExpenses.reduce((sum, e) => sum + e.amount, 0);
 
     const openShifts = db.select().from(shifts).where(eq(shifts.status, 'open')).all();
     const openingFloat = openShifts.reduce((sum, s) => sum + s.openingFloat, 0);
-    const expectedCash = openingFloat + cashSales - returnsTotal;
+    const expectedCash = openingFloat + cashSales - cashRefundTotal(dayReturns);
 
     return {
       success: true,
@@ -173,6 +199,7 @@ export function handleEodReport(params?: ReportDateRange | string): ApiResult<Eo
         transactionCount: daySales.length,
         cashSales,
         cardSales,
+        onlineSales,
         walletSales,
         returnsTotal,
         expensesTotal,
@@ -224,12 +251,14 @@ export function handleEodCloseDay(date?: string, closingFloat?: number): ApiResu
     const daySales = db
       .select()
       .from(sales)
-      .where(and(eq(sales.status, 'completed'), createdAtInLocalRange(sales.createdAt, date)))
+      .where(and(reportableSalesFilter(), createdAtInLocalRange(sales.createdAt, date)))
       .all();
 
     const paymentBreakdown: Record<string, number> = {};
     for (const sale of daySales) {
-      paymentBreakdown[sale.paymentMethod] = (paymentBreakdown[sale.paymentMethod] ?? 0) + sale.totalAmount;
+      for (const share of paymentShares(sale)) {
+        paymentBreakdown[share.method] = (paymentBreakdown[share.method] ?? 0) + share.amount;
+      }
     }
 
     const now = new Date().toISOString();

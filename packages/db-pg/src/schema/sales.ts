@@ -12,8 +12,12 @@ export const sales = pgTable('sales', {
   taxAmount: doublePrecision('tax_amount').notNull().default(0),
   totalAmount: doublePrecision('total_amount').notNull().default(0),
   paymentMethod: text('payment_method', {
-    enum: ['cash', 'card', 'bank_transfer', 'wallet', 'online'],
+    enum: ['cash', 'card', 'bank_transfer', 'wallet', 'online', 'split'],
   }).notNull(),
+  // A 'split' bill is part cash, part card/online. The cash share is stored; the rest
+  // (totalAmount − splitCashAmount) went through splitOtherMethod. Null otherwise.
+  splitCashAmount: doublePrecision('split_cash_amount'),
+  splitOtherMethod: text('split_other_method', { enum: ['card', 'online'] }),
   amountTendered: doublePrecision('amount_tendered'),
   changeGiven: doublePrecision('change_given'),
   status: text('status', { enum: ['completed', 'held', 'voided', 'returned'] })

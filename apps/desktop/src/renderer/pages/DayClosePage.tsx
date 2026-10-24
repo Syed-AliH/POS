@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getApi } from '@renderer/lib/api';
 import { EodReportForm } from '@renderer/components/EodReportForm';
+import { useToday } from '@renderer/hooks/useToday';
 import { useAuthStore } from '@renderer/stores/authStore';
-import { localCalendarDate } from '@shared/datetime';
 import type { SaleSummary } from '@shared/types';
 
 const api = getApi();
@@ -19,16 +19,20 @@ export function DayClosePage() {
   const [sales, setSales] = useState<SaleSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const today = useMemo(() => localCalendarDate(), []);
+  // Rolls over at midnight, so a till left open overnight closes the right day.
+  const today = useToday();
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     void api.sales
-      .list({ startDate: today, endDate: today, status: 'completed', limit: 500 })
+      .list({ startDate: today, endDate: today, limit: 500 })
       .then((result) => {
         if (cancelled) return;
-        setSales(result.success && result.data ? result.data : []);
+        // A bill with a later return is still today's sale — the same rule every
+        // report uses (completed + returned); held and voided bills are not.
+        const rows = result.success && result.data ? result.data : [];
+        setSales(rows.filter((s) => s.status === 'completed' || s.status === 'returned'));
         if (!result.success) setError(result.error ?? 'Could not load today’s sales');
       })
       .catch((e) => {
@@ -52,8 +56,15 @@ export function DayClosePage() {
   const totals = useMemo(() => {
     const byMethod = new Map<string, number>();
     let grand = 0;
+    const add = (method: string, amount: number) => byMethod.set(method, (byMethod.get(method) ?? 0) + amount);
     for (const sale of mine) {
-      byMethod.set(sale.paymentMethod, (byMethod.get(sale.paymentMethod) ?? 0) + sale.totalAmount);
+      // A split bill's cash share goes under cash, the rest under card/online.
+      if (sale.paymentMethod === 'split' && sale.splitCashAmount != null) {
+        add('cash', sale.splitCashAmount);
+        add(sale.splitOtherMethod ?? 'card', sale.totalAmount - sale.splitCashAmount);
+      } else {
+        add(sale.paymentMethod, sale.totalAmount);
+      }
       grand += sale.totalAmount;
     }
     return { byMethod: [...byMethod.entries()], grand, count: mine.length };
@@ -103,7 +114,7 @@ export function DayClosePage() {
           </div>
         )}
         <p className="mt-3 text-xs text-slate-400">
-          Cash counted below should match the cash figure above, less any float and expenses.
+          Cash counted below should match the cash figure above plus the opening float, less expenses and any cash given to the owner.
         </p>
       </div>
 

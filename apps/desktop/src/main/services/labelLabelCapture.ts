@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { BrowserWindow, nativeImage, screen, type NativeImage } from 'electron';
 import { calcLabelSlotPositionPx, labelDpiScale } from '@mama-babi/printer';
 import {
@@ -139,6 +140,69 @@ async function captureLabelHtmlToRgba(
 }
 
 /**
+ * Rendered label bitmaps for one print job.
+ *
+ * Every label used to get its own hidden window, page load, barcode render and
+ * settle delays — roughly half a second to a second each, strictly one after another —
+ * so 1,000 labels kept the printer idle for many minutes. A label's HTML doesn't
+ * depend on where it sits on the roll, so captures are keyed by HTML + size and
+ * every copy of a product reuses one; distinct labels render a few at a time.
+ */
+export class LabelCaptureCache {
+  private readonly captures = new Map<string, Promise<Buffer>>();
+  private active = 0;
+  private readonly waiting: Array<() => void> = [];
+
+  constructor(private readonly concurrency = 3) {}
+
+  get(html: string, widthPx: number, heightPx: number, dpiScale: number): Promise<Buffer> {
+    const key = createHash('sha1').update(`${widthPx}x${heightPx}@${dpiScale}\n${html}`).digest('hex');
+    let capture = this.captures.get(key);
+    if (!capture) {
+      capture = this.limit(() => captureLabelHtmlToRgba(html, widthPx, heightPx, dpiScale));
+      this.captures.set(key, capture);
+      // Kicked off ahead of use (see prefetch); the real awaiter reports the error.
+      capture.catch(() => undefined);
+    }
+    return capture;
+  }
+
+  private async limit<T>(task: () => Promise<T>): Promise<T> {
+    if (this.active >= this.concurrency) {
+      await new Promise<void>((resolve) => this.waiting.push(resolve));
+    }
+    this.active += 1;
+    try {
+      return await task();
+    } finally {
+      this.active -= 1;
+      this.waiting.shift()?.();
+    }
+  }
+}
+
+function slotCaptureRequest(slot: LabelSlotContent, roll: LabelRollLayout) {
+  const { labelWidthMm, labelHeightMm, rollConfig } = roll;
+  const dpiScale = labelDpiScale(rollConfig);
+  const pos = calcLabelSlotPositionPx(rollConfig, labelWidthMm, labelHeightMm, slot.slotIndex);
+  return {
+    pos,
+    dpiScale,
+    widthPx: Math.max(1, Math.round(pos.labelWidthPx * dpiScale)),
+    heightPx: Math.max(1, Math.round(pos.labelHeightPx * dpiScale)),
+    html: buildSingleLabelHtmlDocument(slot, rollConfig.rotate180 ?? false),
+  };
+}
+
+/** Start rendering these slots in the background so they are ready when their row is built. */
+export function prefetchLabelSlots(slots: LabelSlotContent[], roll: LabelRollLayout, cache: LabelCaptureCache): void {
+  for (const slot of slots) {
+    const req = slotCaptureRequest(slot, roll);
+    void cache.get(req.html, req.widthPx, req.heightPx, req.dpiScale);
+  }
+}
+
+/**
  * Capture a label row — one browser page per die-cut label, composited at exact slot X/Y.
  * Avoids 2-up full-page capture misaligning the second column on HiDPI Windows.
  */
@@ -146,8 +210,9 @@ export async function captureLabelBatchImage(
   slots: LabelSlotContent[],
   roll: LabelRollLayout,
   pageSizePx: { width: number; height: number },
+  cache?: LabelCaptureCache,
 ): Promise<NativeImage> {
-  return captureLabelRowImage(slots, roll, pageSizePx);
+  return captureLabelRowImage(slots, roll, pageSizePx, cache);
 }
 
 /** Capture each slot separately and composite onto the row bitmap. */
@@ -155,25 +220,22 @@ export async function captureLabelRowImage(
   slots: LabelSlotContent[] | LabelSlotContent,
   roll: LabelRollLayout,
   pageSizePx: { width: number; height: number },
+  cache: LabelCaptureCache = new LabelCaptureCache(),
 ): Promise<NativeImage> {
   const slotList = Array.isArray(slots) ? slots : [slots];
   if (slotList.length === 0) {
     throw new Error('captureLabelRowImage: no label slots to render.');
   }
 
-  const { labelWidthMm, labelHeightMm, rollConfig } = roll;
+  const { rollConfig } = roll;
   const dpiScale = labelDpiScale(rollConfig);
   const dotW = Math.max(1, Math.round(pageSizePx.width * dpiScale));
   const dotH = Math.max(1, Math.round(pageSizePx.height * dpiScale));
   const composite = Buffer.alloc(dotW * dotH * 4, 255);
-  const rotate180 = rollConfig.rotate180 ?? false;
 
   for (const slot of slotList) {
-    const pos = calcLabelSlotPositionPx(rollConfig, labelWidthMm, labelHeightMm, slot.slotIndex);
-    const slotW = Math.max(1, Math.round(pos.labelWidthPx * dpiScale));
-    const slotH = Math.max(1, Math.round(pos.labelHeightPx * dpiScale));
-    const html = buildSingleLabelHtmlDocument(slot, rotate180);
-    const slotRgba = await captureLabelHtmlToRgba(html, slotW, slotH, dpiScale);
+    const { pos, widthPx: slotW, heightPx: slotH, html } = slotCaptureRequest(slot, roll);
+    const slotRgba = await cache.get(html, slotW, slotH, dpiScale);
     blitRgba(
       composite, dotW, dotH, slotRgba, slotW, slotH,
       Math.round(pos.leftPx * dpiScale), Math.round(pos.topPx * dpiScale),

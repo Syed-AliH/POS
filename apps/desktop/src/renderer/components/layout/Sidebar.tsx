@@ -81,7 +81,7 @@ const NAV_SECTIONS: NavSection[] = [
   {
     label: 'Finance',
     items: [
-      { to: '/expenses', label: 'Expenses', icon: Wallet, roles: ['manager', 'super_admin'] },
+      { to: '/expenses', label: 'Expenses', icon: Wallet, roles: ['cashier', 'manager', 'super_admin'] },
       { to: '/gift-cards', label: 'Gift Cards', icon: Gift, roles: ['manager', 'super_admin'] },
       { to: '/shifts', label: 'Shifts & EOD', icon: Clock, roles: ['manager', 'super_admin'] },
     ],

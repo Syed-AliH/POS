@@ -92,11 +92,12 @@ export function handleProductList(params?: { status?: string; limit?: number }):
   try {
     requireSession();
     const db = getDb();
-    const limit = params?.limit ?? 100;
-    let rows = db.select().from(products).where(eq(products.isDeleted, false)).limit(limit).all();
-    if (params?.status) {
-      rows = rows.filter((r) => r.status === params.status);
-    }
+    // Whole catalogue unless a limit is asked for — same rule as listProducts in the
+    // API. A default cap applied before the status filter hid products past the cap.
+    const conditions = [eq(products.isDeleted, false)];
+    if (params?.status) conditions.push(eq(products.status, params.status as 'active' | 'archived' | 'discontinued'));
+    const query = db.select().from(products).where(and(...conditions)).orderBy(products.name);
+    const rows = params?.limit && params.limit > 0 ? query.limit(params.limit).all() : query.all();
     return { success: true, data: rows.map(mapProduct) };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'List failed' };

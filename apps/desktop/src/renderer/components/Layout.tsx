@@ -1,5 +1,15 @@
-import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import {
+  Activity,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import { useLocation, useNavigate, useOutlet } from 'react-router-dom';
 import { Moon, Sun, Keyboard } from 'lucide-react';
 import { Spinner } from '@mama-babi/ui';
 import { IPC_CHANNELS } from '@shared/ipc-channels';
@@ -70,6 +80,60 @@ function ServerStatusBadge() {
       Offline
     </button>
   );
+}
+
+/**
+ * Keeps every section the user has opened mounted, so switching away and back
+ * restores it exactly as left — a half-entered GRN, the checkout cart and tendered
+ * amount, a return in progress, filters and scroll position. React Router alone
+ * unmounts the old page on every navigation, which threw all of that away.
+ *
+ * Hidden sections sit in a hidden <Activity>: their state survives, but their
+ * effects are torn down, so they hold no keyboard listeners, shortcuts, timers or
+ * open modals while out of view. When a section is shown again its effects re-run —
+ * pages that fetch on mount refresh their data without resetting what was typed.
+ * Logging out unmounts the whole layout, so nothing carries over between users.
+ */
+function KeepAliveOutlet() {
+  const outlet = useOutlet();
+  const { pathname } = useLocation();
+  const pages = useRef(new Map<string, ReactNode>());
+  pages.current.set(pathname, outlet);
+
+  return (
+    <>
+      {[...pages.current.entries()].map(([path, element]) => (
+        <Activity key={path} mode={path === pathname ? 'visible' : 'hidden'}>
+          {/* Per page, so a section still loading its code doesn't blank the others. */}
+          <Suspense fallback={<Spinner className="h-full" label="Loading page…" />}>
+            <KeepScroll>{element}</KeepScroll>
+          </Suspense>
+        </Activity>
+      ))}
+    </>
+  );
+}
+
+/**
+ * Pages scroll inside their own .page-shell (and some inner panels), and a hidden
+ * element loses its scroll offset. Layout-effect cleanup runs while the page is still
+ * on screen, so offsets are read there and put back when the page reappears.
+ */
+function KeepScroll({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const saved = useRef<Array<{ el: Element; top: number }>>([]);
+  useLayoutEffect(() => {
+    for (const { el, top } of saved.current) el.scrollTop = top;
+    const root = ref.current;
+    return () => {
+      saved.current = root
+        ? [...root.querySelectorAll('.page-shell, [class*="overflow-"]')]
+            .filter((el) => el.scrollTop > 0)
+            .map((el) => ({ el, top: el.scrollTop }))
+        : [];
+    };
+  }, []);
+  return <div ref={ref} className="contents">{children}</div>;
 }
 
 export function Layout() {
@@ -162,9 +226,7 @@ export function Layout() {
         </header>
 
         <main className="flex-1 overflow-hidden">
-          <Suspense fallback={<Spinner className="h-full" label="Loading page…" />}>
-            <Outlet />
-          </Suspense>
+          <KeepAliveOutlet />
         </main>
       </div>
 

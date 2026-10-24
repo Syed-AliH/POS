@@ -36,6 +36,20 @@
       "when": 1785179573962,
       "tag": "0004_faulty_thundra",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791099201057,
+      "tag": "0005_lumpy_mad_thinker",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792840156005,
+      "tag": "0006_split_payments_cash_to_owner",
+      "breakpoints": true
     }
   ]
 }

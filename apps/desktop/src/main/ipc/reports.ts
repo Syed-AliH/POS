@@ -1,9 +1,10 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import {
   categories,
   grnHeaders,
   grnLines,
   products,
+  returnItems,
   returns,
   saleItems,
   sales,
@@ -24,12 +25,92 @@ import { getDb } from '../db';
 import { createdAtInLocalRange } from '../lib/reportDateRange';
 import { requireRole } from '../session';
 
+/**
+ * Sale statuses every report counts. A sale flips to `returned` as soon as any return
+ * is processed against it — even one item out of ten — but the sale still happened.
+ * The refund is booked separately, on the return's own date, from the returns table.
+ * Filtering on `completed` alone made the whole bill vanish from revenue, profit and
+ * the cash count the moment a single item came back.
+ */
+export const REPORTABLE_SALE_STATUSES = ['completed', 'returned'] as const;
+
+/**
+ * How a bill's total divides across payment methods: a 'split' bill is part cash,
+ * part card/online; anything else goes wholly to its one method. Every per-method
+ * figure (payment breakdown, EOD, shift cash) goes through this — same as
+ * paymentShares in apps/api reports.service.ts.
+ */
+export function paymentShares(sale: {
+  paymentMethod: string;
+  totalAmount: number;
+  splitCashAmount?: number | null;
+  splitOtherMethod?: string | null;
+}): Array<{ method: string; amount: number }> {
+  if (sale.paymentMethod === 'split') {
+    const cash = sale.splitCashAmount ?? 0;
+    return [
+      { method: 'cash', amount: cash },
+      { method: sale.splitOtherMethod ?? 'card', amount: sale.totalAmount - cash },
+    ];
+  }
+  return [{ method: sale.paymentMethod, amount: sale.totalAmount }];
+}
+
+export function shareFor(rows: Parameters<typeof paymentShares>[0][], method: string): number {
+  let total = 0;
+  for (const row of rows) for (const share of paymentShares(row)) if (share.method === method) total += share.amount;
+  return total;
+}
+
+export function reportableSalesFilter() {
+  return inArray(sales.status, [...REPORTABLE_SALE_STATUSES]);
+}
+
 function completedSalesInRange(params?: ReportDateRange | string) {
   const db = getDb();
   return db
     .select()
     .from(sales)
-    .where(and(eq(sales.status, 'completed'), createdAtInLocalRange(sales.createdAt, params)))
+    .where(and(reportableSalesFilter(), createdAtInLocalRange(sales.createdAt, params)))
+    .all();
+}
+
+/** Sale lines in the period, with the product's current cost and category. */
+function saleLinesInRange(params?: ReportDateRange | string) {
+  const db = getDb();
+  return db
+    .select({
+      productId: saleItems.productId,
+      productName: saleItems.productName,
+      quantity: saleItems.quantity,
+      lineTotal: saleItems.lineTotal,
+      costPrice: products.costPrice,
+      categoryId: products.categoryId,
+    })
+    .from(saleItems)
+    .innerJoin(sales, eq(sales.id, saleItems.saleId))
+    .leftJoin(products, eq(products.id, saleItems.productId))
+    .where(and(reportableSalesFilter(), createdAtInLocalRange(sales.createdAt, params)))
+    .all();
+}
+
+/** Items handed back through the Returns screen in the period (booked on the return date). */
+function returnedLinesInRange(params?: ReportDateRange | string) {
+  const db = getDb();
+  return db
+    .select({
+      productId: returnItems.productId,
+      productName: products.name,
+      qtyReturned: returnItems.qtyReturned,
+      unitRefund: returnItems.unitRefund,
+      restocked: returnItems.restocked,
+      costPrice: products.costPrice,
+      categoryId: products.categoryId,
+    })
+    .from(returnItems)
+    .innerJoin(returns, eq(returns.id, returnItems.returnId))
+    .leftJoin(products, eq(products.id, returnItems.productId))
+    .where(createdAtInLocalRange(returns.createdAt, params))
     .all();
 }
 
@@ -59,21 +140,28 @@ export function handleSalesByCategory(params?: ReportDateRange): ApiResult<Sales
   try {
     requireRole('super_admin', 'manager');
     const db = getDb();
-    const completedSales = completedSalesInRange(params);
-    const saleIds = new Set(completedSales.map((s) => s.id));
-    if (!saleIds.size) return { success: true, data: [] };
-
+    const categoryMap = new Map(db.select().from(categories).all().map((c) => [c.id, c.name]));
     const byCategory = new Map<string | null, { name: string; total: number; count: number }>();
-
-    for (const item of db.select().from(saleItems).all()) {
-      if (!saleIds.has(item.saleId)) continue;
-      const product = db.select().from(products).where(eq(products.id, item.productId)).get();
-      const catId = product?.categoryId ?? null;
-      const cat = catId ? db.select().from(categories).where(eq(categories.id, catId)).get() : null;
-      const existing = byCategory.get(catId) ?? { name: cat?.name ?? 'Uncategorized', total: 0, count: 0 };
-      existing.total += item.lineTotal;
-      existing.count += item.quantity;
+    const bucket = (catId: string | null) => {
+      const existing = byCategory.get(catId) ?? {
+        name: (catId && categoryMap.get(catId)) || 'Uncategorized',
+        total: 0,
+        count: 0,
+      };
       byCategory.set(catId, existing);
+      return existing;
+    };
+
+    // Signed: a return line on a bill already carries a negative quantity and total.
+    for (const line of saleLinesInRange(params)) {
+      const row = bucket(line.categoryId ?? null);
+      row.total += line.lineTotal;
+      row.count += line.quantity;
+    }
+    for (const line of returnedLinesInRange(params)) {
+      const row = bucket(line.categoryId ?? null);
+      row.total -= line.qtyReturned * line.unitRefund;
+      row.count -= line.qtyReturned;
     }
 
     return {
@@ -93,18 +181,21 @@ export function handleSalesByCategory(params?: ReportDateRange): ApiResult<Sales
 export function handleTopProducts(params?: ReportDateRange & { limit?: number }): ApiResult<TopProductRow[]> {
   try {
     requireRole('super_admin', 'manager');
-    const db = getDb();
     const limit = params?.limit ?? 10;
-    const completedSales = completedSalesInRange(params);
-    const saleIds = new Set(completedSales.map((s) => s.id));
 
+    // Net of returns, so a product that mostly comes back doesn't rank as a best seller.
     const byProduct = new Map<string, { name: string; qty: number; revenue: number }>();
-    for (const item of db.select().from(saleItems).all()) {
-      if (!saleIds.has(item.saleId)) continue;
-      const existing = byProduct.get(item.productId) ?? { name: item.productName, qty: 0, revenue: 0 };
-      existing.qty += item.quantity;
-      existing.revenue += item.lineTotal;
-      byProduct.set(item.productId, existing);
+    for (const line of saleLinesInRange(params)) {
+      const existing = byProduct.get(line.productId) ?? { name: line.productName, qty: 0, revenue: 0 };
+      existing.qty += line.quantity;
+      existing.revenue += line.lineTotal;
+      byProduct.set(line.productId, existing);
+    }
+    for (const line of returnedLinesInRange(params)) {
+      const existing = byProduct.get(line.productId) ?? { name: line.productName ?? 'Unknown', qty: 0, revenue: 0 };
+      existing.qty -= line.qtyReturned;
+      existing.revenue -= line.qtyReturned * line.unitRefund;
+      byProduct.set(line.productId, existing);
     }
 
     const rows = [...byProduct.entries()]
@@ -128,12 +219,16 @@ export function handlePaymentBreakdown(params?: ReportDateRange): ApiResult<Paym
     requireRole('super_admin', 'manager');
     const rows = completedSalesInRange(params);
 
+    // A split bill adds its cash share to cash and the rest to card/online, and
+    // counts as a bill under both.
     const byMethod = new Map<string, { total: number; count: number }>();
     for (const sale of rows) {
-      const existing = byMethod.get(sale.paymentMethod) ?? { total: 0, count: 0 };
-      existing.total += sale.totalAmount;
-      existing.count += 1;
-      byMethod.set(sale.paymentMethod, existing);
+      for (const share of paymentShares(sale)) {
+        const existing = byMethod.get(share.method) ?? { total: 0, count: 0 };
+        existing.total += share.amount;
+        existing.count += 1;
+        byMethod.set(share.method, existing);
+      }
     }
 
     return {
@@ -192,12 +287,19 @@ export function handleInventoryValuation(): ApiResult<InventoryValuation> {
 function getLastGrnDateByProduct(): Map<string, string> {
   const db = getDb();
   const map = new Map<string, string>();
-  const lines = db.select().from(grnLines).all();
+  const lines = db
+    .select({
+      productId: grnLines.productId,
+      receivedDate: grnHeaders.receivedDate,
+      createdAt: grnHeaders.createdAt,
+    })
+    .from(grnLines)
+    .innerJoin(grnHeaders, eq(grnHeaders.id, grnLines.grnId))
+    .where(eq(grnHeaders.status, 'finalized'))
+    .all();
   for (const line of lines) {
-    const header = db.select().from(grnHeaders).where(eq(grnHeaders.id, line.grnId)).get();
-    if (!header || header.status !== 'finalized') continue;
     const existing = map.get(line.productId);
-    const candidate = header.receivedDate ?? header.createdAt.slice(0, 10);
+    const candidate = line.receivedDate ?? line.createdAt.slice(0, 10);
     if (!existing || candidate > existing) {
       map.set(line.productId, candidate);
     }
@@ -279,27 +381,47 @@ export function handleInventoryReport(params?: InventoryReportParams): ApiResult
   }
 }
 
+/**
+ * Net revenue and cost of goods for a period. Every backend computes profit this way
+ * (cloud reports.service.ts, owner-portal api/_lib/reports.ts) — keep them in step.
+ *
+ * A return reverses exactly what the sale added, on the date it happens:
+ * - a return line on a bill (negative quantity) carries a negative total and a
+ *   negative cost, because the unit goes back on the shelf;
+ * - a Returns-screen refund takes its refund off revenue, and its cost off cost of
+ *   goods only when the item was restocked — a damaged item that is written off
+ *   stays a cost, so profit drops by the full refund.
+ * So returning an item takes back the margin it earned, not its whole price.
+ *
+ * Bill-level discounts (manual, promo code, loyalty) live on the sale, not the lines,
+ * and come off revenue too. Cost is the product's *current* cost price — it is not
+ * stored per sale line.
+ */
+function profitTotalsInRange(params?: ReportDateRange) {
+  const saleRows = completedSalesInRange(params);
+  let revenue = -saleRows.reduce((sum, s) => sum + s.discountAmount, 0);
+  let estimatedCost = 0;
+  for (const line of saleLinesInRange(params)) {
+    revenue += line.lineTotal;
+    estimatedCost += line.quantity * (line.costPrice ?? 0);
+  }
+  for (const line of returnedLinesInRange(params)) {
+    revenue -= line.qtyReturned * line.unitRefund;
+    if (line.restocked) estimatedCost -= line.qtyReturned * (line.costPrice ?? 0);
+  }
+  return {
+    revenue,
+    estimatedCost,
+    transactionCount: saleRows.length,
+    totalSales: saleRows.reduce((sum, s) => sum + s.totalAmount, 0),
+  };
+}
+
 export function handleProfitReport(params?: ReportDateRange): ApiResult<ProfitReport> {
   try {
     requireRole('super_admin', 'manager');
-    const db = getDb();
-    const completedSales = completedSalesInRange(params);
-    const saleIds = new Set(completedSales.map((s) => s.id));
+    const { revenue, estimatedCost, transactionCount, totalSales } = profitTotalsInRange(params);
     const returnsTotal = returnsInRange(params).reduce((sum, r) => sum + r.totalRefund, 0);
-
-    // A returned line (negative quantity) comes back to stock undamaged — it must not
-    // drag profit into a loss. Only positive-quantity lines count toward revenue and
-    // cost; a return's own contribution is 0, not negative, while any other line in
-    // the same or a different sale is still counted normally.
-    let revenue = 0;
-    let estimatedCost = 0;
-    for (const item of db.select().from(saleItems).all()) {
-      if (!saleIds.has(item.saleId) || item.quantity <= 0) continue;
-      const product = db.select().from(products).where(eq(products.id, item.productId)).get();
-      revenue += item.lineTotal;
-      estimatedCost += item.quantity * (product?.costPrice ?? 0);
-    }
-
     const grossProfit = revenue - estimatedCost;
     return {
       success: true,
@@ -308,8 +430,9 @@ export function handleProfitReport(params?: ReportDateRange): ApiResult<ProfitRe
         estimatedCost,
         grossProfit,
         marginPercent: revenue > 0 ? (grossProfit / revenue) * 100 : 0,
-        transactionCount: completedSales.length,
+        transactionCount,
         returnsTotal,
+        totalSales,
       },
     };
   } catch (e) {

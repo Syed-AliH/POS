@@ -143,6 +143,8 @@ export const IPC_CHANNELS = {
   EXPENSE_CREATE: 'expense:create',
   EXPENSE_LIST: 'expense:list',
   EXPENSE_APPROVE: 'expense:approve',
+  EXPENSE_UPDATE: 'expense:update',
+  EXPENSE_DELETE: 'expense:delete',
 
   AUDIT_LIST: 'audit:list',
 

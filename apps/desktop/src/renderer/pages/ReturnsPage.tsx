@@ -256,9 +256,14 @@ export function ReturnsPage() {
     }
   };
 
+  // The page stays mounted between visits (see KeepAliveOutlet), so this effect re-runs
+  // whenever Returns is shown again. The ?sale= link is consumed once handled, so
+  // coming back doesn't reselect the sale and wipe the quantities already entered,
+  // while a fresh link — even to the same sale — still works.
   useEffect(() => {
     const fromUrl = searchParams.get('sale');
     if (!fromUrl) return;
+    navigate(location.pathname, { replace: true });
     setLookupMode('saleNumber');
     setSearchQuery(fromUrl);
     (async () => {

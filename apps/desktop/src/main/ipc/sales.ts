@@ -8,7 +8,7 @@ import {
   sales,
   users,
 } from '@mama-babi/db-schema';
-import type { ApiResult, CartItem, CreateSaleInput, ReceiptPreview, SaleListParams, SaleSummary, UpdateSaleInput } from '@shared/types';
+import type { ApiResult, CartItem, CreateSaleInput, ReceiptPreview, SaleListParams, SaleSummary, SplitOtherMethod, UpdateSaleInput } from '@shared/types';
 import { getDb } from '../db';
 import { coerceReportDateRange, localCalendarDate } from '../lib/reportDateRange';
 import { requireRole, requireSession } from '../session';
@@ -76,6 +76,8 @@ export function buildSaleSummary(saleId: string): SaleSummary | null {
     taxAmount: sale.taxAmount,
     totalAmount: sale.totalAmount,
     paymentMethod: sale.paymentMethod,
+    splitCashAmount: sale.splitCashAmount,
+    splitOtherMethod: sale.splitOtherMethod,
     amountTendered: sale.amountTendered,
     changeGiven: sale.changeGiven,
     status: sale.status,
@@ -83,6 +85,51 @@ export function buildSaleSummary(saleId: string): SaleSummary | null {
     createdAt: sale.createdAt,
     items: productRows,
   };
+}
+
+/** Paisa-level tolerance: bills are in rupees but discounts can leave fractions. */
+const MONEY_EPSILON = 0.005;
+
+/**
+ * Checks a part-cash, part-card/online payment against the bill. Only the cash share
+ * is stored; the other share is always total − cash. Same rules as validateSplit in
+ * apps/api sales.service.ts.
+ */
+function validateSplit(
+  totalAmount: number,
+  split: CreateSaleInput['split'],
+): { splitCashAmount: number; splitOtherMethod: SplitOtherMethod } | { error: string } {
+  if (!split) return { error: 'Enter how much is paid in cash and how much by card/online' };
+  if (split.otherMethod !== 'card' && split.otherMethod !== 'online') {
+    return { error: 'The non-cash part of a split payment must be card or online' };
+  }
+  const cash = Math.round(split.cashAmount * 100) / 100;
+  if (!Number.isFinite(cash) || cash <= MONEY_EPSILON) {
+    return { error: 'Enter the cash part of the payment — for card only, choose Card' };
+  }
+  if (cash >= totalAmount - MONEY_EPSILON) {
+    return { error: `Cash covers the whole bill (PKR ${totalAmount.toFixed(2)}) — choose Cash instead of Split` };
+  }
+  return { splitCashAmount: cash, splitOtherMethod: split.otherMethod };
+}
+
+/**
+ * A bill edit is settled in cash at the till, so the cash share moves and the
+ * card/online share stays as charged — see resettleSplit in apps/api.
+ */
+function resettleSplit(
+  sale: { paymentMethod: string; totalAmount: number; splitCashAmount: number | null; splitOtherMethod: string | null },
+  newTotal: number,
+): { paymentMethod: string; splitCashAmount: number | null; splitOtherMethod: SplitOtherMethod | null } {
+  if (sale.paymentMethod !== 'split' || sale.splitCashAmount == null) {
+    return { paymentMethod: sale.paymentMethod, splitCashAmount: null, splitOtherMethod: null };
+  }
+  const other = (sale.splitOtherMethod as SplitOtherMethod | null) ?? 'card';
+  const otherShare = sale.totalAmount - sale.splitCashAmount;
+  const cash = Math.round((newTotal - otherShare) * 100) / 100;
+  if (cash <= MONEY_EPSILON) return { paymentMethod: other, splitCashAmount: null, splitOtherMethod: null };
+  if (cash >= newTotal - MONEY_EPSILON) return { paymentMethod: 'cash', splitCashAmount: null, splitOtherMethod: null };
+  return { paymentMethod: 'split', splitCashAmount: cash, splitOtherMethod: other };
 }
 
 export function handleSaleCreate(input: CreateSaleInput): ApiResult<SaleSummary> {
@@ -218,6 +265,14 @@ export function handleSaleCreate(input: CreateSaleInput): ApiResult<SaleSummary>
         ? Math.max(0, input.amountTendered - totalAmount)
         : null;
 
+    let splitCashAmount: number | null = null;
+    let splitOtherMethod: SplitOtherMethod | null = null;
+    if (input.paymentMethod === 'split' && input.status !== 'held') {
+      const split = validateSplit(totalAmount, input.split);
+      if ('error' in split) return { success: false, error: split.error };
+      ({ splitCashAmount, splitOtherMethod } = split);
+    }
+
     db.transaction((tx) => {
       tx.insert(sales).values({
         id: saleId,
@@ -230,6 +285,8 @@ export function handleSaleCreate(input: CreateSaleInput): ApiResult<SaleSummary>
         taxAmount,
         totalAmount,
         paymentMethod: input.paymentMethod,
+        splitCashAmount,
+        splitOtherMethod,
         amountTendered: input.amountTendered ?? null,
         changeGiven,
         status: input.status ?? 'completed',
@@ -384,6 +441,8 @@ export function handleSaleReceiptPreview(saleId: string): ApiResult<ReceiptPrevi
         paymentMethod: summary.paymentMethod,
         amountTendered: summary.amountTendered,
         changeGiven: summary.changeGiven,
+        splitCashAmount: summary.splitCashAmount,
+        splitOtherMethod: summary.splitOtherMethod,
         footerMessage: settings.receipt_footer ?? 'Thank you for shopping!',
       },
     };
@@ -517,6 +576,7 @@ export function handleSaleUpdate(input: UpdateSaleInput): ApiResult<SaleSummary>
       sale.paymentMethod === 'cash' && amountTendered != null
         ? Math.max(0, amountTendered - totalAmount)
         : sale.changeGiven;
+    const payment = resettleSplit(sale, totalAmount);
 
     db.transaction((tx) => {
       for (const productId of allProductIds) {
@@ -563,6 +623,9 @@ export function handleSaleUpdate(input: UpdateSaleInput): ApiResult<SaleSummary>
           totalAmount,
           amountTendered,
           changeGiven,
+          paymentMethod: payment.paymentMethod as typeof sale.paymentMethod,
+          splitCashAmount: payment.splitCashAmount,
+          splitOtherMethod: payment.splitOtherMethod,
           updatedAt: now,
         })
         .where(eq(sales.id, input.saleId))

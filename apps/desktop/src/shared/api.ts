@@ -20,6 +20,7 @@ import type {
   ExpenseListParams,
   ExpenseSummary,
   CreateExpenseInput,
+  UpdateExpenseInput,
   GiftCard,
   GrnListParams,
   GrnSummary,
@@ -149,6 +150,10 @@ export interface MamaBabiAPI {
       totalCashCount: number;
       totalExpenses: number;
       dailySales: number;
+      /** The day's expenses (from the Expenses tab) as they stood at EOD — a snapshot. */
+      expenseLines?: Array<{ amount: number; description?: string }>;
+      /** Cash handed to the owner at close — a cash movement, not an expense. */
+      cashToOwner?: number;
     }) => Promise<ApiResult<{ id: string; path: string }>>;
   };
   settings: {
@@ -257,6 +262,8 @@ export interface MamaBabiAPI {
     create: (input: CreateExpenseInput) => Promise<ApiResult<ExpenseSummary>>;
     list: (params?: ExpenseListParams) => Promise<ApiResult<ExpenseSummary[]>>;
     approve: (id: string) => Promise<ApiResult<ExpenseSummary>>;
+    update: (id: string, input: UpdateExpenseInput) => Promise<ApiResult<ExpenseSummary>>;
+    remove: (id: string) => Promise<ApiResult<void>>;
   };
   audit: {
     list: (params?: { limit?: number; module?: string }) => Promise<ApiResult<AuditLogEntry[]>>;
@@ -472,6 +479,8 @@ export function createApi(): MamaBabiAPI {
       create: (input) => invoke(IPC_CHANNELS.EXPENSE_CREATE, input),
       list: (params) => invoke(IPC_CHANNELS.EXPENSE_LIST, params),
       approve: (id) => invoke(IPC_CHANNELS.EXPENSE_APPROVE, id),
+      update: (id, input) => invoke(IPC_CHANNELS.EXPENSE_UPDATE, id, input),
+      remove: (id) => invoke(IPC_CHANNELS.EXPENSE_DELETE, id),
     },
     audit: {
       list: (params) => invoke(IPC_CHANNELS.AUDIT_LIST, params),

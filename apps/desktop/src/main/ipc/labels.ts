@@ -1,8 +1,7 @@
-import { eq } from 'drizzle-orm';
+import { inArray } from 'drizzle-orm';
 import { products } from '@mama-babi/db-schema';
-import { IPC_CHANNELS } from '@shared/ipc-channels';
 import type { ApiResult, LabelTemplateSummary, Product } from '@shared/types';
-import { invokeCloud } from '../cloud/client';
+import { fetchCloudProductsByIds } from '../cloud/client';
 import { isCloudMode } from '../cloud/config';
 import { getDb } from '../db';
 import { requireRole } from '../session';
@@ -19,13 +18,21 @@ type LabelPrintProduct = {
   originalPrice?: number;
 };
 
-async function loadProductForLabel(productId: string): Promise<Product | null> {
+/**
+ * All the products a batch needs, in one round trip. In cloud mode this used to be one
+ * sequential HTTP request per GRN line, so a large GRN spent most of its "printing"
+ * time just looking products up before the printer received anything.
+ */
+async function loadProductsForLabels(productIds: string[]): Promise<Map<string, Product>> {
+  const unique = [...new Set(productIds)];
+  if (!unique.length) return new Map();
   if (isCloudMode()) {
-    const result = await invokeCloud(IPC_CHANNELS.PRODUCT_GET, [productId]) as ApiResult<Product>;
-    return result.success && result.data ? result.data : null;
+    const result = await fetchCloudProductsByIds(unique);
+    if (!result.success) throw new Error(result.error);
+    return new Map((result.data ?? []).map((p) => [p.id, p]));
   }
-  const row = getDb().select().from(products).where(eq(products.id, productId)).get();
-  return row ?? null;
+  const rows = getDb().select().from(products).where(inArray(products.id, unique)).all();
+  return new Map(rows.map((p) => [p.id, p as Product]));
 }
 
 function toLabelPrintProduct(product: Product): LabelPrintProduct {
@@ -75,14 +82,10 @@ export async function handleLabelPrintBatch(input: {
 
     const labelProducts: LabelPrintProduct[] = [];
     const notFound: string[] = [];
-    const productCache = new Map<string, Product | null>();
+    const productsById = await loadProductsForLabels(input.items.map((i) => i.productId));
 
     for (const item of input.items) {
-      let product = productCache.get(item.productId);
-      if (product === undefined) {
-        product = await loadProductForLabel(item.productId);
-        productCache.set(item.productId, product);
-      }
+      const product = productsById.get(item.productId);
       if (!product) {
         notFound.push(item.productId);
         continue;
@@ -96,9 +99,8 @@ export async function handleLabelPrintBatch(input: {
     }
 
     console.log('[label:print-batch] items received:', input.items.length,
-      '| products found:', labelProducts.length,
-      '| not found:', notFound.length,
-      '| products:', labelProducts.map((p) => ({ sku: p.sku, barcode: p.barcode })));
+      '| labels:', labelProducts.length,
+      '| not found:', notFound.length);
 
     if (!labelProducts.length) {
       return {

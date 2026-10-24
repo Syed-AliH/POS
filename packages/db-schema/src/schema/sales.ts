@@ -12,8 +12,12 @@ export const sales = sqliteTable('sales', {
   taxAmount: real('tax_amount').notNull().default(0),
   totalAmount: real('total_amount').notNull().default(0),
   paymentMethod: text('payment_method', {
-    enum: ['cash', 'card', 'bank_transfer', 'wallet', 'online'],
+    enum: ['cash', 'card', 'bank_transfer', 'wallet', 'online', 'split'],
   }).notNull(),
+  // A 'split' bill is part cash, part card/online. The cash share is stored; the rest
+  // (totalAmount − splitCashAmount) went through splitOtherMethod. Null otherwise.
+  splitCashAmount: real('split_cash_amount'),
+  splitOtherMethod: text('split_other_method', { enum: ['card', 'online'] }),
   amountTendered: real('amount_tendered'),
   changeGiven: real('change_given'),
   status: text('status', { enum: ['completed', 'held', 'voided', 'returned'] })

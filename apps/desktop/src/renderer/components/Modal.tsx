@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Button } from '@mama-babi/ui';
+import { pushModal } from '@renderer/lib/modalStack';
 
 interface ModalProps {
   open: boolean;
@@ -28,6 +29,15 @@ export function Modal({
   priority = 'default',
 }: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  // Escape closes the top dialog and page shortcuts pause while one is open — the
+  // shortcut bridge enforces both by reading this stack.
+  useEffect(() => {
+    if (!open) return;
+    return pushModal({ close: () => onCloseRef.current() });
+  }, [open]);
 
   useEffect(() => {
     if (!open || priority !== 'alert') return;

@@ -143,7 +143,7 @@ export function App() {
             <Route path="supplier-payments" element={<ProtectedRoute roles={['manager', 'super_admin']}><SupplierPaymentsPage /></ProtectedRoute>} />
             <Route path="more" element={<ProtectedRoute roles={['manager', 'super_admin']}><MorePage /></ProtectedRoute>} />
             <Route path="gift-cards" element={<ProtectedRoute roles={['manager', 'super_admin']}><GiftCardsPage /></ProtectedRoute>} />
-            <Route path="expenses" element={<ProtectedRoute roles={['manager', 'super_admin']}><ExpensesPage /></ProtectedRoute>} />
+            <Route path="expenses" element={<ProtectedRoute roles={['cashier', 'manager', 'super_admin']}><ExpensesPage /></ProtectedRoute>} />
             <Route path="stocktake" element={<ProtectedRoute roles={['manager', 'super_admin']}><StocktakePage /></ProtectedRoute>} />
             <Route path="settings" element={<ProtectedRoute roles={['manager', 'super_admin']}><SettingsPage /></ProtectedRoute>} />
             <Route path="users" element={<ProtectedRoute roles={['super_admin']}><UsersPage /></ProtectedRoute>} />

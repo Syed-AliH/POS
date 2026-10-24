@@ -13,6 +13,7 @@ import { useCartStore } from '@renderer/stores/cartStore';
 import { useAuthStore } from '@renderer/stores/authStore';
 import { formatDateOnly, formatTimeOnly, localCalendarDate } from '@shared/datetime';
 import type { CartItem, Customer, Product, ReceiptPreview as ReceiptPreviewData, SaleSummary } from '@shared/types';
+import { formatPayment } from '@shared/payment';
 
 const api = getApi();
 
@@ -430,7 +431,7 @@ export function SalesHistoryPage() {
                         {s.status !== 'completed' && <StatusBadge status={s.status} />}
                       </div>
                       <div className="truncate text-xs text-slate-400">
-                        {s.items.length} item(s) · {s.paymentMethod}
+                        {s.items.length} item(s) · {formatPayment(s)}
                       </div>
                     </td>
                     <td className="truncate px-3 py-2 text-slate-600 dark:text-slate-300">{s.customerName ?? '—'}</td>
@@ -499,7 +500,7 @@ export function SalesHistoryPage() {
                 <dt className="text-slate-500">Customer</dt>
                 <dd className="text-right">{selected.customerName ?? '—'}</dd>
                 <dt className="text-slate-500">Payment</dt>
-                <dd className="text-right capitalize">{selected.paymentMethod}</dd>
+                <dd className="text-right capitalize">{formatPayment(selected)}</dd>
                 <dt className="text-slate-500">Subtotal</dt>
                 <dd className="text-right tabular-nums">PKR {selected.subtotal.toFixed(2)}</dd>
                 {selected.discountAmount !== 0 && (

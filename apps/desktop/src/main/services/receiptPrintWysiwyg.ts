@@ -3,6 +3,7 @@ import {
   buildReceiptPrintHtml,
   receiptPrintWidthPx,
   resolveReceiptPaperWidthMm,
+  SAMPLE_RECEIPT_SALE,
 } from '@mama-babi/printer';
 import type { ReceiptSale, ReceiptTemplateConfig } from '@mama-babi/printer';
 import { buildRasterPrintHtml } from './labelHtmlDocument';
@@ -116,6 +117,50 @@ function createRenderWindow(widthPx: number): BrowserWindow {
   });
 }
 
+/** Render windows that already have a document to replace (see loadReceiptDocument). */
+const primedWindows = new WeakSet<BrowserWindow>();
+
+/**
+ * Puts a receipt's HTML into the render window. Navigating to a fresh data: URL for
+ * every receipt cost 0.35–0.65 s — a whole new document load each time — on the path
+ * between saving a bill and the printer starting. The window navigates once; after
+ * that each receipt replaces the document in place, which parses the same markup
+ * into the same standards-mode document (the printed bitmap is byte-identical) in a
+ * few milliseconds. Images (logo, QR) are awaited, as the page load used to.
+ */
+async function loadReceiptDocument(win: BrowserWindow, html: string): Promise<void> {
+  if (!primedWindows.has(win)) {
+    await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    primedWindows.add(win);
+    return;
+  }
+  await win.webContents.executeJavaScript(
+    `(function (markup) {
+      document.open();
+      document.write(markup);
+      document.close();
+      return Promise.all(Array.from(document.images).map(function (img) {
+        return img.decode ? img.decode().catch(function () {}) : null;
+      }));
+    })(${JSON.stringify(html)})`,
+    true,
+  );
+}
+
+/**
+ * Renders a sample receipt off-screen at app start (nothing is printed), so the first
+ * real receipt of the day doesn't pay for creating the render window, its first page
+ * load and a cold layout/capture path.
+ */
+export async function warmReceiptRenderer(): Promise<void> {
+  if (renderWindow && !renderWindow.isDestroyed()) return;
+  try {
+    await captureReceiptPng(SAMPLE_RECEIPT_SALE, {}, undefined);
+  } catch (err) {
+    console.warn('[print:receipt] renderer warm-up failed', err);
+  }
+}
+
 /** Waits for the compositor to present a frame, instead of guessing with a sleep. */
 async function nextPaint(win: BrowserWindow, settleMs: number): Promise<void> {
   try {
@@ -159,11 +204,7 @@ async function captureReceiptPng(
     renderWin.webContents.setZoomFactor(1);
     renderWin.webContents.setVisualZoomLevelLimits(1, 1);
 
-    await withTimeout(
-      renderWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`),
-      12000,
-      'Receipt HTML load',
-    );
+    await withTimeout(loadReceiptDocument(renderWin, html), 12000, 'Receipt HTML load');
 
     await withTimeout(
       renderWin.webContents.executeJavaScript(

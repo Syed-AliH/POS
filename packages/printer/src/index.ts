@@ -243,6 +243,11 @@ export interface ReceiptSale {
   paymentMethod: string;
   amountTendered: number | null;
   changeGiven: number | null;
+  /**
+   * A bill paid in more than one way (cash + card/online): one line per part, printed
+   * in place of tendered/change.
+   */
+  paymentParts?: Array<{ label: string; amount: number }>;
 }
 
 export const SAMPLE_RECEIPT_SALE: ReceiptSale = {
@@ -381,7 +386,9 @@ export function formatReceipt(
 
   if (sections.showPayment) {
     lines.push(`Payment: ${sale.paymentMethod.toUpperCase()}`);
-    if (sale.amountTendered != null) {
+    if (sale.paymentParts?.length) {
+      for (const part of sale.paymentParts) lines.push(pad(`${part.label}:`, fmt(part.amount)));
+    } else if (sale.amountTendered != null) {
       lines.push(pad('Tendered:', fmt(sale.amountTendered)));
       lines.push(pad('Change:', fmt(sale.changeGiven ?? 0)));
     }

@@ -1,16 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
+import { useToday } from '@renderer/hooks/useToday';
 import { toast } from '@renderer/stores/toastStore';
+import { formatTimeOnly } from '@shared/datetime';
+import type { ExpenseSummary } from '@shared/types';
 
 const api = getApi();
 
 const DENOMINATIONS = [5000, 1000, 500, 100, 50, 20, 10];
-
-interface ExpenseRow {
-  amount: string;
-  description: string;
-}
 
 function money(n: number): string {
   return `PKR ${n.toFixed(2)}`;
@@ -21,8 +20,29 @@ export function EodReportForm() {
   const [cardPayments, setCardPayments] = useState('');
   const [onlinePayments, setOnlinePayments] = useState('');
   const [counts, setCounts] = useState<Record<number, string>>({});
-  const [expenses, setExpenses] = useState<ExpenseRow[]>([{ amount: '', description: '' }]);
+  const [cashToOwnerInput, setCashToOwnerInput] = useState('');
   const [storeName, setStoreName] = useState('Store');
+  const navigate = useNavigate();
+  const today = useToday();
+
+  // The day's expenses come from the Expenses tab — entered once, when they happen —
+  // instead of being typed in again here. Re-read whenever this screen is shown
+  // (its effects re-run on return) and when the date rolls over.
+  const [expenses, setExpenses] = useState<ExpenseSummary[]>([]);
+  const [expensesLoaded, setExpensesLoaded] = useState(false);
+  const [expensesError, setExpensesError] = useState<string | null>(null);
+  const loadExpenses = async () => {
+    const result = await api.expenses.list({ startDate: today, endDate: today, limit: 500 });
+    setExpensesLoaded(true);
+    if (result.success) {
+      // Same counting rule as the Expenses tab, reports and the owner portal.
+      setExpenses((result.data ?? []).filter((x) => x.status !== 'rejected'));
+      setExpensesError(null);
+    } else {
+      setExpensesError(result.error ?? 'Could not load today’s expenses');
+    }
+  };
+  useEffect(() => { void loadExpenses(); }, [today]);
 
   useEffect(() => {
     api.settings.getAll().then((r) => {
@@ -42,24 +62,24 @@ export function EodReportForm() {
     [counts],
   );
   const totalCashCount = denomTotals.reduce((sum, r) => sum + r.total, 0);
-  const totalExpenses = expenses.reduce((sum, e) => sum + num(e.amount), 0);
+  const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
   const opening = num(openingCash);
   const card = num(cardPayments);
   const online = num(onlinePayments);
+  // Optional — empty means nothing was handed over.
+  const cashToOwner = Math.max(0, num(cashToOwnerInput));
 
-  // Daily Sales = (Total Cash Count + Card + Online + Total Expenses) − Opening Cash
-  const dailySales = totalCashCount + card + online + totalExpenses - opening;
+  // Cash that left the drawer during the day still came from sales, so both expenses
+  // and cash handed to the owner are added back. They are kept apart: the owner's
+  // cash is a movement of money, not a cost, and never enters the expense total.
+  // Daily Sales = (Cash Count + Card + Online + Expenses + Cash to Owner) − Opening Cash
+  const dailySales = totalCashCount + card + online + totalExpenses + cashToOwner - opening;
 
   const updateCount = (denom: number, value: string) => {
     setCounts((prev) => ({ ...prev, [denom]: value.replace(/[^0-9]/g, '') }));
   };
 
-  const updateExpense = (index: number, field: keyof ExpenseRow, value: string) => {
-    setExpenses((prev) => prev.map((e, i) => (i === index ? { ...e, [field]: value } : e)));
-  };
-
-  const addExpense = () => setExpenses((prev) => [...prev, { amount: '', description: '' }]);
-  const removeExpense = (index: number) => setExpenses((prev) => prev.filter((_, i) => i !== index));
+  const expenseDescription = (x: ExpenseSummary) => (x.notes ? `${x.categoryName} — ${x.notes}` : x.categoryName);
 
   const [submitting, setSubmitting] = useState(false);
 
@@ -68,15 +88,15 @@ export function EodReportForm() {
 
   const buildReportHtml = (): string => {
     const now = new Date();
-    const realExpenses = expenses.filter((e) => num(e.amount) > 0 || e.description.trim());
+
     const denomRows = denomTotals
       .map(
         (r) => `<tr><td>${r.denom}</td><td class="num">${r.qty}</td><td class="num">${money(r.total)}</td></tr>`,
       )
       .join('');
-    const expenseRows = realExpenses.length
-      ? realExpenses
-          .map((e) => `<tr><td class="num">${money(num(e.amount))}</td><td>${escapeHtml(e.description.trim() || '—')}</td></tr>`)
+    const expenseRows = expenses.length
+      ? expenses
+          .map((e) => `<tr><td class="num">${money(e.amount)}</td><td>${escapeHtml(expenseDescription(e))}</td></tr>`)
           .join('')
       : `<tr><td colspan="2" class="muted">No expenses recorded</td></tr>`;
 
@@ -134,13 +154,21 @@ export function EodReportForm() {
         </tbody>
       </table>
 
+      <h2>Cash Given to Owner</h2>
+      <table>
+        <tbody>
+          <tr><td>Handed over at close (cash movement — not an expense)</td><td class="num">${money(cashToOwner)}</td></tr>
+        </tbody>
+      </table>
+
       <h2>Daily Sales Calculation</h2>
       <div class="calc">
-        <div class="formula">(Total Cash Count + Card + Online + Total Expenses) − Opening Cash</div>
+        <div class="formula">(Total Cash Count + Card + Online + Total Expenses + Cash Given to Owner) − Opening Cash</div>
         <div class="row"><span>Total Cash Count</span><span>${money(totalCashCount)}</span></div>
         <div class="row"><span>+ Card (Credit/Debit)</span><span>${money(card)}</span></div>
         <div class="row"><span>+ Online Payments</span><span>${money(online)}</span></div>
         <div class="row"><span>+ Total Expenses</span><span>${money(totalExpenses)}</span></div>
+        <div class="row"><span>+ Cash Given to Owner</span><span>${money(cashToOwner)}</span></div>
         <div class="row"><span>− Opening Cash</span><span>− ${money(opening)}</span></div>
         <div class="grand"><span>Daily Sales</span><span>${money(dailySales)}</span></div>
       </div>
@@ -150,8 +178,17 @@ export function EodReportForm() {
   };
 
   const handleSubmit = async () => {
+    if (expensesError) {
+      toast.error('Today’s expenses could not be loaded — retry before submitting so the report is complete.');
+      return;
+    }
     setSubmitting(true);
-    const dateStr = new Date().toISOString().slice(0, 10);
+    // The shop's own calendar day, not UTC — after midnight UTC this used to file the
+    // report under the wrong date.
+    const dateStr = today;
+    // A snapshot for the report; the expenses themselves already live in the
+    // expenses table (entered on the Expenses tab), so nothing is recorded twice.
+    const expenseLines = expenses.map((e) => ({ amount: e.amount, description: expenseDescription(e) }));
     const result = await api.eod.submitReport({
       html: buildReportHtml(),
       fileName: `EOD-Report-${dateStr}.pdf`,
@@ -163,6 +200,8 @@ export function EodReportForm() {
       totalCashCount,
       totalExpenses,
       dailySales,
+      expenseLines,
+      cashToOwner,
     });
     setSubmitting(false);
 
@@ -170,7 +209,7 @@ export function EodReportForm() {
       toast.error(result.error ?? 'Could not submit report');
       return;
     }
-    toast.success('EOD report submitted. An admin can now view it on the Mamababi portal.');
+    toast.success('EOD report submitted. An admin can now view it on the Mamababi portal. Submitting again today replaces it.');
   };
 
   return (
@@ -232,38 +271,57 @@ export function EodReportForm() {
         </table>
       </div>
 
-      {/* Day expenses */}
+      {/* Day expenses — read from the Expenses tab */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <h4 className="font-medium text-sm">Day Expenses</h4>
-          <Button size="sm" variant="secondary" onClick={addExpense}>+ Add expense</Button>
+          <h4 className="font-medium text-sm">Today’s Expenses</h4>
+          <div className="flex gap-2">
+            <Button size="sm" variant="ghost" onClick={() => void loadExpenses()}>Refresh</Button>
+            <Button size="sm" variant="secondary" onClick={() => navigate('/expenses')}>Add or edit expenses</Button>
+          </div>
         </div>
-        <div className="space-y-2">
-          {expenses.map((e, i) => (
-            <div key={i} className="flex gap-2 items-center">
-              <input
-                type="number"
-                value={e.amount}
-                onChange={(ev) => updateExpense(i, 'amount', ev.target.value)}
-                placeholder="Amount"
-                className="w-32 px-3 py-2 border rounded-lg text-sm"
-              />
-              <input
-                type="text"
-                value={e.description}
-                onChange={(ev) => updateExpense(i, 'description', ev.target.value)}
-                placeholder="Description / details"
-                className="flex-1 px-3 py-2 border rounded-lg text-sm"
-              />
-              <button type="button" className="text-red-500 px-2" onClick={() => removeExpense(i)} disabled={expenses.length === 1}>×</button>
-            </div>
-          ))}
-        </div>
+        {expensesError ? (
+          <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+            {expensesError}
+          </p>
+        ) : !expensesLoaded ? (
+          <p className="text-sm text-slate-400">Loading…</p>
+        ) : expenses.length === 0 ? (
+          <p className="text-sm text-slate-400">No expenses recorded today. Record them on the Expenses tab as they happen.</p>
+        ) : (
+          <table className="w-full text-sm">
+            <tbody>
+              {expenses.map((x) => (
+                <tr key={x.id} className="border-t border-slate-100 dark:border-slate-800">
+                  <td className="py-1 pr-2 text-xs text-slate-400 w-20">{formatTimeOnly(x.createdAt)}</td>
+                  <td className="py-1 pr-2">{expenseDescription(x)}</td>
+                  <td className="py-1 pl-2 text-right tabular-nums">{money(x.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
         <div className="flex justify-between text-sm font-semibold mt-2 pt-2 border-t border-slate-200 dark:border-slate-700">
           <span>Total Expenses</span>
           <span className="tabular-nums">{money(totalExpenses)}</span>
         </div>
       </div>
+
+      {/* Cash given to owner — optional, a cash movement rather than an expense */}
+      <label className="block text-sm">
+        <span className="text-xs text-slate-500">Cash given to owner (optional)</span>
+        <input
+          type="number"
+          min={0}
+          value={cashToOwnerInput}
+          onChange={(e) => setCashToOwnerInput(e.target.value)}
+          placeholder="0"
+          className="w-full mt-1 px-3 py-2 border rounded-lg sm:w-60"
+        />
+        <span className="mt-1 block text-xs text-slate-400">
+          Cash handed to the owner at close. Not an expense — it does not change sales, profit or expenses; it only explains the lower cash count.
+        </span>
+      </label>
 
       {/* Daily sales calculation */}
       <div className="rounded-lg bg-slate-50 dark:bg-slate-800/60 p-4 space-y-1 text-sm">
@@ -272,6 +330,7 @@ export function EodReportForm() {
         <div className="flex justify-between"><span>+ Card (Credit/Debit)</span><span className="tabular-nums">{money(card)}</span></div>
         <div className="flex justify-between"><span>+ Online Payments</span><span className="tabular-nums">{money(online)}</span></div>
         <div className="flex justify-between"><span>+ Total Expenses</span><span className="tabular-nums">{money(totalExpenses)}</span></div>
+        <div className="flex justify-between"><span>+ Cash Given to Owner</span><span className="tabular-nums">{money(cashToOwner)}</span></div>
         <div className="flex justify-between"><span>− Opening Cash</span><span className="tabular-nums">− {money(opening)}</span></div>
         <div className="flex justify-between border-t border-slate-300 dark:border-slate-600 pt-2 mt-1 text-lg font-bold text-primary-700 dark:text-primary-400">
           <span>Daily Sales</span><span className="tabular-nums">{money(dailySales)}</span>

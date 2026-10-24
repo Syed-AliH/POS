@@ -97,7 +97,9 @@ import {
   handleExpenseApprove,
   handleExpenseCategories,
   handleExpenseCreate,
+  handleExpenseDelete,
   handleExpenseList,
+  handleExpenseUpdate,
 } from './expenses';
 import { handleAuditList } from './auditLogs';
 import {
@@ -442,10 +444,21 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.GIFT_CARD_RELOAD, (_e, input) => handleGiftCardReload(input));
   ipcMain.handle(IPC_CHANNELS.GIFT_CARD_DEACTIVATE, (_e, id: string) => handleGiftCardDeactivate(id));
 
-  ipcMain.handle(IPC_CHANNELS.EXPENSE_CATEGORIES, () => handleExpenseCategories());
-  ipcMain.handle(IPC_CHANNELS.EXPENSE_CREATE, (_e, input) => handleExpenseCreate(input));
-  ipcMain.handle(IPC_CHANNELS.EXPENSE_LIST, (_e, params) => handleExpenseList(params));
-  ipcMain.handle(IPC_CHANNELS.EXPENSE_APPROVE, (_e, id: string) => handleExpenseApprove(id));
+  // Expenses go to the cloud like sales do. These used to run against the till's
+  // local SQLite even in cloud mode, so an expense entered on the desktop never
+  // reached the portal, cloud EOD or reports.
+  ipcMain.handle(IPC_CHANNELS.EXPENSE_CATEGORIES, () =>
+    withCloud(IPC_CHANNELS.EXPENSE_CATEGORIES, () => handleExpenseCategories()));
+  ipcMain.handle(IPC_CHANNELS.EXPENSE_CREATE, (_e, input) =>
+    withCloud(IPC_CHANNELS.EXPENSE_CREATE, () => handleExpenseCreate(input), [input]));
+  ipcMain.handle(IPC_CHANNELS.EXPENSE_LIST, (_e, params) =>
+    withCloud(IPC_CHANNELS.EXPENSE_LIST, () => handleExpenseList(params), [params]));
+  ipcMain.handle(IPC_CHANNELS.EXPENSE_APPROVE, (_e, id: string) =>
+    withCloud(IPC_CHANNELS.EXPENSE_APPROVE, () => handleExpenseApprove(id), [id]));
+  ipcMain.handle(IPC_CHANNELS.EXPENSE_UPDATE, (_e, id: string, input) =>
+    withCloud(IPC_CHANNELS.EXPENSE_UPDATE, () => handleExpenseUpdate(id, input), [id, input]));
+  ipcMain.handle(IPC_CHANNELS.EXPENSE_DELETE, (_e, id: string) =>
+    withCloud(IPC_CHANNELS.EXPENSE_DELETE, () => handleExpenseDelete(id), [id]));
 
   ipcMain.handle(IPC_CHANNELS.AUDIT_LIST, (_e, params) => handleAuditList(params));
 

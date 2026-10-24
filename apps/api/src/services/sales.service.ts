@@ -107,6 +107,8 @@ export async function buildSaleSummaries(db: PostgresClient, rows: SaleRow[]) {
       taxAmount: sale.taxAmount,
       totalAmount: sale.totalAmount,
       paymentMethod: sale.paymentMethod,
+      splitCashAmount: sale.splitCashAmount,
+      splitOtherMethod: sale.splitOtherMethod,
       amountTendered: sale.amountTendered,
       changeGiven: sale.changeGiven,
       status: sale.status,
@@ -183,6 +185,8 @@ export async function buildSaleSummary(db: PostgresClient, saleId: string) {
     taxAmount: sale.taxAmount,
     totalAmount: sale.totalAmount,
     paymentMethod: sale.paymentMethod,
+    splitCashAmount: sale.splitCashAmount,
+    splitOtherMethod: sale.splitOtherMethod,
     amountTendered: sale.amountTendered,
     changeGiven: sale.changeGiven,
     status: sale.status,
@@ -225,6 +229,57 @@ async function findOrCreateCustomer(
   return id;
 }
 
+type SplitOtherMethod = 'card' | 'online';
+type SplitInput = { cashAmount: number; otherMethod: SplitOtherMethod };
+
+/** Paisa-level tolerance: bills are in rupees but discounts can leave fractions. */
+const MONEY_EPSILON = 0.005;
+
+/**
+ * Checks a part-cash, part-card/online payment against the bill and returns what is
+ * stored. Only the cash share is kept; the other share is always the bill total minus
+ * it, so the two can never disagree with the total. Same rules as validateSplit in
+ * desktop ipc/sales.ts.
+ */
+export function validateSplit(
+  totalAmount: number,
+  split: SplitInput | undefined,
+): { splitCashAmount: number; splitOtherMethod: SplitOtherMethod } | { error: string } {
+  if (!split) return { error: 'Enter how much is paid in cash and how much by card/online' };
+  if (split.otherMethod !== 'card' && split.otherMethod !== 'online') {
+    return { error: 'The non-cash part of a split payment must be card or online' };
+  }
+  const cash = Math.round(split.cashAmount * 100) / 100;
+  if (!Number.isFinite(cash) || cash <= MONEY_EPSILON) {
+    return { error: 'Enter the cash part of the payment — for card only, choose Card' };
+  }
+  if (cash >= totalAmount - MONEY_EPSILON) {
+    return { error: `Cash covers the whole bill (PKR ${totalAmount.toFixed(2)}) — choose Cash instead of Split` };
+  }
+  return { splitCashAmount: cash, splitOtherMethod: split.otherMethod };
+}
+
+/**
+ * After a bill edit the difference is settled in cash at the till — the screen tells
+ * the cashier to take or hand back the difference — so the cash share moves and the
+ * card/online share stays as charged. If a refund is bigger than the cash share, the
+ * card/online share absorbs the rest and the bill stops being split.
+ */
+export function resettleSplit(
+  sale: { paymentMethod: string; totalAmount: number; splitCashAmount: number | null; splitOtherMethod: string | null },
+  newTotal: number,
+): { paymentMethod: string; splitCashAmount: number | null; splitOtherMethod: SplitOtherMethod | null } {
+  if (sale.paymentMethod !== 'split' || sale.splitCashAmount == null) {
+    return { paymentMethod: sale.paymentMethod, splitCashAmount: null, splitOtherMethod: null };
+  }
+  const other = (sale.splitOtherMethod as SplitOtherMethod | null) ?? 'card';
+  const otherShare = sale.totalAmount - sale.splitCashAmount;
+  const cash = Math.round((newTotal - otherShare) * 100) / 100;
+  if (cash <= MONEY_EPSILON) return { paymentMethod: other, splitCashAmount: null, splitOtherMethod: null };
+  if (cash >= newTotal - MONEY_EPSILON) return { paymentMethod: 'cash', splitCashAmount: null, splitOtherMethod: null };
+  return { paymentMethod: 'split', splitCashAmount: cash, splitOtherMethod: other };
+}
+
 export async function createSale(
   db: PostgresClient,
   sessionId: string,
@@ -233,7 +288,9 @@ export async function createSale(
     customerId?: string;
     customerName?: string;
     customerPhone?: string;
-    paymentMethod: 'cash' | 'card' | 'bank_transfer' | 'wallet' | 'online';
+    paymentMethod: 'cash' | 'card' | 'bank_transfer' | 'wallet' | 'online' | 'split';
+    /** Required when paymentMethod is 'split'. */
+    split?: SplitInput;
     amountTendered?: number;
     discountAmount?: number;
     discountReason?: string;
@@ -335,6 +392,14 @@ export async function createSale(
       ? Math.max(0, input.amountTendered - totalAmount)
       : null;
 
+  let splitCashAmount: number | null = null;
+  let splitOtherMethod: SplitOtherMethod | null = null;
+  if (input.paymentMethod === 'split' && input.status !== 'held') {
+    const split = validateSplit(totalAmount, input.split);
+    if ('error' in split) return { success: false, error: split.error };
+    ({ splitCashAmount, splitOtherMethod } = split);
+  }
+
   let saleNumber = '';
   await db.transaction(async (tx) => {
     const txDb = tx as unknown as PostgresClient;
@@ -352,6 +417,8 @@ export async function createSale(
       taxAmount,
       totalAmount,
       paymentMethod: input.paymentMethod,
+      splitCashAmount,
+      splitOtherMethod,
       amountTendered: input.amountTendered ?? null,
       changeGiven,
       status: input.status ?? 'completed',
@@ -422,6 +489,8 @@ export async function createSale(
       taxAmount,
       totalAmount,
       paymentMethod: input.paymentMethod,
+      splitCashAmount,
+      splitOtherMethod,
       amountTendered: input.amountTendered ?? null,
       changeGiven,
       status: input.status ?? 'completed',
@@ -594,6 +663,7 @@ export async function updateSale(
     sale.paymentMethod === 'cash' && amountTendered != null
       ? Math.max(0, amountTendered - totalAmount)
       : sale.changeGiven;
+  const payment = resettleSplit(sale, totalAmount);
 
   const stockChanges: Array<{ id: string; delta: number }> = [];
   const movements: Array<typeof inventoryMovements.$inferInsert> = [];
@@ -634,6 +704,9 @@ export async function updateSale(
         totalAmount,
         amountTendered,
         changeGiven,
+        paymentMethod: payment.paymentMethod as typeof sale.paymentMethod,
+        splitCashAmount: payment.splitCashAmount,
+        splitOtherMethod: payment.splitOtherMethod,
         updatedAt: now,
       })
       .where(eq(sales.id, input.saleId));
@@ -651,6 +724,9 @@ export async function updateSale(
       totalAmount,
       amountTendered,
       changeGiven,
+      paymentMethod: payment.paymentMethod as typeof sale.paymentMethod,
+      splitCashAmount: payment.splitCashAmount,
+      splitOtherMethod: payment.splitOtherMethod,
       updatedAt: now,
     },
   ]);
@@ -786,6 +862,8 @@ export async function getSaleReceiptPreview(db: PostgresClient, saleId: string) 
       paymentMethod: summary.paymentMethod,
       amountTendered: summary.amountTendered,
       changeGiven: summary.changeGiven,
+      splitCashAmount: summary.splitCashAmount,
+      splitOtherMethod: summary.splitOtherMethod,
       footerMessage: settings.receipt_footer ?? 'Thank you for shopping!',
     },
   };

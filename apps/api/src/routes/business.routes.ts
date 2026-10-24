@@ -13,6 +13,7 @@ import * as customers from '../services/customers.service';
 import * as templates from '../services/templates.service';
 import * as promoCodes from '../services/promoCodes.service';
 import * as eodReports from '../services/eodReports.service';
+import * as expenses from '../services/expenses.service';
 import type { JwtUser } from '../types';
 
 const manager = [authenticate, requireRoles('super_admin', 'manager')];
@@ -89,6 +90,11 @@ export async function businessRoutes(app: FastifyInstance) {
   app.get('/products/:id', { preHandler: anyUser }, async (request) => {
     const { id } = request.params as { id: string };
     return products.getProduct(app.db, id);
+  });
+
+  app.post('/products/by-ids', { preHandler: anyUser }, async (request) => {
+    const body = z.object({ ids: z.array(z.string()).max(5000) }).parse(request.body);
+    return products.getProductsByIds(app.db, body.ids);
   });
 
   app.post('/products', { preHandler: manager }, async (request) => {
@@ -522,8 +528,14 @@ export async function businessRoutes(app: FastifyInstance) {
       totalExpenses: z.number(),
       dailySales: z.number(),
       pdfBase64: z.string().min(1),
+      expenseLines: z.array(z.object({ amount: z.number(), description: z.string().optional() })).optional(),
+      cashToOwner: z.number().min(0).optional(),
     }).parse(request.body);
-    const result = await eodReports.createEodReport(app.db, { id: user.id, name: user.name }, body);
+    const result = await eodReports.createEodReport(
+      app.db,
+      { id: user.id, name: user.name, role: user.role },
+      body,
+    );
     if (result.success) {
       await logAuditEvent(app.db, {
         userId: user.id,
@@ -534,6 +546,65 @@ export async function businessRoutes(app: FastifyInstance) {
       });
     }
     return result;
+  });
+
+  // ── Expenses (the till's Expenses tab; EOD reads the day's total back) ──
+  app.get('/expense-categories', { preHandler: anyUser }, async () => expenses.listExpenseCategories(app.db));
+
+  app.get('/expenses', { preHandler: anyUser }, async (request) => {
+    const q = request.query as { startDate?: string; endDate?: string; status?: string; categoryId?: string; limit?: string };
+    return expenses.listExpenses(app.db, {
+      startDate: q.startDate,
+      endDate: q.endDate,
+      status: q.status,
+      categoryId: q.categoryId,
+      limit: q.limit ? parseInt(q.limit, 10) : undefined,
+    });
+  });
+
+  app.post('/expenses', { preHandler: anyUser }, async (request) => {
+    const user = request.user as JwtUser;
+    const body = z.object({
+      categoryId: z.string().min(1),
+      amount: z.number(),
+      notes: z.string().optional(),
+    }).parse(request.body);
+    const result = await expenses.createExpense(app.db, { id: user.id, name: user.name, role: user.role }, body);
+    if (result.success) {
+      await logAuditEvent(app.db, { userId: user.id, module: 'expenses', action: 'create', recordId: result.data.id, ip: request.ip });
+    }
+    return result;
+  });
+
+  app.patch('/expenses/:id', { preHandler: anyUser }, async (request) => {
+    const user = request.user as JwtUser;
+    const { id } = request.params as { id: string };
+    const body = z.object({
+      categoryId: z.string().min(1).optional(),
+      amount: z.number().optional(),
+      notes: z.string().nullable().optional(),
+    }).parse(request.body);
+    const result = await expenses.updateExpense(app.db, { id: user.id, name: user.name, role: user.role }, id, body);
+    if (result.success) {
+      await logAuditEvent(app.db, { userId: user.id, module: 'expenses', action: 'update', recordId: id, ip: request.ip });
+    }
+    return result;
+  });
+
+  app.delete('/expenses/:id', { preHandler: anyUser }, async (request) => {
+    const user = request.user as JwtUser;
+    const { id } = request.params as { id: string };
+    const result = await expenses.deleteExpense(app.db, { id: user.id, name: user.name, role: user.role }, id);
+    if (result.success) {
+      await logAuditEvent(app.db, { userId: user.id, module: 'expenses', action: 'delete', recordId: id, ip: request.ip });
+    }
+    return result;
+  });
+
+  app.post('/expenses/:id/approve', { preHandler: manager }, async (request) => {
+    const user = request.user as JwtUser;
+    const { id } = request.params as { id: string };
+    return expenses.approveExpense(app.db, { id: user.id, name: user.name, role: user.role }, id);
   });
 
   // Customers

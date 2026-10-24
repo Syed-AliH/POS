@@ -157,7 +157,7 @@ const handlers: Partial<Record<string, CloudHandler>> = {
     const remote = await apiFetch<Product[]>('POST', '/api/v1/products/search/advanced', filters);
     if (remote.success) return remote;
     // Fallback for older API builds without the advanced endpoint.
-    const qs = new URLSearchParams({ status: 'active', limit: '500' });
+    const qs = new URLSearchParams({ status: 'active' });
     const list = await apiFetch<Product[]>('GET', `/api/v1/products?${qs}`);
     if (!list.success) return list;
     const active = (list.data ?? []).filter((p) => p.status === 'active');
@@ -254,6 +254,25 @@ const handlers: Partial<Record<string, CloudHandler>> = {
   },
   [IPC_CHANNELS.RETURN_CREATE]: async (input: unknown) =>
     apiFetch('POST', '/api/v1/returns', input),
+
+  [IPC_CHANNELS.EXPENSE_CATEGORIES]: async () => apiFetch('GET', '/api/v1/expense-categories'),
+  [IPC_CHANNELS.EXPENSE_LIST]: async (params: unknown) => {
+    const p = (params ?? {}) as { startDate?: string; endDate?: string; status?: string; categoryId?: string; limit?: number };
+    const qs = new URLSearchParams();
+    if (p.startDate) qs.set('startDate', p.startDate);
+    if (p.endDate) qs.set('endDate', p.endDate);
+    if (p.status) qs.set('status', p.status);
+    if (p.categoryId) qs.set('categoryId', p.categoryId);
+    if (p.limit != null) qs.set('limit', String(p.limit));
+    return apiFetch('GET', `/api/v1/expenses?${qs}`);
+  },
+  [IPC_CHANNELS.EXPENSE_CREATE]: async (input: unknown) => apiFetch('POST', '/api/v1/expenses', input),
+  [IPC_CHANNELS.EXPENSE_UPDATE]: async (id: unknown, input: unknown) =>
+    apiFetch('PATCH', `/api/v1/expenses/${encodeURIComponent(String(id))}`, input),
+  [IPC_CHANNELS.EXPENSE_DELETE]: async (id: unknown) =>
+    apiFetch('DELETE', `/api/v1/expenses/${encodeURIComponent(String(id))}`),
+  [IPC_CHANNELS.EXPENSE_APPROVE]: async (id: unknown) =>
+    apiFetch('POST', `/api/v1/expenses/${encodeURIComponent(String(id))}/approve`),
 
   [IPC_CHANNELS.REPORT_PROFIT]: async (params: unknown) => {
     const p = (params ?? {}) as { startDate?: string; endDate?: string };
@@ -435,4 +454,25 @@ export async function invokeCloud(channel: string, args: unknown[]): Promise<unk
 
 export async function fetchCloudSale(saleId: string) {
   return apiFetch<import('@shared/types').SaleSummary>('GET', `/api/v1/sales/${saleId}`);
+}
+
+/**
+ * Many products in one request. Falls back to individual fetches (a few at a time)
+ * against an API deployed before /products/by-ids existed.
+ */
+export async function fetchCloudProductsByIds(ids: string[]): Promise<ApiResult<Product[]>> {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return { success: true, data: [] };
+  const batch = await apiFetch<Product[]>('POST', '/api/v1/products/by-ids', { ids: unique });
+  if (batch.success) return batch;
+
+  const found: Product[] = [];
+  const CONCURRENCY = 6;
+  for (let i = 0; i < unique.length; i += CONCURRENCY) {
+    const results = await Promise.all(
+      unique.slice(i, i + CONCURRENCY).map((id) => apiFetch<Product>('GET', `/api/v1/products/${id}`)),
+    );
+    for (const r of results) if (r.success && r.data) found.push(r.data);
+  }
+  return { success: true, data: found };
 }

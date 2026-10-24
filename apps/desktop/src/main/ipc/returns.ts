@@ -13,7 +13,7 @@ import type { ApiResult, CreateReturnInput, ReturnListParams, ReturnSummary, Sal
 import { getDb } from '../db';
 import { requireSession } from '../session';
 import { logAudit } from '../services/audit';
-import { getSetting } from '../services/settings';
+import { getSetting, invalidateSettingsCache } from '../services/settings';
 import { coerceReportDateRange, localCalendarDate } from '../lib/reportDateRange';
 import { buildSaleSummary } from './sales';
 
@@ -55,6 +55,9 @@ function incrementReturnCounter(): string {
   const current = parseInt(getSetting(key) ?? '0', 10) + 1;
   const now = new Date().toISOString();
   db.update(settings).set({ value: String(current), updatedAt: now }).where(eq(settings.key, key)).run();
+  // getSetting reads an in-memory cache; without this the next return re-reads the old
+  // counter, gets the same number, and fails on the unique return_number.
+  invalidateSettingsCache();
   return `RT-${year}-${String(current).padStart(6, '0')}`;
 }
 

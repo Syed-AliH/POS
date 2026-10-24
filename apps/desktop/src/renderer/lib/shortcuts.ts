@@ -1,3 +1,5 @@
+import { closeTopModal, hasOpenModal } from './modalStack';
+
 type ShortcutHandler = () => void;
 
 const pageHandlersByRoute = new Map<string, Map<string, ShortcutHandler>>();
@@ -38,6 +40,9 @@ export function registerGlobalShortcuts(handlers: Record<string, ShortcutHandler
 }
 
 function dispatchShortcut(key: string): boolean {
+  // Nothing behind an open dialog reacts to shortcuts — F4 must not charge the sale
+  // from inside product search. F-keys arrive here over IPC too, so the check lives here.
+  if (hasOpenModal()) return false;
   const normalized = normalizeShortcutKey(key);
   const pageHandler = pageHandlersByRoute.get(activeRoute)?.get(normalized);
   if (pageHandler) {
@@ -56,7 +61,18 @@ function handleKeyDown(e: KeyboardEvent): void {
   const key = normalizeShortcutKey(e.key);
   const isFn = /^F\d{1,2}$/.test(key);
 
-  if (isFn || key === 'Escape') {
+  if (key === 'Escape') {
+    // An open dialog owns Escape: close the top one and stop there. The page's own
+    // Escape (e.g. checkout's "Clear cart?") runs later, in the bubble phase, and only
+    // if nothing focused — an inline quantity editor, say — already handled the key.
+    if (closeTopModal()) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    return;
+  }
+
+  if (isFn) {
     if (dispatchShortcut(key)) {
       e.preventDefault();
       e.stopPropagation();
@@ -80,11 +96,17 @@ function handleKeyDown(e: KeyboardEvent): void {
   }
 }
 
+function handleEscapeBubble(e: KeyboardEvent): void {
+  if (e.key !== 'Escape' || e.defaultPrevented) return;
+  if (dispatchShortcut('Escape')) e.preventDefault();
+}
+
 export function initShortcutBridge(): () => void {
   if (initialized) return () => undefined;
   initialized = true;
 
   window.addEventListener('keydown', handleKeyDown, true);
+  window.addEventListener('keydown', handleEscapeBubble);
 
   const unsubscribeIpc = window.electron?.shortcuts?.onKey?.((key) => {
     dispatchShortcut(key);
@@ -92,6 +114,7 @@ export function initShortcutBridge(): () => void {
 
   return () => {
     window.removeEventListener('keydown', handleKeyDown, true);
+    window.removeEventListener('keydown', handleEscapeBubble);
     unsubscribeIpc?.();
     pageHandlersByRoute.clear();
     activeRoute = '';

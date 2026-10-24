@@ -146,6 +146,8 @@ const ALTER_STATEMENTS = [
   'ALTER TABLE products ADD COLUMN base_sale_price REAL',
   'ALTER TABLE products ADD COLUMN prev_retail_price REAL',
   'ALTER TABLE products ADD COLUMN prev_sale_price REAL',
+  'ALTER TABLE sales ADD COLUMN split_cash_amount REAL',
+  'ALTER TABLE sales ADD COLUMN split_other_method TEXT',
 ];
 
 /** Statements that only run once the ALTERs above have added their columns. */

@@ -292,7 +292,11 @@ export function buildReceiptPrintHtml(
 
   if (hasPayment) {
     parts.push(`<div>${escapeHtml(labels.payment)} ${escapeHtml(sale.paymentMethod.toUpperCase())}</div>`);
-    if (sale.amountTendered != null) {
+    if (sale.paymentParts?.length) {
+      for (const part of sale.paymentParts) {
+        parts.push(`<div class="row"><span>${escapeHtml(part.label)}</span><span>${escapeHtml(fmtMoney(currency, part.amount))}</span></div>`);
+      }
+    } else if (sale.amountTendered != null) {
       parts.push(`<div class="row"><span>${escapeHtml(labels.tendered)}</span><span>${escapeHtml(fmtMoney(currency, sale.amountTendered))}</span></div>`);
       parts.push(`<div class="row"><span>${escapeHtml(labels.change)}</span><span>${escapeHtml(fmtMoney(currency, sale.changeGiven ?? 0))}</span></div>`);
     }

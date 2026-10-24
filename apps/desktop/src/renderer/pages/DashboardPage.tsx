@@ -9,6 +9,7 @@ import { ReceiptPreview } from '@renderer/components/ReceiptPreview';
 import { toast } from '@renderer/stores/toastStore';
 import { sortByKey, useTableSort } from '@renderer/lib/useTableSort';
 import { formatDateTime, localCalendarDate } from '@shared/datetime';
+import { formatPayment } from '@shared/payment';
 import type {
   ProfitReport,
   ReceiptPreview as ReceiptPreviewData,
@@ -104,7 +105,8 @@ export function DashboardPage() {
       />
 
       <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <KpiCard label="Total Sales" value={`PKR ${(profit?.revenue ?? 0).toFixed(2)}`} hint={rangeLabel} icon={<ShoppingCart className="h-5 w-5" />} />
+        {/* Bill totals, matching the owner portal's Total Sales — not profit.revenue. */}
+        <KpiCard label="Total Sales" value={`PKR ${(profit?.totalSales ?? 0).toFixed(2)}`} hint={rangeLabel} icon={<ShoppingCart className="h-5 w-5" />} />
         <KpiCard label="Transactions" value={profit?.transactionCount ?? 0} hint="completed bills" icon={<Receipt className="h-5 w-5" />} />
         <KpiCard label="Gross Profit" value={`PKR ${(profit?.grossProfit ?? 0).toFixed(2)}`} hint={`${(profit?.marginPercent ?? 0).toFixed(1)}% margin`} icon={<Wallet className="h-5 w-5" />} />
         <KpiCard label="Held Sales" value={heldCount} hint={heldCount > 0 ? 'View in Sales' : undefined} icon={<Package className="h-5 w-5" />} />
@@ -136,7 +138,7 @@ export function DashboardPage() {
                 <td className="p-3 font-mono text-sm text-primary-700">{s.saleNumber}</td>
                 <td className="p-3">{s.cashierName}</td>
                 <td className="p-3 text-slate-600">{s.customerName ?? '—'}</td>
-                <td className="p-3 capitalize">{s.paymentMethod.replace('_', ' ')}</td>
+                <td className="p-3 capitalize">{formatPayment(s)}</td>
                 <td className="p-3 text-right font-semibold">PKR {s.totalAmount.toFixed(2)}</td>
                 <td className="p-3 text-sm text-slate-500 whitespace-nowrap">{formatDateTime(s.createdAt)}</td>
               </tr>

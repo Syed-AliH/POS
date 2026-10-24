@@ -30,6 +30,25 @@ function toReceiptSale(summary: SaleSummary): ReceiptSale {
     discountAmount: summary.discountAmount,
     taxAmount: summary.taxAmount,
     totalAmount: summary.totalAmount,
+    ...receiptPayment(summary),
+  };
+}
+
+/** A split bill prints its cash and card/online parts instead of tendered/change. */
+function receiptPayment(summary: SaleSummary): Pick<ReceiptSale, 'paymentMethod' | 'amountTendered' | 'changeGiven' | 'paymentParts'> {
+  if (summary.paymentMethod === 'split' && summary.splitCashAmount != null) {
+    const other = summary.splitOtherMethod === 'online' ? 'Online' : 'Card';
+    return {
+      paymentMethod: `cash + ${other.toLowerCase()}`,
+      amountTendered: null,
+      changeGiven: null,
+      paymentParts: [
+        { label: 'Cash', amount: summary.splitCashAmount },
+        { label: other, amount: summary.totalAmount - summary.splitCashAmount },
+      ],
+    };
+  }
+  return {
     paymentMethod: summary.paymentMethod,
     amountTendered: summary.amountTendered,
     changeGiven: summary.changeGiven,

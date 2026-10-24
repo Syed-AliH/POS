@@ -1,5 +1,10 @@
 import { sendRawToWindowsPrinter } from './labelRawWindows';
-import { captureLabelBatchImage, nativeImageToTsplBitmap } from './labelLabelCapture';
+import {
+  captureLabelBatchImage,
+  LabelCaptureCache,
+  nativeImageToTsplBitmap,
+  prefetchLabelSlots,
+} from './labelLabelCapture';
 import type { LabelSlotContent } from './labelHtmlDocument';
 import type { LabelRollLayout } from './labelRollLayout';
 
@@ -51,9 +56,10 @@ export async function buildLabelBitmapTsplPayload(
   slots: LabelSlotContent[],
   roll: LabelRollLayout,
   pageSizePx: { width: number; height: number },
+  cache?: LabelCaptureCache,
 ): Promise<Buffer> {
   assertSlotsArray(slots);
-  const image = await captureLabelBatchImage(slots, roll, pageSizePx);
+  const image = await captureLabelBatchImage(slots, roll, pageSizePx, cache);
   const { widthBytes, heightPx, data } = nativeImageToTsplBitmap(image);
   return buildBitmapTsplPayload(roll, widthBytes, heightPx, data);
 }
@@ -95,9 +101,20 @@ export async function printLabelBitmapTsplBatch(
   console.log('[print:label:bitmap] success — single TSPL row');
 }
 
+/** Rows in the first spool job — small, so the printer starts almost immediately. */
+const FIRST_JOB_ROWS = 2;
+/** Rows per spool job after that. Each job costs a PowerShell launch, so not too small. */
+const JOB_ROWS = 40;
+/** How many rows ahead of the one being assembled to start rendering. */
+const PREFETCH_ROWS = 24;
+
 /**
- * Multiple die-cut rows in one Windows RAW job (one spool submission).
- * Each row = one physical strip on 2-up rolls (SIZE height = one row).
+ * Print die-cut rows as a short series of Windows RAW jobs. Each row is a
+ * self-contained SIZE…PRINT block (one physical strip on 2-up rolls), so splitting
+ * between rows is safe. Rows used to be collected into a single job, which meant
+ * nothing printed until every label in the batch had been rendered; now the first
+ * rows go out as soon as they are ready and later ones follow, in order, while
+ * rendering continues.
  */
 export async function printLabelBitmapTsplCombined(
   printerName: string,
@@ -111,39 +128,58 @@ export async function printLabelBitmapTsplCombined(
     throw new Error('printLabelBitmapTsplCombined: no rows to print.');
   }
 
-  const payloads: Buffer[] = [];
+  const cache = new LabelCaptureCache();
+  let prefetchedUpTo = 0;
+  const prefetchThrough = (rowIndex: number) => {
+    const end = Math.min(rowBatches.length, rowIndex + 1);
+    for (; prefetchedUpTo < end; prefetchedUpTo++) {
+      const { slots, roll } = rowBatches[prefetchedUpTo]!;
+      prefetchLabelSlots(slots, roll, cache);
+    }
+  };
+
+  // Jobs are chained so Windows spools them in order; after a failure the rest are skipped.
+  let sendChain: Promise<void> = Promise.resolve();
+  let sendError: unknown = null;
+  let jobCount = 0;
+  let pending: Buffer[] = [];
   let totalLabels = 0;
+  const flush = () => {
+    if (!pending.length) return;
+    const payload = Buffer.concat(pending);
+    const jobIndex = jobCount++;
+    const rows = pending.length;
+    pending = [];
+    sendChain = sendChain.then(async () => {
+      if (sendError) return;
+      try {
+        await sendRawToWindowsPrinter(printerName, payload);
+        console.log('[print:label:bitmap:job]', { engine: LABEL_BITMAP_ENGINE_VERSION, jobIndex, rows, bytes: payload.length });
+      } catch (err) {
+        sendError = err;
+      }
+    });
+  };
 
   for (let i = 0; i < rowBatches.length; i++) {
+    if (sendError) break;
+    prefetchThrough(i + PREFETCH_ROWS);
     const { slots, roll, pageSizePx } = rowBatches[i]!;
-    const payload = await buildLabelBitmapTsplPayload(slots, roll, pageSizePx);
-    payloads.push(payload);
+    pending.push(await buildLabelBitmapTsplPayload(slots, roll, pageSizePx, cache));
     totalLabels += slots.length;
-
-    console.log('[print:label:bitmap:row]', {
-      engine: LABEL_BITMAP_ENGINE_VERSION,
-      rowIndex: i,
-      rowCount: rowBatches.length,
-      labelCount: slots.length,
-      rollHeightMm: roll.printableHeightMm,
-      dpi: roll.rollConfig.dpi,
-      layoutPx: pageSizePx,
-      payloadBytes: payload.length,
-      slots: slots.map((s) => ({ slotIndex: s.slotIndex, sku: s.product.sku })),
-    });
+    if (pending.length >= (jobCount === 0 ? FIRST_JOB_ROWS : JOB_ROWS)) flush();
   }
+  flush();
+  await sendChain;
+  if (sendError) throw sendError;
 
-  const combined = Buffer.concat(payloads);
-  console.log('[print:label:bitmap:combined]', {
+  console.log('[print:label:bitmap] success', {
     engine: LABEL_BITMAP_ENGINE_VERSION,
     printerName,
     rowCount: rowBatches.length,
     totalLabels,
-    combinedBytes: combined.length,
+    jobs: jobCount,
   });
-
-  await sendRawToWindowsPrinter(printerName, combined);
-  console.log('[print:label:bitmap] success — combined TSPL job');
 }
 
 /** @deprecated Use printLabelBitmapTsplBatch */

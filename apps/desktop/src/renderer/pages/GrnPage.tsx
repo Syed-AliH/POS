@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { RefreshCw } from 'lucide-react';
 import { Button } from '@mama-babi/ui';
 import { getApi } from '@renderer/lib/api';
+import { useProductSearchStore } from '@renderer/stores/productSearchStore';
 import { SortableTh } from '@renderer/components/SortableTh';
 import { sortByKey, useTableSort } from '@renderer/lib/useTableSort';
 import { LabelPrintPreviewModal } from '@renderer/components/designer/LabelRollPreview';
@@ -165,9 +167,13 @@ function sortRecordItems<T extends {
 
 export function GrnPage() {
   const [tab, setTab] = useState<Tab>('create');
+  const [refreshing, setRefreshing] = useState(false);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [records, setRecords] = useState<GrnSummary[]>([]);
+  const [recordsLoading, setRecordsLoading] = useState(false);
+  const [recordsError, setRecordsError] = useState<string | null>(null);
+  const recordsRequestRef = useRef(0);
   const [vendorId, setVendorId] = useState('');
   const [paymentType, setPaymentType] = useState<GrnPaymentType>('cash');
   const [invoiceNumber, setInvoiceNumber] = useState('');
@@ -303,13 +309,17 @@ export function GrnPage() {
   const loadBase = async () => {
     const [v, p, t, s] = await Promise.all([
       api.vendors.list(),
-      api.products.list({ status: 'active', limit: 500 }),
+      api.products.list({ status: 'active' }),
       api.labels.templates(),
       api.settings.getAll(),
     ]);
     if (v.success) {
       setVendors(v.data ?? []);
-      if (v.data?.[0] && !vendorId) setVendorId(v.data[0].id);
+      const first = v.data?.[0];
+      if (first && !vendorId) {
+        setVendorId(first.id);
+        setPaymentType(first.preferredPaymentType ?? 'cash');
+      }
     }
     if (p.success) setProducts(p.data ?? []);
     const settingsStoreName = s.success ? s.data?.store_name : undefined;
@@ -324,22 +334,66 @@ export function GrnPage() {
   };
 
   const loadRecords = async () => {
+    // Filters can change faster than a response comes back — only the newest
+    // request is allowed to land.
+    const requestId = ++recordsRequestRef.current;
+    setRecordsLoading(true);
     const result = await api.grn.list({
       vendorId: filterVendor || undefined,
       startDate: filterStart || undefined,
       endDate: filterEnd || undefined,
-      grnNumber: filterGrn || undefined,
+      grnNumber: filterGrn.trim() || undefined,
       limit: 50,
     });
-    if (result.success) setRecords(result.data ?? []);
+    if (requestId !== recordsRequestRef.current) return;
+    setRecordsLoading(false);
+    if (result.success) {
+      setRecords(result.data ?? []);
+      setRecordsError(null);
+    } else {
+      setRecordsError(result.error ?? 'Could not load GRN records');
+    }
+  };
+
+  /** Put a GRN the server just returned into the list without refetching the whole list. */
+  const upsertRecord = (grn: GrnSummary) => {
+    setRecords((prev) => {
+      const idx = prev.findIndex((r) => r.id === grn.id);
+      if (idx === -1) return [grn, ...prev];
+      const next = [...prev];
+      next[idx] = grn;
+      return next;
+    });
+  };
+
+  // A product added on another screen (or another till, in cloud mode) won't show up
+  // here until this refetches — loadBase's product list, and separately the cached
+  // search-store catalogue the product picker reads from, which only force-reloads
+  // when told to.
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        loadBase(),
+        useProductSearchStore.getState().load(true),
+        loadRecords(),
+      ]);
+      toast.success('Product catalogue refreshed');
+    } catch {
+      toast.error('Refresh failed — check your connection');
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   useEffect(() => { loadBase(); }, []);
 
+  // Records load as soon as the page opens, whichever tab is showing, so they're
+  // already there when Records is clicked; typing a GRN number waits for a pause.
   useEffect(() => {
-    if (vendorId) applyVendorPaymentPreference(vendorId, setPaymentType);
-  }, [vendorId, vendors]);
-  useEffect(() => { if (tab === 'records') loadRecords(); }, [tab, filterVendor, filterStart, filterEnd, filterGrn]);
+    const timer = setTimeout(() => void loadRecords(), filterGrn ? 300 : 0);
+    return () => clearTimeout(timer);
+  }, [filterVendor, filterStart, filterEnd, filterGrn]);
 
   const canEditRecord = editingRecord?.status === 'draft' || editingRecord?.status === 'finalized';
 
@@ -370,7 +424,20 @@ export function GrnPage() {
     return () => window.removeEventListener('keydown', onKey, true);
   }, [tab, canEditRecord]);
 
-  const addLine = (product: Product) => {
+  // ProductSearchModal is built on the lean cached catalogue (SearchProduct), which
+  // carries no cost price — product.costPrice here is always the padded 0. The full
+  // product list already loaded for CSV import has the real figure; fall back to a
+  // fresh fetch only for a product that list doesn't have (e.g. one added on another
+  // till since this page loaded).
+  const resolveCostPrice = async (product: Product): Promise<number> => {
+    const known = products.find((p) => p.id === product.id);
+    if (known) return known.costPrice;
+    const result = await api.products.get(product.id);
+    return result.success && result.data ? result.data.costPrice : product.costPrice;
+  };
+
+  const addLine = async (product: Product) => {
+    const costPrice = await resolveCostPrice(product);
     setLines((prev) => {
       if (prev.some((l) => l.productId === product.id)) {
         toast.warning(`${product.name} is already on this GRN`);
@@ -383,7 +450,7 @@ export function GrnPage() {
           productName: product.name,
           productSku: product.sku,
           qty: 1,
-          unitCost: product.costPrice,
+          unitCost: costPrice,
           unitRetail: product.retailPrice,
           retailInput: String(product.retailPrice),
         },
@@ -515,7 +582,7 @@ export function GrnPage() {
   };
 
   const refreshProducts = () => {
-    api.products.list({ status: 'active', limit: 500 }).then((r) => {
+    api.products.list({ status: 'active' }).then((r) => {
       if (r.success) setProducts(r.data ?? []);
     });
   };
@@ -542,6 +609,7 @@ export function GrnPage() {
       return null;
     }
     loadRecordIntoEditor(result.data);
+    upsertRecord(result.data);
     return result.data;
   };
 
@@ -561,7 +629,7 @@ export function GrnPage() {
       toast.success(`GRN draft saved: ${result.data?.grnNumber}`);
       resetCreateForm();
       setTab('records');
-      loadRecords();
+      if (result.data) upsertRecord(result.data);
     } else toast.error(result.error ?? 'Save failed');
   };
 
@@ -589,13 +657,13 @@ export function GrnPage() {
       setSelectedGrn(finalizeResult.data);
       setPrintLabelsOpen(true);
       setTab('records');
-      loadRecords();
+      upsertRecord(finalizeResult.data);
       refreshProducts();
     } else {
       toast.error(finalizeResult.error ?? 'Finalize failed');
       setTab('records');
-      loadRecords();
-      if (createResult.data) selectRecord(createResult.data);
+      upsertRecord(createResult.data);
+      selectRecord(createResult.data);
     }
   };
 
@@ -658,7 +726,8 @@ export function GrnPage() {
     });
   };
 
-  const addEditLine = (product: Product) => {
+  const addEditLine = async (product: Product) => {
+    const costPrice = await resolveCostPrice(product);
     setEditLines((prev) => {
       if (prev.some((l) => l.productId === product.id)) {
         toast.warning(`${product.name} is already on this GRN`);
@@ -671,7 +740,7 @@ export function GrnPage() {
           productName: product.name,
           productSku: product.sku,
           qty: 1,
-          unitCost: product.costPrice,
+          unitCost: costPrice,
           unitRetail: product.retailPrice,
           retailInput: String(product.retailPrice),
         },
@@ -697,7 +766,7 @@ export function GrnPage() {
     if (result.success && result.data) {
       toast.success(`GRN updated: ${result.data.grnNumber}`);
       loadRecordIntoEditor(result.data);
-      loadRecords();
+      upsertRecord(result.data);
       refreshProducts();
     } else toast.error(result.error ?? 'Update failed');
   };
@@ -718,7 +787,7 @@ export function GrnPage() {
       setSelectedGrn(result.data ?? null);
       setPrintLabelsOpen(true);
       if (result.data && editingRecord?.id === id) loadRecordIntoEditor(result.data);
-      loadRecords();
+      if (result.data) upsertRecord(result.data);
       refreshProducts();
     } else toast.error(result.error ?? 'Finalize failed');
   };
@@ -787,9 +856,21 @@ export function GrnPage() {
   const grnPreviewLayout = activeLabelTemplate
     ? resolveLabelLayoutForPreview(activeLabelTemplate, storeName)
     : null;
-  const grnPreviewProducts = selectedGrn
-    ? expandGrnLabelProducts(selectedGrn.items, products)
-    : [];
+  // The preview only draws the first couple of rows. Expanding every copy of a large
+  // GRN — with a product lookup per line — on every render made the whole page lag.
+  const grnPreviewProducts = useMemo(() => {
+    if (!printLabelsOpen || !selectedGrn) return [];
+    const PREVIEW_LABELS = 16;
+    const previewItems: GrnSummary['items'] = [];
+    let count = 0;
+    for (const item of selectedGrn.items) {
+      if (count >= PREVIEW_LABELS) break;
+      const qty = Math.min(Math.max(1, item.qty), PREVIEW_LABELS - count);
+      previewItems.push({ ...item, qty });
+      count += qty;
+    }
+    return expandGrnLabelProducts(previewItems, products);
+  }, [printLabelsOpen, selectedGrn, products]);
 
   const filteredProducts = products.filter((p) =>
     !productSearch || p.name.toLowerCase().includes(productSearch.toLowerCase()) || p.sku.toLowerCase().includes(productSearch.toLowerCase()),
@@ -800,9 +881,20 @@ export function GrnPage() {
       <h2 className="text-2xl font-bold mb-2">Goods Received (GRN)</h2>
       <p className="text-slate-500 mb-4">Receive stock from vendors and update product cost and retail prices</p>
 
-      <div className="flex gap-2 mb-6">
-        <Button variant={tab === 'create' ? 'primary' : 'ghost'} onClick={() => setTab('create')}>New GRN</Button>
-        <Button variant={tab === 'records' ? 'primary' : 'ghost'} onClick={() => setTab('records')}>GRN Records</Button>
+      <div className="flex items-center justify-between gap-2 mb-6">
+        <div className="flex gap-2">
+          <Button variant={tab === 'create' ? 'primary' : 'ghost'} onClick={() => setTab('create')}>New GRN</Button>
+          <Button variant={tab === 'records' ? 'primary' : 'ghost'} onClick={() => setTab('records')}>GRN Records</Button>
+        </div>
+        <Button
+          variant="ghost"
+          onClick={() => void handleRefresh()}
+          disabled={refreshing}
+          title="Reload products, vendors and GRN records — picks up anything added elsewhere since this page opened"
+        >
+          <RefreshCw className={`h-4 w-4 mr-1.5 ${refreshing ? 'animate-spin' : ''}`} />
+          {refreshing ? 'Refreshing…' : 'Refresh'}
+        </Button>
       </div>
 
       {tab === 'create' && (
@@ -812,7 +904,14 @@ export function GrnPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div>
                 <label className="section-label mb-1 block">Supplier</label>
-                <select value={vendorId} onChange={(e) => setVendorId(e.target.value)} className="form-select h-10">
+                <select
+                  value={vendorId}
+                  onChange={(e) => {
+                    setVendorId(e.target.value);
+                    applyVendorPaymentPreference(e.target.value, setPaymentType);
+                  }}
+                  className="form-select h-10"
+                >
                   {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
                 </select>
               </div>
@@ -1047,7 +1146,14 @@ export function GrnPage() {
             <input type="date" value={filterStart} onChange={(e) => setFilterStart(e.target.value)} className="px-3 py-2 border rounded-lg text-sm" />
             <input type="date" value={filterEnd} onChange={(e) => setFilterEnd(e.target.value)} className="px-3 py-2 border rounded-lg text-sm" />
             <input placeholder="GRN #" value={filterGrn} onChange={(e) => setFilterGrn(e.target.value)} className="px-3 py-2 border rounded-lg text-sm" />
+            {recordsLoading && <span className="self-center text-xs text-slate-400">Loading…</span>}
           </div>
+          {recordsError && (
+            <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+              <span>GRN records didn't load: {recordsError}</span>
+              <Button size="sm" variant="ghost" onClick={() => void loadRecords()}>Retry</Button>
+            </div>
+          )}
           <table className="data-table-wrap w-full text-sm">
             <thead className="bg-slate-50">
               <tr className="text-left text-slate-500">
@@ -1096,6 +1202,13 @@ export function GrnPage() {
                   </td>
                 </tr>
               ))}
+              {!sortedRecords.length && !recordsError && (
+                <tr>
+                  <td colSpan={8} className="p-6 text-center text-sm text-slate-400">
+                    {recordsLoading ? 'Loading GRN records…' : 'No GRNs match these filters'}
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
 
