@@ -69,11 +69,13 @@ export function EodReportForm() {
   // Optional — empty means nothing was handed over.
   const cashToOwner = Math.max(0, num(cashToOwnerInput));
 
-  // Cash that left the drawer during the day still came from sales, so both expenses
-  // and cash handed to the owner are added back. They are kept apart: the owner's
-  // cash is a movement of money, not a cost, and never enters the expense total.
-  // Daily Sales = (Cash Count + Card + Online + Expenses + Cash to Owner) − Opening Cash
-  const dailySales = totalCashCount + card + online + totalExpenses + cashToOwner - opening;
+  // The drawer over the day: Opening + Cash sales − Expenses − Cash to owner = Counted.
+  // Cash sales is the one unknown, so it is solved from the count. Expenses and the
+  // owner's cash left the drawer, which is why they come out of the drawer here — the
+  // money itself was still taken in as sales. They are kept apart: the owner's cash is
+  // a movement of money, not a cost, and never enters the expense total.
+  const cashSales = totalCashCount - opening + totalExpenses + cashToOwner;
+  const dailySales = cashSales + card + online;
 
   const updateCount = (denom: number, value: string) => {
     setCounts((prev) => ({ ...prev, [denom]: value.replace(/[^0-9]/g, '') }));
@@ -161,15 +163,21 @@ export function EodReportForm() {
         </tbody>
       </table>
 
-      <h2>Daily Sales Calculation</h2>
+      <h2>Cash in the Drawer</h2>
       <div class="calc">
-        <div class="formula">(Total Cash Count + Card + Online + Total Expenses + Cash Given to Owner) − Opening Cash</div>
-        <div class="row"><span>Total Cash Count</span><span>${money(totalCashCount)}</span></div>
+        <div class="formula">Opening Cash + Cash Sales − Expenses − Cash Given to Owner = Cash Counted. Cash Sales is worked out from the count.</div>
+        <div class="row"><span>Opening Cash</span><span>${money(opening)}</span></div>
+        <div class="row"><span>+ Cash Sales</span><span>${money(cashSales)}</span></div>
+        <div class="row"><span>− Expenses paid from the drawer</span><span>− ${money(totalExpenses)}</span></div>
+        <div class="row"><span>− Cash Given to Owner</span><span>− ${money(cashToOwner)}</span></div>
+        <div class="grand"><span>Cash Counted at Close</span><span>${money(totalCashCount)}</span></div>
+      </div>
+
+      <h2>Daily Sales</h2>
+      <div class="calc">
+        <div class="row"><span>Cash Sales</span><span>${money(cashSales)}</span></div>
         <div class="row"><span>+ Card (Credit/Debit)</span><span>${money(card)}</span></div>
         <div class="row"><span>+ Online Payments</span><span>${money(online)}</span></div>
-        <div class="row"><span>+ Total Expenses</span><span>${money(totalExpenses)}</span></div>
-        <div class="row"><span>+ Cash Given to Owner</span><span>${money(cashToOwner)}</span></div>
-        <div class="row"><span>− Opening Cash</span><span>− ${money(opening)}</span></div>
         <div class="grand"><span>Daily Sales</span><span>${money(dailySales)}</span></div>
       </div>
 
@@ -319,21 +327,33 @@ export function EodReportForm() {
           className="w-full mt-1 px-3 py-2 border rounded-lg sm:w-60"
         />
         <span className="mt-1 block text-xs text-slate-400">
-          Cash handed to the owner at close. Not an expense — it does not change sales, profit or expenses; it only explains the lower cash count.
+          Cash taken out of the drawer for the owner. It is subtracted from the drawer, not from sales — and it is not an expense. Count the drawer after handing it over.
         </span>
       </label>
 
-      {/* Daily sales calculation */}
-      <div className="rounded-lg bg-slate-50 dark:bg-slate-800/60 p-4 space-y-1 text-sm">
-        <h4 className="font-medium mb-2">Daily Sales Calculation</h4>
-        <div className="flex justify-between"><span>Total Cash Count</span><span className="tabular-nums">{money(totalCashCount)}</span></div>
-        <div className="flex justify-between"><span>+ Card (Credit/Debit)</span><span className="tabular-nums">{money(card)}</span></div>
-        <div className="flex justify-between"><span>+ Online Payments</span><span className="tabular-nums">{money(online)}</span></div>
-        <div className="flex justify-between"><span>+ Total Expenses</span><span className="tabular-nums">{money(totalExpenses)}</span></div>
-        <div className="flex justify-between"><span>+ Cash Given to Owner</span><span className="tabular-nums">{money(cashToOwner)}</span></div>
-        <div className="flex justify-between"><span>− Opening Cash</span><span className="tabular-nums">− {money(opening)}</span></div>
-        <div className="flex justify-between border-t border-slate-300 dark:border-slate-600 pt-2 mt-1 text-lg font-bold text-primary-700 dark:text-primary-400">
-          <span>Daily Sales</span><span className="tabular-nums">{money(dailySales)}</span>
+      <div className="grid gap-3 md:grid-cols-2">
+        {/* The drawer over the day — what came in and what went out */}
+        <div className="rounded-lg bg-slate-50 dark:bg-slate-800/60 p-4 space-y-1 text-sm">
+          <h4 className="font-medium mb-2">Cash in the Drawer</h4>
+          <div className="flex justify-between"><span>Opening Cash</span><span className="tabular-nums">{money(opening)}</span></div>
+          <div className="flex justify-between"><span>+ Cash Sales</span><span className="tabular-nums">{money(cashSales)}</span></div>
+          <div className="flex justify-between"><span>− Expenses paid from the drawer</span><span className="tabular-nums">− {money(totalExpenses)}</span></div>
+          <div className="flex justify-between"><span>− Cash Given to Owner</span><span className="tabular-nums">− {money(cashToOwner)}</span></div>
+          <div className="flex justify-between border-t border-slate-300 dark:border-slate-600 pt-2 mt-1 font-semibold">
+            <span>Cash Counted at Close</span><span className="tabular-nums">{money(totalCashCount)}</span>
+          </div>
+          <p className="pt-1 text-xs text-slate-400">Cash Sales is worked out from the count.</p>
+        </div>
+
+        {/* Daily sales — every way the customers paid */}
+        <div className="rounded-lg bg-slate-50 dark:bg-slate-800/60 p-4 space-y-1 text-sm">
+          <h4 className="font-medium mb-2">Daily Sales</h4>
+          <div className="flex justify-between"><span>Cash Sales</span><span className="tabular-nums">{money(cashSales)}</span></div>
+          <div className="flex justify-between"><span>+ Card (Credit/Debit)</span><span className="tabular-nums">{money(card)}</span></div>
+          <div className="flex justify-between"><span>+ Online Payments</span><span className="tabular-nums">{money(online)}</span></div>
+          <div className="flex justify-between border-t border-slate-300 dark:border-slate-600 pt-2 mt-1 text-lg font-bold text-primary-700 dark:text-primary-400">
+            <span>Daily Sales</span><span className="tabular-nums">{money(dailySales)}</span>
+          </div>
         </div>
       </div>
 
